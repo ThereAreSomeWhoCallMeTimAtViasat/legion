@@ -54,7 +54,7 @@ def isWsl():
 
 # Check if running in Kali
 def isKali():
-    release = str(platform.uname().release).lower()
+    release = subprocess.check_output(["uname", "-a"]).decode().strip()    
     return "kali" in release
 
 # Get the AppData Temp directory path if WSL
