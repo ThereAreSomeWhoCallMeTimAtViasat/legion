@@ -72,6 +72,8 @@ class View(QtCore.QObject):
         self.viewState = viewState
         self._os_selection_model = None
         self.processStatusFilter = None
+        # Flag to prevent double close confirmation
+        self._closing = False
 
     # the view needs access to controller methods to link gui actions with real actions
     def setController(self, controller):
@@ -336,39 +338,91 @@ class View(QtCore.QObject):
             self.controller.applySettings(self.controller.settings)
 
     def dealWithRunningProcesses(self, exiting=False):
-        if len(self.controller.getRunningProcesses()) > 0:
+        """
+        Handle running processes before exit or project operations.
+        Returns True if we can proceed, False if user canceled.
+        """
+        log.info(f'=== dealWithRunningProcesses called (exiting={exiting}) ===')
+        
+        running_processes = self.controller.getRunningProcesses()
+        num_running = len(running_processes)
+        log.info(f'Number of running processes: {num_running}')
+        
+        if num_running > 0:
+            log.info('Running processes detected, showing confirmation dialog')
             message = "There are still processes running. If you continue, every process will be terminated. " + \
                       "Are you sure you want to continue?"
             reply = self.yesNoDialog(message, 'Confirm')
+            
+            log.info(f'User reply to process termination: {reply}')
                     
             if not reply == QtWidgets.QMessageBox.StandardButton.Yes:
+                log.info('User canceled process termination')
                 return False
-            self.controller.killRunningProcesses()
+            
+            log.info('User confirmed, killing processes...')
+            try:
+                self.controller.killRunningProcesses()
+                log.info('killRunningProcesses completed successfully')
+            except Exception as e:
+                log.error(f'EXCEPTION in killRunningProcesses: {type(e).__name__}: {e}')
+                import traceback
+                log.error(f'Traceback:\n{traceback.format_exc()}')
+                return False
         
         elif exiting:
-            return self.confirmExit()
+            log.info('No running processes, checking exit confirmation')
+            result = self.confirmExit()
+            log.info(f'confirmExit returned: {result}')
+            return result
         
+        log.info('dealWithRunningProcesses returning True')
         return True
 
     # returns True if we can proceed with: creating/opening a project or exiting
     def dealWithCurrentProject(self, exiting=False):
-        if self.viewState.dirty:   # if there are unsaved changes, show save dialog first
-            if not self.saveOrDiscard():                                # if the user canceled, stop
-                return False
+        """
+        Handle current project state (unsaved changes, running processes) before major operations.
+        Returns True if we can proceed, False if user canceled.
+        """
+        log.info(f'=== dealWithCurrentProject called (exiting={exiting}) ===')
+        log.info(f'Project dirty state: {self.viewState.dirty}')
         
-        return self.dealWithRunningProcesses(exiting)                   # deal with running processes
+        if self.viewState.dirty:   # if there are unsaved changes, show save dialog first
+            log.info('Unsaved changes detected, calling saveOrDiscard')
+            if not self.saveOrDiscard():                                # if the user canceled, stop
+                log.info('User canceled save/discard, aborting operation')
+                return False
+            log.info('saveOrDiscard completed successfully')
+        
+        log.info('Proceeding to dealWithRunningProcesses')
+        result = self.dealWithRunningProcesses(exiting)                   # deal with running processes
+        log.info(f'dealWithCurrentProject returning: {result}')
+        return result
 
     def confirmExit(self):
+        """
+        Show exit confirmation dialog.
+        Returns True if user confirms exit, False otherwise.
+        """
+        log.info('=== confirmExit called ===')
         message = "Are you sure to exit the program?"
         reply = self.yesNoDialog(message, 'Confirm')
-        return (reply == QtWidgets.QMessageBox.StandardButton.Yes)
+        result = (reply == QtWidgets.QMessageBox.StandardButton.Yes)
+        log.info(f'confirmExit returning: {result}')
+        return result
 
     def killProcessConfirmation(self):
+        """
+        Show kill process confirmation dialog.
+        Returns True if user confirms kill, False otherwise.
+        """
+        log.info('=== killProcessConfirmation called ===')
         message = "Are you sure you want to kill the selected processes?"
         reply = self.yesNoDialog(message, 'Confirm')
-        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            return True
-        return False
+        result = (reply == QtWidgets.QMessageBox.StandardButton.Yes)
+        log.info(f'killProcessConfirmation returning: {result}')
+        return result
 
     def connectCreateNewProject(self):
         self.ui.actionNew.triggered.connect(self.createNewProject)
@@ -2335,4 +2389,134 @@ class View(QtCore.QObject):
         if deduped:
             return list(deduped.values())
         return list(processes)
+
+    def cleanupBeforeExit(self):
+        """
+        Comprehensive cleanup before Qt application exit.
+        This MUST be called via QApplication.aboutToQuit signal.
+        Prevents segmentation faults by cleaning up in proper order.
+        """
+        log.info('=== CLEANUP BEFORE EXIT STARTED ===')
+        
+        try:
+            # STEP 1: Stop all timers first (critical to prevent callbacks during cleanup)
+            log.info('Step 1: Stopping all QTimer objects...')
+            for attr_name in dir(self):
+                try:
+                    attr = getattr(self, attr_name)
+                    if isinstance(attr, QtCore.QTimer):
+                        if attr.isActive():
+                            log.info(f'  Stopping timer: {attr_name}')
+                            attr.stop()
+                            attr.disconnect()  # Disconnect all signals
+                except (RuntimeError, AttributeError) as e:
+                    log.warning(f'  Timer cleanup warning for {attr_name}: {e}')
+            
+            # STEP 2: Kill any remaining processes with proper cleanup
+            log.info('Step 2: Cleaning up processes...')
+            if hasattr(self, 'controller') and self.controller:
+                running = self.controller.getRunningProcesses()
+                if running:
+                    log.info(f'  Found {len(running)} running processes')
+                    self.controller.killRunningProcesses()
+                else:
+                    log.info('  No running processes to clean')
+            
+            # STEP 3: Close database connections explicitly
+            log.info('Step 3: Closing database connections...')
+            if hasattr(self, 'controller') and self.controller:
+                if hasattr(self.controller, 'db') and self.controller.db:
+                    log.info('  Closing database connection')
+                    try:
+                        # Force commit and close
+                        if hasattr(self.controller.db, 'commit'):
+                            self.controller.db.commit()
+                        if hasattr(self.controller.db, 'close'):
+                            self.controller.db.close()
+                        log.info('  Database closed successfully')
+                    except Exception as e:
+                        log.error(f'  Database close error: {e}')
+            
+            # STEP 4: Disconnect all signal connections from main window
+            log.info('Step 4: Disconnecting signals from main widgets...')
+            widgets_to_clean = []
+            
+            # Add your main widgets here
+            if hasattr(self, 'ui'):
+                widgets_to_clean.append(('ui', self.ui))
+            if hasattr(self, 'settingsWidget'):
+                widgets_to_clean.append(('settingsWidget', self.settingsWidget))
+            if hasattr(self, 'displayWidget'):
+                widgets_to_clean.append(('displayWidget', self.displayWidget))
+            
+            for widget_name, widget in widgets_to_clean:
+                if widget:
+                    try:
+                        log.info(f'  Disconnecting signals from: {widget_name}')
+                        widget.blockSignals(True)
+                        # Attempt to disconnect all
+                        if hasattr(widget, 'disconnect'):
+                            try:
+                                widget.disconnect()
+                            except TypeError:
+                                pass  # Already disconnected
+                    except (RuntimeError, AttributeError) as e:
+                        log.warning(f'  Widget cleanup warning for {widget_name}: {e}')
+            
+            # STEP 5: Close and delete child widgets explicitly
+            log.info('Step 5: Closing child widgets...')
+            if hasattr(self, 'ui') and self.ui:
+                for child in self.ui.findChildren(QtWidgets.QWidget):
+                    try:
+                        child.close()
+                    except (RuntimeError, AttributeError):
+                        pass
+            
+            # STEP 6: Process all pending events to clear Qt's event queue
+            log.info('Step 6: Processing pending Qt events...')
+            QtWidgets.QApplication.processEvents()
+            QtCore.QCoreApplication.processEvents()
+            
+            # STEP 7: Close the main window
+            log.info('Step 7: Closing main window...')
+            try:
+                if hasattr(self, 'ui') and self.ui:
+                    self.ui.close()
+            except (RuntimeError, AttributeError) as e:
+                log.warning(f'  Main window close warning: {e}')
+            
+            # STEP 8: Final event processing
+            log.info('Step 8: Final event processing...')
+            QtWidgets.QApplication.processEvents()
+            
+            log.info('=== CLEANUP BEFORE EXIT COMPLETED SUCCESSFULLY ===')
+            
+        except Exception as e:
+            log.error(f'EXCEPTION during cleanupBeforeExit: {type(e).__name__}: {e}')
+            import traceback
+            log.error(f'Traceback:\n{traceback.format_exc()}')
+    
+    
+    def closeEvent(self, event):
+        """
+        Handle window close event (X button clicked).
+        Uses flag to prevent double confirmation dialog.
+        """
+        log.info('=== closeEvent triggered ===')
+        
+        # Prevent double close confirmation (Qt bug on some platforms)
+        if self._closing:
+            log.info('closeEvent: Already closing, accepting immediately')
+            event.accept()
+            return
+        
+        # Check if we can proceed with closing
+        if self.dealWithCurrentProject(exiting=True):
+            log.info('closeEvent: User confirmed exit, setting closing flag')
+            self._closing = True
+            event.accept()
+            # Cleanup will be handled by aboutToQuit signal
+        else:
+            log.info('closeEvent: User canceled exit, ignoring event')
+            event.ignore()
 
