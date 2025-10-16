@@ -1077,10 +1077,77 @@ class Controller:
             log.info("Unexpected error:", sys.exc_info()[0])
 
     def killRunningProcesses(self):
-        log.info('Killing running processes!')
-        for p in self.processes:
-            p.finished.disconnect()                 # experimental
-            self.killProcess(int(getPid(p)), p.id)
+        """
+        Safely terminate all running processes.
+        """
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import QProcess
+        
+        log.info('=== killRunningProcesses: START ===')
+        log.info(f'Processes to kill: {len(self.processes)}')
+        
+        if not self.processes:
+            log.info('No processes to kill')
+            return
+        
+        # Create safe copy
+        processes_copy = list(self.processes)
+        
+        for idx, p in enumerate(processes_copy):
+            try:
+                pid = getattr(p, 'id', 'unknown')
+                state = p.state()
+                
+                log.info(f'Process {idx+1}/{len(processes_copy)} (ID: {pid}), State: {state}')
+                
+                # Skip if not running
+                if state == QProcess.ProcessState.NotRunning:
+                    log.info(f'  Process {pid} not running, skipping')
+                    continue
+                
+                # Block signals
+                log.info(f'  Blocking signals for process {pid}')
+                p.blockSignals(True)
+                
+                # Disconnect all signals
+                signals = ['finished', 'readyReadStandardOutput', 'readyReadStandardError', 
+                          'errorOccurred', 'stateChanged', 'started']
+                for sig_name in signals:
+                    try:
+                        sig = getattr(p, sig_name, None)
+                        if sig:
+                            sig.disconnect()
+                            log.info(f'  Disconnected {sig_name}')
+                    except (TypeError, RuntimeError):
+                        pass
+                
+                # Terminate gracefully
+                log.info(f'  Terminating process {pid}')
+                p.terminate()
+                
+                # Wait for termination
+                if p.waitForFinished(2000):
+                    log.info(f'  Process {pid} terminated gracefully')
+                else:
+                    log.warning(f'  Process {pid} did not terminate, killing forcefully')
+                    p.kill()
+                    p.waitForFinished(1000)
+                
+                # Close process
+                p.close()
+                log.info(f'  Process {pid} closed')
+                
+            except Exception as e:
+                log.error(f'Error killing process: {e}')
+        
+        # Clear process list
+        self.processes.clear()
+        
+        # Process events
+        QApplication.processEvents()
+        
+        log.info('=== killRunningProcesses: END ===')
+
 
     # this function creates a new process, runs the command and takes care of displaying the ouput. returns the PID
     # the last 3 parameters are only used when the command is a staged nmap

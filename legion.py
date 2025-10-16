@@ -272,7 +272,6 @@ if __name__ == "__main__":
         notice.setText("Legion may require Administrator privileges for some features on Windows.")
         notice.exec()
 
-
     shell = DefaultShell()
     dbLog = getDbLogger()
     appLogger = getAppLogger()
@@ -298,30 +297,194 @@ if __name__ == "__main__":
 
     import signal
 
+    # CRITICAL: Flag to prevent multiple cleanup calls
+    _cleanup_done = False
+
     def graceful_shutdown(*args):
-        startupLog.info("Graceful shutdown initiated.")
+        """
+        Comprehensive cleanup before application exit.
+        """
+        global _cleanup_done
+        
+        if _cleanup_done:
+            return
+        
+        _cleanup_done = True
+        startupLog.info("=== GRACEFUL SHUTDOWN INITIATED ===")
+        
         try:
-            # Attempt to stop QThreads (e.g., Screenshooter)
-            if hasattr(controller, "screenshooter") and controller.screenshooter.isRunning():
-                controller.screenshooter.quit()
-                controller.screenshooter.wait(3000)
+            # STEP 1: Stop all QTimers
+            startupLog.info("Step 1: Stopping QTimers...")
+            try:
+                if hasattr(controller, '_timers'):
+                    for timer in controller._timers:
+                        if timer and timer.isActive():
+                            timer.stop()
+                            try:
+                                timer.timeout.disconnect()
+                            except (TypeError, RuntimeError):
+                                pass
+                
+                if hasattr(view, '__dict__'):
+                    for attr_name in list(view.__dict__.keys()):
+                        try:
+                            attr = getattr(view, attr_name, None)
+                            if isinstance(attr, QTimer):
+                                if attr.isActive():
+                                    attr.stop()
+                                    try:
+                                        attr.timeout.disconnect()
+                                    except (TypeError, RuntimeError):
+                                        pass
+                        except (RuntimeError, AttributeError):
+                            pass
+                startupLog.info("  Timers stopped")
+            except Exception as e:
+                startupLog.error(f"Error stopping timers: {e}")
+            
+            # STEP 2: Kill all running processes
+            startupLog.info("Step 2: Killing processes...")
+            try:
+                if hasattr(controller, 'killRunningProcesses'):
+                    controller.killRunningProcesses()
+                
+                if hasattr(controller, 'qProcess') and controller.qProcess:
+                    try:
+                        controller.qProcess.blockSignals(True)
+                        if controller.qProcess.state() != QProcess.ProcessState.NotRunning:
+                            controller.qProcess.terminate()
+                            controller.qProcess.waitForFinished(2000)
+                        controller.qProcess.close()
+                    except Exception:
+                        pass
+                
+                startupLog.info("  Processes killed")
+            except Exception as e:
+                startupLog.error(f"Error killing processes: {e}")
+            
+            # STEP 3: Stop QThreads
+            startupLog.info("Step 3: Stopping threads...")
+            try:
+                if hasattr(controller, "screenshooter") and controller.screenshooter:
+                    if controller.screenshooter.isRunning():
+                        controller.screenshooter.requestInterruption()
+                        controller.screenshooter.quit()
+                        controller.screenshooter.wait(3000)
+                startupLog.info("  Threads stopped")
+            except Exception as e:
+                startupLog.error(f"Error stopping threads: {e}")
+            
+            # STEP 4: Close database
+            startupLog.info("Step 4: Closing database...")
+            try:
+                if hasattr(logic, 'activeProject') and logic.activeProject:
+                    if hasattr(logic.activeProject, 'database') and logic.activeProject.database:
+                        try:
+                            if hasattr(logic.activeProject.database, 'close'):
+                                logic.activeProject.database.close()
+                            startupLog.info("  Database closed")
+                        except Exception:
+                            pass
+            except Exception as e:
+                startupLog.error(f"Error closing database: {e}")
+            
+            # STEP 5: Block widget signals
+            startupLog.info("Step 5: Blocking signals...")
+            try:
+                if MainWindow:
+                    MainWindow.blockSignals(True)
+                startupLog.info("  Signals blocked")
+            except Exception as e:
+                startupLog.error(f"Error blocking signals: {e}")
+            
+            # STEP 6: Process pending events
+            startupLog.info("Step 6: Processing events...")
+            try:
+                QApplication.processEvents()
+                startupLog.info("  Events processed")
+            except Exception:
+                pass
+            
+            startupLog.info("=== GRACEFUL SHUTDOWN COMPLETED ===")
+            
         except Exception as e:
-            startupLog.error(f"Error during QThread shutdown: {e}")
-        try:
-            loop.stop()
-        except Exception:
-            pass
-        try:
-            app.quit()
-        except Exception:
-            pass
-        sys.exit(0)
+            startupLog.error(f"ERROR during shutdown: {e}")
+            import traceback
+            startupLog.error(traceback.format_exc())
 
-    signal.signal(signal.SIGINT, graceful_shutdown)
-    signal.signal(signal.SIGTERM, graceful_shutdown)
+    # Connect to aboutToQuit
+    startupLog.info("Connecting graceful_shutdown to aboutToQuit")
+    app.aboutToQuit.connect(graceful_shutdown)
 
+    # Handle signals
+    def signal_handler(signum, frame):
+        startupLog.info(f"Received signal {signum}")
+        app.quit()
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    MainWindow.show()
     startupLog.info("Legion started successfully.")
+    
+    # Run event loop and properly clean up to prevent segfault
     try:
-        sys.exit(loop.run_forever())
+        loop.run_forever()
     except KeyboardInterrupt:
-        graceful_shutdown()
+        startupLog.info("KeyboardInterrupt received")
+    finally:
+        # STEP 1: Clean up event loop
+        startupLog.info("Cleaning up event loop...")
+        try:
+            # Cancel all pending asyncio tasks
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                startupLog.info(f"Cancelling {len(pending)} pending tasks...")
+                for task in pending:
+                    task.cancel()
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                startupLog.info("All tasks cancelled")
+        except Exception as e:
+            startupLog.warning(f"Error during task cancellation: {e}")
+        
+        try:
+            # Close the event loop
+            if not loop.is_closed():
+                loop.close()
+                startupLog.info("Event loop closed")
+        except Exception as e:
+            startupLog.error(f"Error closing event loop: {e}")
+        
+        # STEP 2: Process final Qt events
+        startupLog.info("Processing final events...")
+        try:
+            QApplication.processEvents()
+        except Exception:
+            pass
+        
+        # STEP 3: CRITICAL - Explicitly delete Qt objects in correct order
+        # This prevents segfault from Python's garbage collector
+        startupLog.info("Deleting Qt objects explicitly...")
+        try:
+            # Delete MainWindow first (already closed via normal exit path)
+            if 'MainWindow' in locals() and MainWindow is not None:
+                startupLog.info("  Deleting MainWindow...")
+                # Don't call close() here - it triggers closeEvent again causing double dialog
+                MainWindow.deleteLater()
+                del MainWindow
+                startupLog.info("  MainWindow deleted")
+
+            
+            # Process deleteLater events
+            QApplication.processEvents()
+            
+            # Delete QApplication last
+            if 'app' in locals() and app is not None:
+                startupLog.info("  Deleting QApplication...")
+                del app
+                startupLog.info("  QApplication deleted")
+            
+        except Exception as e:
+            startupLog.error(f"Error deleting Qt objects: {e}")
+    
+    startupLog.info("Application shutdown complete")
