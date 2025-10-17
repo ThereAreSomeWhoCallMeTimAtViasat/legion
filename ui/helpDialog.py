@@ -25,7 +25,7 @@ from app.auxiliary import *
 from six import u as unicode
 from ui.ancillaryDialog import flipState
 
-class License(QtWidgets.QPlainTextEdit):
+class License(QtWidgets.QTextEdit):
     def __init__(self,parent = None):
         super(License, self).__init__(parent)
         self.setReadOnly(True)
@@ -40,7 +40,7 @@ class License(QtWidgets.QPlainTextEdit):
         frameGm.moveCenter(centerPoint)
         self.move(frameGm.topLeft())
 
-class ChangeLog(QtWidgets.QPlainTextEdit):
+class ChangeLog(QtWidgets.QTextEdit):
     def __init__(self, qss, parent = None):
         super(ChangeLog, self).__init__(parent)
         self.setMinimumHeight(240)

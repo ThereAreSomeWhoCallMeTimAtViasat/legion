@@ -18,6 +18,8 @@ Copyright (c) 2025 Shane William Scott
 """
 
 import shutil
+#for matching
+import csv
 
 from app.auxiliary import *  # for timestamp
 
@@ -112,7 +114,33 @@ class AppSettings():
         self.actions.endGroup()
         log.debug("getSettingsByGroup name:{0}, result:{1}".format(str(name), str(settings)))
         return settings
+    
+    #for matching settings
+    def getMatchSettings(self):
+        self.actions.beginGroup('MatchSettings')
+        settings = dict()
+        keys = self.actions.childKeys()
+        
+        for k in keys:
+            k = str(k)
+            name, direction = k.split('-')
+            
+            if name in settings:
+                scannerSettings = settings[name]
+            else:
+                scannerSettings = dict()
+                settings[name] = scannerSettings
 
+            rawValue = str(self.actions.value(k))
+            if rawValue:
+                values = next(csv.reader([rawValue]))
+                scannerSettings[direction] = values
+                settings.update({str(k): str(self.actions.value(k))})
+
+        self.actions.endGroup()
+        return settings
+   
+    
     def backupAndSave(self, newSettings, saveBackup=True):
         # Backup and save
         if saveBackup:
@@ -250,6 +278,9 @@ class Settings():
         self.portTerminalActions = []
         self.stagedNmapSettings = []
         self.automatedAttacks = []
+        #for matching
+        self.matchSettings = []
+
 
         # now that all defaults are set, overwrite with whatever was in the .conf file (stored in appSettings)
         if appSettings:
@@ -263,6 +294,9 @@ class Settings():
                 self.portActions = appSettings.getPortActions()
                 self.portTerminalActions = appSettings.getPortTerminalActions()
                 self.automatedAttacks = appSettings.getSchedulerSettings()
+                #for matching
+                self.matchSettings = appSettings.getMatchSettings()
+
 
                 # general
                 self.general_default_terminal = self.generalSettings['default-terminal']

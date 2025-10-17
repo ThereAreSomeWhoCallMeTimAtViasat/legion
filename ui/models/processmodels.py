@@ -31,6 +31,7 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
         self.__headers = headers
         self.__processes = processes
         self.__controller = controller
+        self.__match_cache = {}  # Cache for match results
 
     @staticmethod
     def _format_duration(seconds):
@@ -80,10 +81,42 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
 
     def headerData(self, section, orientation, role):
         return resolveHeaders(role, orientation, section, self.__headers)
+    
+    #for matching
+    def _has_matches_for_tool(self, row):
+        """Check if a tool has matches, with caching"""
+        # Check cache first
+        if row in self.__match_cache:
+            return self.__match_cache[row]
+        
+        # Check for matches
+        has_matches = False
+        try:
+            from PyQt6 import QtWidgets
+            toolName = self.__processes[row].get('name', '')
+            view = self.__controller
+            
+            if hasattr(view, 'viewState') and hasattr(view.viewState, 'hostTabs'):
+                for hostIp, tabs in view.viewState.hostTabs.items():
+                    for tab in tabs:
+                        tabName = tab.objectName()
+                        if toolName in tabName:
+                            matches = tab.property('matches')
+                            if matches:
+                                has_matches = True
+                                break
+                    if has_matches:
+                        break
+        except:
+            pass
+        
+        # Cache the result
+        self.__match_cache[row] = has_matches
+        return has_matches
 
     # this method takes care of how the information is displayed
     def data(self, index, role):
-        if role == QtCore.Qt.ItemDataRole.DisplayRole or role == QtCore.Qt.ItemDataRole.EditRole: # how to display each cell
+        if role == QtCore.Qt.ItemDataRole.DisplayRole or role == QtCore.Qt.ItemDataRole.EditRole:
             value = ''
             row = index.row()
             column = index.column()
@@ -123,6 +156,32 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
             except Exception:
                 value = ""
             return value
+        
+        # Handle text color for tool name column
+        elif role == QtCore.Qt.ItemDataRole.ForegroundRole:
+            row = index.row()
+            column = index.column()
+            
+            if column == 5 and self._has_matches_for_tool(row):
+                from PyQt6.QtGui import QColor
+                return QColor('red')
+            
+            return None
+        
+        # Handle font weight (bold) for tool name column
+        elif role == QtCore.Qt.ItemDataRole.FontRole:
+            row = index.row()
+            column = index.column()
+            
+            if column == 5 and self._has_matches_for_tool(row):
+                from PyQt6.QtGui import QFont
+                font = QFont()
+                font.setBold(True)
+                return font
+            
+            return None
+        
+        return None
 
     def sort(self, Ncol, order):
         self.layoutAboutToBeChanged.emit()
@@ -175,6 +234,7 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
 
     def setDataList(self, processes):
         self.__processes = processes
+        self.__match_cache = {}  # Clear cache when data changes
         self.layoutAboutToBeChanged.emit()
         self.dataChanged.emit(self.createIndex(0, 0), self.createIndex(self.rowCount(0), self.columnCount(0)))
         self.layoutChanged.emit()

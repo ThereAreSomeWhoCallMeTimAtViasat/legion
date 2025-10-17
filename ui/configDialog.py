@@ -25,7 +25,7 @@ from app.auxiliary import *                                             # for ti
 from six import u as unicode
 from ui.ancillaryDialog import flipState
 
-class Config(QtWidgets.QPlainTextEdit):
+class Config(QtWidgets.QTextEdit):
     def __init__(self, qss, parent = None):
         super(Config, self).__init__(parent)
         self.setMinimumHeight(550)
