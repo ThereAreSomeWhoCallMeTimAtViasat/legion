@@ -142,10 +142,27 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
                     else:
                         value = self.__processes[row]['name']
                 elif column == 8:
-                    if not self.__processes[row]['port'] == '' and not self.__processes[row]['protocol'] == '':
-                        value = self.__processes[row]['port'] + '/' + self.__processes[row]['protocol']
+                    port = self.__processes[row].get('port', '')
+                    protocol = self.__processes[row].get('protocol', '')
+                    
+                    # If port/protocol exist, display them
+                    if port and protocol:
+                        value = f"{port}/{protocol}"
+                    elif port:
+                        value = port
                     else:
-                        value = self.__processes[row]['port']
+                        # No port data - extract text from parentheses in tabTitle
+                        tab_title = self.__processes[row].get('tabTitle', '')
+                        if tab_title and '(' in tab_title and ')' in tab_title:
+                            import re
+                            # Extract text within parentheses
+                            paren_match = re.search(r'\(([^)]+)\)', tab_title)
+                            if paren_match:
+                                value = paren_match.group(1)
+                            else:
+                                value = ''
+                        else:
+                            value = ''
                 elif column == 16:
                     value = ""
                 else:
@@ -182,6 +199,7 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
             return None
         
         return None
+
 
     def sort(self, Ncol, order):
         self.layoutAboutToBeChanged.emit()
