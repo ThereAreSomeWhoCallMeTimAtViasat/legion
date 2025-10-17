@@ -390,12 +390,16 @@ class Ui_MainWindow(object):
         self.actionNew.setObjectName(_fromUtf8("actionNew"))
         self.actionAddHosts = QtGui.QAction(MainWindow)
         self.actionAddHosts.setObjectName(_fromUtf8("actionAddHosts"))
+        self.actionNoteSelection = QtGui.QAction(MainWindow)
+        self.actionNoteSelection.setObjectName(_fromUtf8("actionNoteSelection"))
         self.actionExportJson = QtGui.QAction(MainWindow)
         self.actionExportJson.setObjectName(_fromUtf8("actionExportJson"))
         self.menuFile.addAction(self.actionNew)
         self.menuFile.addAction(self.actionOpen)
         self.menuFile.addAction(self.actionSave)
         self.menuFile.addAction(self.actionSaveAs)
+        self.menuFile.addSeparator()
+        self.menuFile.addAction(self.actionNoteSelection)
         self.menuFile.addAction(self.actionExportJson)
         self.menuFile.addSeparator()
         self.menuFile.addAction(self.actionAddHosts)
@@ -494,6 +498,8 @@ class Ui_MainWindow(object):
         self.actionImportNmap.setShortcut(QtWidgets.QApplication.translate("MainWindow", "Ctrl+I", None))
         self.actionSaveAs.setText(QtWidgets.QApplication.translate("MainWindow", "Save As", None))
         self.actionExportJson.setText(QtWidgets.QApplication.translate("MainWindow", "Export as JSON", None))
+        self.actionNoteSelection.setText(QtWidgets.QApplication.translate("MainWindow", "Send selection to notes", None))
+        self.actionNoteSelection.setShortcut(QtWidgets.QApplication.translate("MainWindow", "Ctrl+B", None))
         self.actionExportJson.setToolTip(
             QtWidgets.QApplication.translate(
                 "MainWindow",
@@ -511,6 +517,8 @@ class Ui_MainWindow(object):
         self.actionHelp.setShortcut(QtWidgets.QApplication.translate("MainWindow", "F1", None))
         self.actionConfig.setText(QtWidgets.QApplication.translate("MainWindow", "Config", None))
         self.actionConfig.setShortcut(QtWidgets.QApplication.translate("MainWindow", "F2", None))
+
+
 class MatchHighlighter(QtGui.QSyntaxHighlighter):
     def __init__(self, parent=None):
         super(MatchHighlighter, self).__init__(parent)
