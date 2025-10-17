@@ -18,9 +18,10 @@ Copyright (c) 2025 Shane William Scott
 """
 
 import shutil
+import os
 #for matching
 import csv
-import os
+import time
 
 from app.auxiliary import *  # for timestamp
 
@@ -34,6 +35,11 @@ class AppSettings():
     def __init__(self):
         config_dir = os.path.expanduser("~/.local/share/legion")
         config_path = os.path.join(config_dir, "legion.conf")
+
+        #for matching
+        #Clean up stale lock files FIRST
+        self.cleanupStaleLockFiles()
+
         if not os.path.exists(config_path):
             if not os.path.isdir(config_dir):
                 os.makedirs(config_dir, exist_ok=True)
@@ -45,6 +51,24 @@ class AppSettings():
                 log.error(f"Default configuration file not found at {default_conf}.")
         log.info('Loading settings file..')
         self.actions = QtCore.QSettings(config_path, QtCore.QSettings.Format.NativeFormat)
+
+    #for matching
+    def cleanupStaleLockFiles(self):
+        """Remove stale .lock files that can cause hangs on startup/exit"""
+        config_dir = os.path.expanduser("~/.local/share/legion")
+        config_path = os.path.join(config_dir, "legion.conf")
+        lock_file = config_path + ".lock"
+        
+        if os.path.exists(lock_file):
+            try:
+                # Check if lock file is stale (older than 5 seconds typically means crash)
+                lock_age = time.time() - os.path.getmtime(lock_file)
+                if lock_age > 5:
+                    log.warning(f"Removing stale lock file: {lock_file} (age: {lock_age:.1f}s)")
+                    os.remove(lock_file)
+            except Exception as e:
+                log.error(f"Failed to remove stale lock file: {e}")
+
 
     def getGeneralSettings(self):
         return self.getSettingsByGroup("GeneralSettings")
@@ -144,22 +168,22 @@ class AppSettings():
         self.actions.endGroup()
         return settings
    
-    
     def backupAndSave(self, newSettings, saveBackup=True):
         # Backup and save
         if saveBackup:
             log.info('Backing up old settings and saving new settings...')
+            backup_dir = os.path.expanduser("~/.local/share/legion/backup/")
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir, exist_ok=True)
             os.rename(
                 os.path.expanduser('~/.local/share/legion/legion.conf'),
-                os.path.expanduser("~/.local/share/legion/backup/") + getTimestamp() + '-legion.conf'
+                os.path.join(backup_dir, getTimestamp() + '-legion.conf')
             )
         else:
             log.info('Saving config...')
 
-        self.actions = QtCore.QSettings(
-            os.path.expanduser('~/.local/share/legion/legion.conf'),
-            QtCore.QSettings.Format.NativeFormat
-        )
+        # DON'T recreate QSettings - just clear and reuse existing one
+        self.actions.clear()  # Clear all existing settings
 
         self.actions.beginGroup('GeneralSettings')
         self.actions.setValue('default-terminal', newSettings.general_default_terminal)
@@ -225,7 +249,38 @@ class AppSettings():
             self.actions.setValue(tool[0], [tool[1], tool[2]])
         self.actions.endGroup()
 
-        self.actions.sync()
+        # Save MatchSettings
+        self.actions.beginGroup('MatchSettings')
+        self.actions.remove('')  # Clear existing keys in this group
+        
+        if hasattr(newSettings, 'matchSettings') and newSettings.matchSettings:
+            for scanner_name, directions_dict in newSettings.matchSettings.items():
+                if isinstance(directions_dict, dict):
+                    for direction, values_list in directions_dict.items():
+                        if direction in ['positive', 'negative']:
+                            setting_key = f"{scanner_name}-{direction}"
+                            if isinstance(values_list, list):
+                                csv_string = ','.join(str(v) for v in values_list)
+                            else:
+                                csv_string = str(values_list)
+                            self.actions.setValue(setting_key, csv_string)
+                            log.debug(f"Saved MatchSetting: {setting_key} = {csv_string}")
+        
+        self.actions.endGroup()
+
+        # Wrap sync in try/except with timeout protection
+        try:
+            log.info("Syncing settings to disk...")
+            self.actions.sync()
+            
+            # Check sync status
+            status = self.actions.status()
+            if status != QtCore.QSettings.Status.NoError:
+                log.error(f"QSettings sync failed with status: {status}")
+            else:
+                log.info("Settings synced successfully")
+        except Exception as e:
+            log.error(f"Exception during settings sync: {e}")
 
 
 # This class first sets all the default settings and
@@ -283,7 +338,7 @@ class Settings():
         self.stagedNmapSettings = []
         self.automatedAttacks = []
         #for matching
-        self.matchSettings = []
+        self.matchSettings = dict()
 
 
         # now that all defaults are set, overwrite with whatever was in the .conf file (stored in appSettings)

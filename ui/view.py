@@ -2484,9 +2484,38 @@ class View(QtCore.QObject):
         """
         log.info('=== CLEANUP BEFORE EXIT STARTED ===')
         
+        # === DIAGNOSTIC CODE ===
+        import threading
+        import sys
+        import os
+        import gc
+        
+        log.info("=== EXIT DIAGNOSTIC START ===")
+        log.info(f"Active threads: {threading.active_count()}")
+        for t in threading.enumerate():
+            log.info(f"  Thread: {t.name}, daemon={t.daemon}")
+        
+        # Force exit with timeout watchdog
+        def force_exit():
+            import time
+            time.sleep(10)
+            log.error("!!! HUNG - FORCING EXIT AFTER 10 SECONDS !!!")
+            log.error("Stack traces at timeout:")
+            for thread_id, frame in sys._current_frames().items():
+                log.error(f"\nThread {thread_id}:")
+                import traceback
+                log.error(''.join(traceback.format_stack(frame)))
+            os._exit(0)
+        
+        watchdog = threading.Thread(target=force_exit, daemon=True)
+        watchdog.start()
+        log.info("Started 10-second watchdog timer")
+        # === END DIAGNOSTIC CODE ===
+        
         try:
             # STEP 1: Stop all timers first (critical to prevent callbacks during cleanup)
             log.info('Step 1: Stopping all QTimer objects...')
+            timers_stopped = 0
             for attr_name in dir(self):
                 try:
                     attr = getattr(self, attr_name)
@@ -2494,9 +2523,14 @@ class View(QtCore.QObject):
                         if attr.isActive():
                             log.info(f'  Stopping timer: {attr_name}')
                             attr.stop()
-                            attr.disconnect()  # Disconnect all signals
+                            try:
+                                attr.disconnect()
+                            except:
+                                pass
+                            timers_stopped += 1
                 except (RuntimeError, AttributeError) as e:
                     log.warning(f'  Timer cleanup warning for {attr_name}: {e}')
+            log.info(f'  Stopped {timers_stopped} timers')
             
             # STEP 2: Kill any remaining processes with proper cleanup
             log.info('Step 2: Cleaning up processes...')
@@ -2507,9 +2541,51 @@ class View(QtCore.QObject):
                     self.controller.killRunningProcesses()
                 else:
                     log.info('  No running processes to clean')
+                
+                # CRITICAL: Wait for QProcess cleanup to complete
+                log.info('  Waiting for process cleanup to complete...')
+                QtWidgets.QApplication.processEvents()
+                import time
+                time.sleep(0.1)  # Give processes time to cleanup
+                log.info('  Process cleanup wait completed')
             
-            # STEP 3: Close database connections explicitly
-            log.info('Step 3: Closing database connections...')
+            # STEP 3: Save settings with extra protection
+            log.info('Step 3: Saving settings...')
+            if hasattr(self, 'controller') and self.controller:
+                try:
+                    log.info('  Calling saveSettings()...')
+                    self.controller.saveSettings()
+                    log.info('  saveSettings() completed successfully')
+                    log.info(f'  Active threads after saveSettings: {threading.active_count()}')
+                    
+                    # CRITICAL: Process events after settings save
+                    log.info('  Processing events after saveSettings...')
+                    QtWidgets.QApplication.processEvents()
+                    log.info('  Events processed')
+                    
+                except Exception as e:
+                    log.error(f'  saveSettings() error: {e}')
+                    import traceback
+                    log.error(f'  Traceback: {traceback.format_exc()}')
+            
+            # STEP 3.5: CRITICAL - Delete QSettings object explicitly before other cleanup
+            log.info('Step 3.5: Cleaning up QSettings...')
+            if hasattr(self, 'controller') and self.controller:
+                if hasattr(self.controller, 'settingsFile'):
+                    try:
+                        log.info('  Syncing and deleting QSettings...')
+                        if hasattr(self.controller.settingsFile, 'actions'):
+                            self.controller.settingsFile.actions.sync()
+                            log.info('  QSettings synced')
+                            del self.controller.settingsFile.actions
+                            log.info('  QSettings.actions deleted')
+                        del self.controller.settingsFile
+                        log.info('  settingsFile deleted')
+                    except Exception as e:
+                        log.error(f'  QSettings cleanup error: {e}')
+            
+            # STEP 4: Close database connections explicitly
+            log.info('Step 4: Closing database connections...')
             if hasattr(self, 'controller') and self.controller:
                 if hasattr(self.controller, 'db') and self.controller.db:
                     log.info('  Closing database connection')
@@ -2517,17 +2593,46 @@ class View(QtCore.QObject):
                         # Force commit and close
                         if hasattr(self.controller.db, 'commit'):
                             self.controller.db.commit()
+                            log.info('  Database committed')
                         if hasattr(self.controller.db, 'close'):
                             self.controller.db.close()
-                        log.info('  Database closed successfully')
+                            log.info('  Database closed')
                     except Exception as e:
                         log.error(f'  Database close error: {e}')
             
-            # STEP 4: Disconnect all signal connections from main window
-            log.info('Step 4: Disconnecting signals from main widgets...')
+            # STEP 5: Block signals and disconnect from all QProcess objects
+            log.info('Step 5: Disconnecting QProcess objects...')
+            if hasattr(self, 'controller') and self.controller:
+                if hasattr(self.controller, 'processes'):
+                    log.info(f'  Found {len(self.controller.processes)} process wrappers')
+                    for proc_id, proc_wrapper in list(self.controller.processes.items()):
+                        try:
+                            if hasattr(proc_wrapper, 'process'):
+                                log.info(f'  Cleaning process {proc_id}')
+                                proc_wrapper.process.blockSignals(True)
+                                # Disconnect all signals
+                                try:
+                                    proc_wrapper.process.finished.disconnect()
+                                except:
+                                    pass
+                                try:
+                                    proc_wrapper.process.readyReadStandardOutput.disconnect()
+                                except:
+                                    pass
+                                try:
+                                    proc_wrapper.process.errorOccurred.disconnect()
+                                except:
+                                    pass
+                                # Delete the process object
+                                proc_wrapper.process.deleteLater()
+                                log.info(f'  Process {proc_id} cleaned')
+                        except Exception as e:
+                            log.error(f'  Error cleaning process {proc_id}: {e}')
+            
+            # STEP 6: Disconnect all signal connections from main widgets
+            log.info('Step 6: Disconnecting signals from main widgets...')
             widgets_to_clean = []
             
-            # Add your main widgets here
             if hasattr(self, 'ui'):
                 widgets_to_clean.append(('ui', self.ui))
             if hasattr(self, 'settingsWidget'):
@@ -2540,48 +2645,64 @@ class View(QtCore.QObject):
                     try:
                         log.info(f'  Disconnecting signals from: {widget_name}')
                         widget.blockSignals(True)
-                        # Attempt to disconnect all
                         if hasattr(widget, 'disconnect'):
                             try:
                                 widget.disconnect()
                             except TypeError:
-                                pass  # Already disconnected
+                                pass
                     except (RuntimeError, AttributeError) as e:
                         log.warning(f'  Widget cleanup warning for {widget_name}: {e}')
             
-            # STEP 5: Close and delete child widgets explicitly
-            log.info('Step 5: Closing child widgets...')
+            # STEP 7: Close and delete child widgets explicitly
+            log.info('Step 7: Closing child widgets...')
             if hasattr(self, 'ui') and self.ui:
-                for child in self.ui.findChildren(QtWidgets.QWidget):
+                children = self.ui.findChildren(QtWidgets.QWidget)
+                log.info(f'  Found {len(children)} child widgets')
+                for child in children:
                     try:
                         child.close()
                     except (RuntimeError, AttributeError):
                         pass
             
-            # STEP 6: Process all pending events to clear Qt's event queue
-            log.info('Step 6: Processing pending Qt events...')
+            # STEP 8: Force garbage collection
+            log.info('Step 8: Running garbage collection...')
+            gc.collect()
+            collected = gc.collect()
+            log.info(f'  Collected {collected} objects')
+            
+            # STEP 9: Process all pending events to clear Qt's event queue
+            log.info('Step 9: Processing pending Qt events...')
             QtWidgets.QApplication.processEvents()
             QtCore.QCoreApplication.processEvents()
+            log.info('  Events processed')
             
-            # STEP 7: Close the main window
-            log.info('Step 7: Closing main window...')
+            # STEP 10: Close the main window
+            log.info('Step 10: Closing main window...')
             try:
                 if hasattr(self, 'ui') and self.ui:
                     self.ui.close()
+                    log.info('  Main window closed')
             except (RuntimeError, AttributeError) as e:
                 log.warning(f'  Main window close warning: {e}')
             
-            # STEP 8: Final event processing
-            log.info('Step 8: Final event processing...')
+            # STEP 11: Final event processing
+            log.info('Step 11: Final event processing...')
             QtWidgets.QApplication.processEvents()
             
             log.info('=== CLEANUP BEFORE EXIT COMPLETED SUCCESSFULLY ===')
+            log.info(f"Final thread count: {threading.active_count()}")
+            for t in threading.enumerate():
+                log.info(f"  Final thread: {t.name}, daemon={t.daemon}")
+            log.info("About to exit normally")
             
         except Exception as e:
             log.error(f'EXCEPTION during cleanupBeforeExit: {type(e).__name__}: {e}')
             import traceback
             log.error(f'Traceback:\n{traceback.format_exc()}')
-    
+            # Force exit on exception
+            log.error('Forcing exit due to exception')
+            os._exit(1)
+
     
     def closeEvent(self, event):
         """
@@ -2621,7 +2742,7 @@ class View(QtCore.QObject):
                 tabBar = self.ui.ServicesTabWidget.tabBar()
                 matches = tab.property('matches')
                 
-                print(f"DEBUG updateTabHighlight: tab={tabTitle}, matches={matches}")
+                #print(f"DEBUG updateTabHighlight: tab={tabTitle}, matches={matches}")
                 
                 if matches:
                     # Update tab styling
@@ -2643,10 +2764,10 @@ class View(QtCore.QObject):
                     matchText = 'Matches: ' + str(matches)
                     label = tab.findChild(QtWidgets.QLabel)
                     
-                    print(f"DEBUG updateTabHighlight: Looking for label in tab, found: {label is not None}")
+                    #print(f"DEBUG updateTabHighlight: Looking for label in tab, found: {label is not None}")
                     
                     if label:
-                        print(f"DEBUG updateTabHighlight: Setting label text to: {matchText}")
+                        #print(f"DEBUG updateTabHighlight: Setting label text to: {matchText}")
                         label.setText(matchText)
                         label.setVisible(True)
                         label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")

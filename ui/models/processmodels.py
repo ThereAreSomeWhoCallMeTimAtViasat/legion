@@ -113,6 +113,50 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
         # Cache the result
         self.__match_cache[row] = has_matches
         return has_matches
+    
+    #for matching
+    def _has_matches_for_this_process(self, row):
+        """Check if this specific process has matches, with caching"""
+        # Create a unique cache key for this specific process
+        cache_key = f"process_{row}"
+        
+        # Check cache first
+        if cache_key in self.__match_cache:
+            return self.__match_cache[cache_key]
+        
+        # Check for matches for this specific process
+        has_matches = False
+        try:
+            from PyQt6 import QtWidgets
+            
+            toolName = self.__processes[row].get('name', '')
+            hostIp = self.__processes[row].get('hostIp', '')
+            processId = self.__processes[row].get('id', '')
+            
+            view = self.__controller
+            
+            if hasattr(view, 'viewState') and hasattr(view.viewState, 'hostTabs'):
+                # Check only tabs for this specific host
+                tabs = view.viewState.hostTabs.get(hostIp, [])
+                for tab in tabs:
+                    # Match by tab name containing tool name
+                    tabName = tab.objectName()
+                    if toolName in tabName:
+                        # Check if this tab is for this specific process by comparing dbId
+                        text_widget = tab.findChild(QtWidgets.QTextEdit)
+                        if text_widget:
+                            tab_process_id = str(text_widget.property('dbId'))
+                            if tab_process_id == str(processId):
+                                matches = tab.property('matches')
+                                if matches:
+                                    has_matches = True
+                                    break
+        except:
+            pass
+        
+        # Cache the result
+        self.__match_cache[cache_key] = has_matches
+        return has_matches
 
     # this method takes care of how the information is displayed
     def data(self, index, role):
@@ -174,23 +218,37 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
                 value = ""
             return value
         
-        # Handle text color for tool name column
+        # Handle text color for tool name and port columns
         elif role == QtCore.Qt.ItemDataRole.ForegroundRole:
             row = index.row()
             column = index.column()
             
+            # Color column 5 (tool name) if ANY instance has matches
             if column == 5 and self._has_matches_for_tool(row):
+                from PyQt6.QtGui import QColor
+                return QColor('red')
+            
+            # Color column 8 (port) if THIS specific host/port has matches
+            elif column == 8 and self._has_matches_for_this_process(row):
                 from PyQt6.QtGui import QColor
                 return QColor('red')
             
             return None
         
-        # Handle font weight (bold) for tool name column
+        # Handle font weight (bold) for tool name and port columns
         elif role == QtCore.Qt.ItemDataRole.FontRole:
             row = index.row()
             column = index.column()
             
+            # Bold column 5 (tool name) if ANY instance has matches
             if column == 5 and self._has_matches_for_tool(row):
+                from PyQt6.QtGui import QFont
+                font = QFont()
+                font.setBold(True)
+                return font
+            
+            # Bold column 8 (port) if THIS specific host/port has matches
+            elif column == 8 and self._has_matches_for_this_process(row):
                 from PyQt6.QtGui import QFont
                 font = QFont()
                 font.setBold(True)
