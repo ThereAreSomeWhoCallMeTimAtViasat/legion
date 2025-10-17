@@ -54,7 +54,7 @@ class AddHostsDialog(QtWidgets.QDialog):
         
         self.lblHost = QtWidgets.QLabel(self)
         self.lblHost.setText('IP(s), Range(s), and Host(s)')
-        self.txtHostList = QtWidgets.QPlainTextEdit(self)
+        self.txtHostList = QtWidgets.QTextEdit(self)
 
         self.hlayout = QtWidgets.QHBoxLayout()
         self.hlayout.addWidget(self.lblHost)

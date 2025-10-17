@@ -226,9 +226,9 @@ class Ui_MainWindow(object):
         self.DisplayWidget.setSizePolicy(self.sizePolicy2)
         ### ?
         #self.toolOutputTextView = QtWidgets.QTextEdit(self.DisplayWidget)
-        self.toolOutputTextView = QtWidgets.QPlainTextEdit(self.DisplayWidget)
+        self.toolOutputTextView = QtWidgets.QTextEdit(self.DisplayWidget)
         self.toolOutputTextView.setReadOnly(True)
-        self.DisplayWidgetLayout = QtWidgets.QHBoxLayout(self.DisplayWidget)
+        self.DisplayWidgetLayout = QtWidgets.QVBoxLayout(self.DisplayWidget) #changed to QV from QH so labels go on top
         self.DisplayWidgetLayout.addWidget(self.toolOutputTextView)
         self.splitter_3.addWidget(self.DisplayWidget)
 
@@ -273,7 +273,7 @@ class Ui_MainWindow(object):
         self.ScriptsTableView.setObjectName(_fromUtf8("ScriptsTableView"))
         self.splitter_4.addWidget(self.ScriptsTableView)
         
-        self.ScriptsOutputTextEdit = QtWidgets.QPlainTextEdit()
+        self.ScriptsOutputTextEdit = QtWidgets.QTextEdit()
         self.ScriptsOutputTextEdit.setObjectName(_fromUtf8("ScriptsOutputTextEdit"))
         self.ScriptsOutputTextEdit.setReadOnly(True)
         self.splitter_4.addWidget(self.ScriptsOutputTextEdit)
@@ -288,7 +288,7 @@ class Ui_MainWindow(object):
         self.NotesTab.setObjectName(_fromUtf8("NotesTab"))
         self.horizontalLayout_4 = QtWidgets.QHBoxLayout(self.NotesTab)
         self.horizontalLayout_4.setObjectName(_fromUtf8("horizontalLayout_4"))
-        self.NotesTextEdit = QtWidgets.QPlainTextEdit(self.NotesTab)
+        self.NotesTextEdit = QtWidgets.QTextEdit(self.NotesTab)
         self.NotesTextEdit.setObjectName(_fromUtf8("NotesTextEdit"))
         self.horizontalLayout_4.addWidget(self.NotesTextEdit)
         self.ServicesTabWidget.addTab(self.NotesTab, _fromUtf8(""))
@@ -346,7 +346,7 @@ class Ui_MainWindow(object):
         self.LogTab.setObjectName(_fromUtf8("LogTab"))
         self.LogTabLayout = QtWidgets.QHBoxLayout(self.LogTab)
         self.LogTabLayout.setObjectName(_fromUtf8("LogTabLayout"))
-        self.LogOutputTextView = QPlainTextEditLogger(self.LogTab)
+        self.LogOutputTextView = QTextEditLogger(self.LogTab)
         self.LogOutputTextView.widget.setObjectName(_fromUtf8("LogOutputTextView"))
         self.LogOutputTextView.widget.setReadOnly(True)
         self.LogTabLayout.addWidget(self.LogOutputTextView.widget)
@@ -356,7 +356,7 @@ class Ui_MainWindow(object):
         # Python Tab - Disabled until next release
         #self.PythonTab = QtWidgets.QWidget()
         #self.PythonTab.setObjectName(_fromUtf8("PythonTab"))
-        #self.PythonOutputTextView = QtWidgets.QPlainTextEdit(self.PythonTab)
+        #self.PythonOutputTextView = QtWidgets.QTextEdit(self.PythonTab)
         #self.PythonOutputTextView.setReadOnly(False)
         #self.PythonTabLayout = QtWidgets.QHBoxLayout(self.PythonTab)
         #self.PythonTabLayout.addWidget(self.PythonOutputTextView)
@@ -511,3 +511,22 @@ class Ui_MainWindow(object):
         self.actionHelp.setShortcut(QtWidgets.QApplication.translate("MainWindow", "F1", None))
         self.actionConfig.setText(QtWidgets.QApplication.translate("MainWindow", "Config", None))
         self.actionConfig.setShortcut(QtWidgets.QApplication.translate("MainWindow", "F2", None))
+class MatchHighlighter(QtGui.QSyntaxHighlighter):
+    def __init__(self, parent=None):
+        super(MatchHighlighter, self).__init__(parent)
+        self.matchPatterns = []
+        self.matchFormat = QtGui.QTextCharFormat()
+        self.matchFormat.setBackground(QtGui.QColor(255, 255, 0))
+        self.matchFormat.setForeground(QtGui.QColor(255, 0, 0))
+        
+    def updateMatches(self, matches):
+        self.matchPatterns = list(matches)
+        self.rehighlight()
+    
+    def highlightBlock(self, text):
+        for pattern in self.matchPatterns:
+            index = text.find(pattern)
+            while index >= 0:
+                length = len(pattern)
+                self.setFormat(index, length, self.matchFormat)
+                index = text.find(pattern, index + length)

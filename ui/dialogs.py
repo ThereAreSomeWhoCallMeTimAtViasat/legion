@@ -290,7 +290,7 @@ class BruteWidget(QtWidgets.QWidget):
         self.labelPath.hide()
         self.layoutAddOptions.addStretch()
         
-        self.display = QtWidgets.QPlainTextEdit()
+        self.display = QtWidgets.QTextEdit()
         self.display.setReadOnly(True)
         if self.settings.general_tool_output_black_background == 'True':
             self.__drawPalette()
@@ -406,7 +406,7 @@ class BruteWidget(QtWidgets.QWidget):
 
     def resetDisplay(self):
         self.display.setParent(None)
-        self.display = QtWidgets.QPlainTextEdit()
+        self.display = QtWidgets.QTextEdit()
         self.display.setReadOnly(True)
         if self.settings.general_tool_output_black_background == 'True':
             self.__drawPalette()

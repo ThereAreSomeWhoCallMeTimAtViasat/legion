@@ -33,6 +33,11 @@ from app.timing import timing
 from PyQt6.QtWidgets import QAbstractItemView
 import subprocess
 
+#for matching
+from ansi2html import Ansi2HTMLConverter
+from PyQt6.QtGui import QTextDocument, QTextCursor
+
+
 log = getAppLogger()
 
 # Convert Windows path to Posix
@@ -199,9 +204,11 @@ class Wordlist():
 
 # Custom QProcess class
 class MyQProcess(QProcess):
-    sigHydra = QtCore.pyqtSignal(QObject, list, list, name="hydra")  # signal to indicate Hydra found stuff
+    sigHydra = QtCore.pyqtSignal(QObject, list, list, name="hydra")
+    sigTooltip = QtCore.pyqtSignal(str)
+    sigHasMatch = QtCore.pyqtSignal(str, name="hasMatch")
 
-    def __init__(self, name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox):
+    def __init__(self, name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox, settings=None):
         QProcess.__init__(self)
         self.id = -1
         self.name = name
@@ -212,25 +219,131 @@ class MyQProcess(QProcess):
         self.command = command
         self.startTime = startTime
         self.outputfile = outputfile
-        self.display = textbox  # has its own display widget to be able to display its output in the GUI
+        self.display = textbox
         self.elapsed = -1
+        self.settings = settings
+        self.matches = set()
 
-    @pyqtSlot()  # this slot allows the process to append its output to the display widget
+        if settings:
+            from ui.gui import MatchHighlighter
+            self.highlighter = MatchHighlighter(self.display.document())
+        else:
+            self.highlighter = None
+        
+        # CRITICAL: Connect the signals
+        #print(f"DEBUG: Connecting signals for {self.name}")
+        try:
+            self.readyReadStandardOutput.connect(self.readStdOutput)
+            #self.readyReadStandardError.connect(self.readStdError)
+            #print("DEBUG: Signals connected successfully")
+        except Exception as e:
+            print(f"DEBUG: Error connecting signals: {e}")
+
+    def setupChildProcess(self):
+        os.setpgrp()
+
+    def getMatches(self, line, settings, name):
+        matches = set()
+        
+        if name not in settings:
+            return matches
+
+        currentSettings = settings[name]
+
+        if 'negative' in currentSettings:
+            for match in currentSettings['negative']:
+                if match in line:
+                    return matches
+
+        if 'positive' in currentSettings:
+            for match in currentSettings['positive']:
+                if match in line:
+                    #print(f"DEBUG: Pattern '{match}' found in line: {line[:80]}")
+                    matches.add(match)
+
+        return matches
+
+    def handleMatches(self, output):
+        if not self.settings or not hasattr(self.settings, 'matchSettings'):
+            print("DEBUG: No settings or matchSettings available")
+            return '<br />'.join(output.split('\n'))
+        
+        #print(f"DEBUG: handleMatches called for tool: {self.name}")
+        #print(f"DEBUG: matchSettings keys: {list(self.settings.matchSettings.keys())}")
+            
+        matchSettings = self.settings.matchSettings
+        hlOutput = []
+
+        for line in output.split('\n'):
+            globalMatches = self.getMatches(line, matchSettings, 'global')
+            toolMatches = self.getMatches(line, matchSettings, self.name)
+            matches = globalMatches.union(toolMatches)
+            
+            if matches:
+                self.matches.update(matches)
+                #print(f"DEBUG: MATCH FOUND! Matches: {matches}")
+                self.sigHasMatch.emit(', '.join(self.matches))
+            hlOutput.append(line)
+
+        if self.highlighter:
+            self.highlighter.updateMatches(self.matches)
+        
+        #if self.matches:
+        #    print(f"DEBUG: Total matches accumulated: {self.matches}")
+        
+        return '<br />'.join(hlOutput)
+
+    @pyqtSlot()
     def readStdOutput(self):
-        output = str(self.readAllStandardOutput())
-        self.display.appendPlainText(unicode(output).strip())
+        #print(f"DEBUG: readStdOutput called for {self.name}")
+        output = str(self.readAllStandardOutput(), 'utf-8')
+        #print(f"DEBUG: Got output length: {len(output)}")
 
-        # check if any usernames/passwords were found (if so emit a signal so that the gui can tell the user about it)
+
+        try:
+            #print("DEBUG: Starting ANSI conversion")
+            from ansi2html import Ansi2HTMLConverter
+            conv = Ansi2HTMLConverter(inline=True, linkify=True)
+            html = conv.convert(output, full=False)
+            #print(f"DEBUG: HTML conversion successful, length: {len(html)}")
+            #print(f"DEBUG: HTML preview: {html[:200]}")
+
+
+            #print("DEBUG: Getting text cursor")
+            cursor = self.display.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            #print("DEBUG: Inserting HTML")
+            cursor.insertHtml('<pre>' + html + ' < /pre>')  #spaces matter
+            #print("DEBUG: HTML inserted successfully")
+
+
+            doc = QTextDocument()
+            doc.setHtml(html)
+            plain_text = doc.toPlainText()
+            #print(f"DEBUG: Plain text extracted, length: {len(plain_text)}")
+
+
+            self.handleMatches(plain_text)
+            #print("DEBUG: handleMatches completed")
+            
+        except ImportError as e:
+            #print(f"DEBUG: ImportError - ansi2html not available: {e}")
+            self.display.insertPlainText(unicode(output).strip())
+        except Exception as e:
+            #print(f"DEBUG: Exception in readStdOutput: {e}")
+            import traceback
+            traceback.print_exc()
+            self.display.insertPlainText(unicode(output).strip())
+
+
         if self.name == 'hydra':
             found, userlist, passlist = checkHydraResults(output)
-            if found:  # send the brutewidget object along with lists of found usernames/passwords
+            if found:
                 self.sigHydra.emit(self.display.parentWidget(), userlist, passlist)
 
-        stderror = str(self.readAllStandardError())
 
-        if len(stderror) > 0:
-            self.display.appendPlainText(unicode(stderror).strip())  # append standard error too
-
+        # Note: stderr is merged with stdout via MergedChannels in QProcess setup
+        # Both stdout and stderr are already included in readAllStandardOutput() above
 
 # browser opener class with queue and semaphores
 class BrowserOpener(QtCore.QThread):

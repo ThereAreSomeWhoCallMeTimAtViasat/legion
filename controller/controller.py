@@ -40,7 +40,7 @@ try:
     import queue
 except Exception:
     log.exception("Failed to import queue module")
-    import Queue as queue
+    #import Queue as queue
 from app.logic import *
 from app.settings import *
 from db.entities.port import portObj
@@ -140,6 +140,8 @@ class Controller:
         self.initTimers()
         self.processTimers = {}
         self.processMeasurements = {}
+
+
 
     # initialisations that will happen everytime we create/open a project - can happen several times in the
     # program's lifetime
@@ -1110,8 +1112,8 @@ class Controller:
                 p.blockSignals(True)
                 
                 # Disconnect all signals
-                signals = ['finished', 'readyReadStandardOutput', 'readyReadStandardError', 
-                          'errorOccurred', 'stateChanged', 'started']
+                signals = ['finished', 'readyReadStandardOutput', 'errorOccurred', 'stateChanged', 'started']
+
                 for sig_name in signals:
                     try:
                         sig = getattr(p, sig_name, None)
@@ -1216,7 +1218,10 @@ class Controller:
             return 0
 
         self.logic.createFolderForTool(name)
-        qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox)
+        #new MyQProcess for the updated class
+        qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox, self.settings)
+        qProcess.sigHasMatch.connect(lambda matchStr: self.handleMatch(hostIp, tabTitle, matchStr))
+
         qProcess.started.connect(timer.start)
         qProcess.finished.connect(handleProcStop)
         updateElapsed.timeout.connect(handleProcUpdate)
@@ -1238,7 +1243,7 @@ class Controller:
         self.updateUITimer.start(900)
 
         qProcess.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
-        qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.appendPlainText(
+        qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.insertPlainText(
             str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))))
 
         qProcess.sigHydra.connect(self.handleHydraFindings)
@@ -1273,7 +1278,10 @@ class Controller:
         command = 'python3 --version'
         startTime = getTimestamp(True)
         outputfile = tempfile.NamedTemporaryFile(delete=False).name
-        qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox)
+
+        #new MyQProcess for the updated class
+        qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox, self.settings)
+        qProcess.sigHasMatch.connect(lambda matchStr: self.handleMatch(hostIp, tabTitle, matchStr))
 
         processRepository = self.logic.activeProject.repositoryContainer.processRepository
         textbox.setProperty('dbId', str(processRepository.storeProcess(qProcess)))
@@ -1284,7 +1292,7 @@ class Controller:
         self.checkProcessQueue()
 
         qProcess.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
-        qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.appendPlainText(
+        qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.insertPlainText(
             str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))))
 
         qProcess.sigHydra.connect(self.handleHydraFindings)
@@ -1678,3 +1686,15 @@ class Controller:
             self.view.updateInterface()
         except Exception as e:
             log.error(f"Failed to add port to host {host_ip}: {e}")
+
+    def handleMatch(self, hostIp, tabTitle, matchStr):
+        if hasattr(self.view, 'viewState') and hasattr(self.view.viewState, 'hostTabs'):
+            if hostIp in self.view.viewState.hostTabs:
+                tabs = self.view.viewState.hostTabs[hostIp]
+                for tab in tabs:
+                    if tab.objectName() == tabTitle:
+                        tab.setProperty('matches', matchStr)
+                        self.view.updateTabHighlight(hostIp, tabTitle)
+                        break
+
+

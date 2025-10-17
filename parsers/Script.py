@@ -27,7 +27,6 @@ class Script:
         output = [entry for entry in output if len(entry) > 1]
         print(str(output))
 
-
     def processVulnersScriptOutput(self, vulnersOutput):
         import re
 
@@ -72,10 +71,12 @@ class Script:
                         'product': current_product
                     }
                     exploitResults = pyExploitDb.searchCve(fields[0])
-                    if exploitResults:
-                        cve_dict['exploitId'] = exploitResults['edbid']
-                        cve_dict['exploit'] = exploitResults['exploit']
-                        cve_dict['exploitUrl'] = "https://www.exploit-db.com/exploits/{0}".format(cve_dict['exploitId'])
+                    if exploitResults and isinstance(exploitResults, dict):
+                        edbid = exploitResults.get('edbid')
+                        if edbid:
+                            cve_dict['exploitId'] = edbid
+                            cve_dict['exploit'] = exploitResults.get('exploit', '')
+                            cve_dict['exploitUrl'] = "https://www.exploit-db.com/exploits/{0}".format(edbid)
                     cve_list.append(cve_dict)
                 continue
         # Save last product's CVEs
@@ -83,6 +84,7 @@ class Script:
             resultsDict[current_product] = cve_list
 
         return resultsDict
+
 
     def getCves(self):
         cveOutput = self.output
@@ -101,7 +103,29 @@ class Script:
            return cveObjects
         return None
 
+
     def scriptSelector(self, host):
+        scriptId = str(self.scriptId).lower()
+        results = []
+        if 'vulners' in scriptId:
+            print("------------------------VULNERS")
+            cveResults = self.getCves()
+            if cveResults:  # Added None check here
+                for cveEntry in cveResults:
+                    t_cve = cve(name=cveEntry.name, url=cveEntry.url, source=cveEntry.source,
+                                severity=cveEntry.severity, product=cveEntry.product, version=cveEntry.version,
+                                hostId=host.id, exploitId=cveEntry.exploitId, exploit=cveEntry.exploit,
+                                exploitUrl=cveEntry.exploitUrl)
+                    results.append(t_cve)
+            return results
+        elif 'shodan-api' in scriptId:
+            print("------------------------SHODAN")
+            self.processShodanScriptOutput(self.output)
+            return results
+        else:
+            print("-----------------------*{0}".format(scriptId))
+            return results
+
         scriptId = str(self.scriptId).lower()
         results = []
         if 'vulners' in scriptId:

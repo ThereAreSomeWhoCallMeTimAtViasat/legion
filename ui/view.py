@@ -846,8 +846,24 @@ class View(QtCore.QObject):
 
     def connectToolHostsClick(self):
         self.ui.ToolHostsTableView.clicked.connect(self.toolHostsClick)
+    
+    #for matching
+    def ensureLabelUpdated(self, tab):
+        """Ensure the label in a tab is properly displayed if matches exist"""
+        if not tab:
+            return
+            
+        matches = tab.property('matches')
+        label = tab.findChild(QtWidgets.QLabel)
+        
+        if matches and label:
+            matchText = 'Matches: ' + str(matches)
+            label.setText(matchText)
+            label.setVisible(True)
+            label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
+            #print(f"DEBUG ensureLabelUpdated: Set label for {tab.objectName()}")
 
-    # TODO: review / duplicate code
+
     def toolHostsClick(self):
         if self.ui.ToolHostsTableView.selectionModel().selectedRows():
             row = self.ui.ToolHostsTableView.selectionModel().selectedRows()[len(
@@ -864,18 +880,37 @@ class View(QtCore.QObject):
                 self.restoreToolTabWidget()
 
                 # remove the tool output currently in the tools display panel (if any)
-                if self.ui.DisplayWidget.findChild(QtWidgets.QPlainTextEdit):
-                    self.ui.DisplayWidget.findChild(QtWidgets.QPlainTextEdit).setParent(None)
+                if self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit):
+                    self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit).setParent(None)
+                
+                # Remove any existing display labels
+                for label in self.ui.DisplayWidget.findChildren(QtWidgets.QLabel):
+                    label.setParent(None)
 
-                tabs = []                                               # fetch tab list for this host (if any)
+                tabs = []
                 if str(ip) in self.viewState.hostTabs:
                     tabs = self.viewState.hostTabs[str(ip)]
                 
-                for tab in tabs: # place the tool output textview in the tools display panel
-                    if tab.findChild(QtWidgets.QPlainTextEdit) and \
-                            str(tab.findChild(QtWidgets.QPlainTextEdit).property('dbId')) == \
-                            str(self.viewState.tool_host_clicked):
-                        self.ui.DisplayWidgetLayout.addWidget(tab.findChild(QtWidgets.QPlainTextEdit))
+                for tab in tabs:
+                    text_widget = tab.findChild(QtWidgets.QTextEdit)
+                    if text_widget and str(text_widget.property('dbId')) == str(self.viewState.tool_host_clicked):
+                        # ENSURE the label in the tab is updated first
+                        self.ensureLabelUpdated(tab)
+                        
+                        # Check if tab has matches and create a COPY of the label for DisplayWidget
+                        label_in_tab = tab.findChild(QtWidgets.QLabel)
+                        matches = tab.property('matches')
+                        
+                        if label_in_tab and matches:
+                            # Create a NEW label for DisplayWidget (don't move the original)
+                            display_label = QtWidgets.QLabel()
+                            display_label.setText(label_in_tab.text())
+                            display_label.setStyleSheet(label_in_tab.styleSheet())
+                            display_label.setVisible(True)
+                            self.ui.DisplayWidgetLayout.addWidget(display_label)
+                        
+                        # Add the text widget (this DOES get moved)
+                        self.ui.DisplayWidgetLayout.addWidget(text_widget)
                         break
 
     ###
@@ -1878,7 +1913,7 @@ class View(QtCore.QObject):
         return safe
 
     def _save_tool_text(self, widget, tab_title):
-        text_edit = widget if isinstance(widget, QtWidgets.QPlainTextEdit) else widget.findChild(QtWidgets.QPlainTextEdit)
+        text_edit = widget if isinstance(widget, QtWidgets.QTextEdit) else widget.findChild(QtWidgets.QTextEdit)
         if not text_edit:
             log.info(f"No textual content found for tab '{tab_title}'")
             return
@@ -1963,14 +1998,14 @@ class View(QtCore.QObject):
     def _saveToolTabContent(self, index, widget):
         tab_title = self.ui.ServicesTabWidget.tabText(index)
         log.info(f"Tool tab save requested: index={index}, title='{tab_title}', widget={type(widget)}")
-        if widget.findChild(QtWidgets.QPlainTextEdit):
+        if widget.findChild(QtWidgets.QTextEdit):
             self._save_tool_text(widget, tab_title)
             return
         if hasattr(widget, 'imageLabel'):
             self._save_tool_image(widget, tab_title)
             return
-        # If widget is directly a QPlainTextEdit or ImageViewer
-        if isinstance(widget, QtWidgets.QPlainTextEdit):
+        # If widget is directly a QTextEdit or ImageViewer
+        if isinstance(widget, QtWidgets.QTextEdit):
             self._save_tool_text(widget, tab_title)
         elif isinstance(widget, ImageViewer):
             self._save_tool_image(widget, tab_title)
@@ -2035,47 +2070,51 @@ class View(QtCore.QObject):
     def createNewTabForHost(self, ip, tabTitle, restoring=False, content='', filename=''):
         # TODO: use regex otherwise tools with 'screenshot' in the name are screwed.
         if 'screenshot' in str(tabTitle):
-            image_viewer = ImageViewer()
-            image_viewer.setObjectName(str(tabTitle))
-            image_viewer.open(str(filename))
-            tempWidget = image_viewer.scrollArea
+            tempWidget = ImageViewer()
             tempWidget.setObjectName(str(tabTitle))
-            tempWidget._imageViewerRef = image_viewer
+            tempWidget.open(str(filename))
+            tempTextView = tempWidget.scrollArea
+            tempTextView.setObjectName(str(tabTitle))
         else:
             tempWidget = QtWidgets.QWidget()
             tempWidget.setObjectName(str(tabTitle))
-            tempTextView = QtWidgets.QPlainTextEdit(tempWidget)
+            
+            # Create label for displaying matches
+            tempMatches = QtWidgets.QLabel()
+            tempMatches.setVisible(True)
+            
+            tempTextView = QtWidgets.QTextEdit(tempWidget)
             tempTextView.setReadOnly(True)
             if self.controller.getSettings().general_tool_output_black_background == 'True':
                 p = tempTextView.palette()
-                p.setColor(QtGui.QPalette.ColorRole.Base, Qt.GlobalColor.black)               # black background
-                p.setColor(QtGui.QPalette.ColorRole.Text, Qt.GlobalColor.white)               # white font
+                p.setColor(QtGui.QPalette.ColorRole.Base, Qt.GlobalColor.black)
+                p.setColor(QtGui.QPalette.ColorRole.Text, Qt.GlobalColor.white)
                 tempTextView.setPalette(p)
-                # font-size:18px; width: 150px; color:red; left: 20px;}"); # set the menu font color: black
                 tempTextView.setStyleSheet("QMenu { color:black;}")
-            tempLayout = QtWidgets.QHBoxLayout(tempWidget)
+            
+            # Use VBoxLayout to stack label on top of text view
+            tempLayout = QtWidgets.QVBoxLayout(tempWidget)
+            tempLayout.addWidget(tempMatches)
             tempLayout.addWidget(tempTextView)
         
-            if not content == '':                                       # if there is any content to display
-                tempTextView.appendPlainText(content)
+            if not content == '':
+                tempTextView.setHtml(content)
 
         # if restoring tabs (after opening a project) don't show the tab in the ui
         if restoring == False:
             self.ui.ServicesTabWidget.addTab(tempWidget, str(tabTitle))
     
-        hosttabs = []                                                   # fetch tab list for this host (if any)
+        hosttabs = []
         if str(ip) in self.viewState.hostTabs:
             hosttabs = self.viewState.hostTabs[str(ip)]
         
         if 'screenshot' in str(tabTitle):
-            hosttabs.append(tempWidget)                                 # add scroll area for screenshot tabs
+            hosttabs.append(tempWidget.scrollArea)
         else:
-            hosttabs.append(tempWidget)                                 # add the new tab to the list
+            hosttabs.append(tempWidget)
         
         self.viewState.hostTabs.update({str(ip):hosttabs})
 
-        if 'screenshot' in str(tabTitle):
-            return tempWidget
         return tempTextView
 
 
@@ -2083,7 +2122,7 @@ class View(QtCore.QObject):
 
         tempWidget = QtWidgets.QWidget()
         tempWidget.setObjectName(str(tabTitle))
-        tempTextView = QtWidgets.QPlainTextEdit(tempWidget)
+        tempTextView = QtWidgets.QTextEdit(tempWidget)
         tempTextView.setReadOnly(True)
         if self.controller.getSettings().general_tool_output_black_background == 'True':
             p = tempTextView.palette()
@@ -2128,7 +2167,7 @@ class View(QtCore.QObject):
             dbId_prop = currentWidget.property('dbId')
             dbId = int(dbId_prop) if dbId_prop is not None else None
         elif not isBruteTab:
-            text_widget = currentWidget.findChild(QtWidgets.QPlainTextEdit)
+            text_widget = currentWidget.findChild(QtWidgets.QTextEdit)
             dbId_prop = text_widget.property('dbId') if text_widget else None
             dbId = int(dbId_prop) if dbId_prop is not None else None
         else:
@@ -2222,32 +2261,79 @@ class View(QtCore.QObject):
             self.tick.emit(int(totalprogress))
         
     def restoreToolTabsForHost(self, ip):
-        if (self.viewState.hostTabs) and (ip in self.viewState.hostTabs):
-            tabs = self.viewState.hostTabs[ip]    # use the ip as a key to retrieve its list of tooltabs
+        settings = self.controller.getSettings()
+        if not hasattr(self, 'viewState') or not hasattr(self.viewState, 'hostTabs'):
+            return
+            
+        if self.viewState.hostTabs and ip in self.viewState.hostTabs:
+            tabs = self.viewState.hostTabs[ip]
+            
+            matchedTabs = []
+            nonMatchedTabs = []
+            
             for tab in tabs:
-                # do not display hydra and nmap tabs when restoring for that host
-                if 'hydra' not in tab.objectName() and 'nmap' not in tab.objectName():
-                    self.ui.ServicesTabWidget.addTab(tab, tab.objectName())
+                tabName = tab.objectName()
+                matches = tab.property('matches')
+                matched = False
+                tabIndex = self.ui.ServicesTabWidget.indexOf(tab)
+                
+                #print(f"DEBUG: Checking tab {tabName}, matches property: {matches}")
+                
+                if matches:
+                    matched = True
+                    matchText = 'Matches:' + str(matches).strip()
+                    label = tab.findChild(QtWidgets.QLabel)
+                    
+                    #print(f"DEBUG: Found matches! Label found: {label is not None}")
+                    
+                    if label:
+                        #print(f"DEBUG: Setting label text to: {matchText}")
+                        label.setText(matchText)
+                        label.setVisible(True)
+                        label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
+                    else:
+                        print(f"DEBUG: ERROR - Label not found in tab {tabName}")
+                
+                if 'hydra' in tabName or 'nmap' in tabName:
+                    continue
+                
+                if matched:
+                    matchedTabs.append(tab)
+                else:
+                    nonMatchedTabs.append(tab)
+            
+            for tab in matchedTabs:
+                tabindex = self.ui.ServicesTabWidget.addTab(tab, tab.objectName())
+                self.ui.ServicesTabWidget.tabBar().setTabTextColor(tabindex, QtGui.QColor('red'))
+            
+            for tab in nonMatchedTabs:
+                self.ui.ServicesTabWidget.addTab(tab, tab.objectName())
 
     # this function restores the textview widget (now in the tools display widget) to its original tool tab
     # (under the correct host)
     def restoreToolTabWidget(self, clear=False):
-        if self.ui.DisplayWidget.findChild(QtWidgets.QPlainTextEdit) == self.ui.toolOutputTextView:
+        if self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit) == self.ui.toolOutputTextView:
             return
         
         for host in self.viewState.hostTabs.keys():
             hosttabs = self.viewState.hostTabs[host]
             for tab in hosttabs:
-                if 'screenshot' not in str(tab.objectName()) and not tab.findChild(QtWidgets.QPlainTextEdit):
-                    tab.layout().addWidget(self.ui.DisplayWidget.findChild(QtWidgets.QPlainTextEdit))
+                if 'screenshot' not in str(tab.objectName()) and not tab.findChild(QtWidgets.QTextEdit):
+                    tab.layout().addWidget(self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit))
                     break
 
         if clear:
             # remove the tool output currently in the tools display panel
-            if self.ui.DisplayWidget.findChild(QtWidgets.QPlainTextEdit):
-                self.ui.DisplayWidget.findChild(QtWidgets.QPlainTextEdit).setParent(None)
+            if self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit):
+                self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit).setParent(None)
                 
             self.ui.DisplayWidgetLayout.addWidget(self.ui.toolOutputTextView)
+
+        # After restoring, ensure labels are updated
+        if hasattr(self, 'viewState') and hasattr(self.viewState, 'hostTabs'):
+            for ip, tabs in self.viewState.hostTabs.items():
+                for tab in tabs:
+                    self.ensureLabelUpdated(tab)
 
     #################### BRUTE TABS ####################
     
@@ -2520,3 +2606,60 @@ class View(QtCore.QObject):
             log.info('closeEvent: User canceled exit, ignoring event')
             event.ignore()
 
+    def updateTabHighlight(self, hostIp, tabTitle):
+        if not hasattr(self, 'viewState') or not hasattr(self.viewState, 'hostTabs'):
+            return
+            
+        tabs = self.viewState.hostTabs.get(hostIp, [])
+        
+        for tab in tabs:
+            if tab.objectName() == tabTitle:
+                tabIndex = self.ui.ServicesTabWidget.indexOf(tab)
+                if tabIndex == -1:
+                    return
+                
+                tabBar = self.ui.ServicesTabWidget.tabBar()
+                matches = tab.property('matches')
+                
+                print(f"DEBUG updateTabHighlight: tab={tabTitle}, matches={matches}")
+                
+                if matches:
+                    # Update tab styling
+                    tabBar.setStyleSheet(
+                        f"QTabBar::tab:nth-child({tabIndex + 1}) {{"
+                        "   color: red;"
+                        "   background-color: yellow;"
+                        "   font-weight: bold;"
+                        "}"
+                        f"QTabBar::tab:selected:nth-child({tabIndex + 1}) {{"
+                        "   color: red;"
+                        "   background-color: yellow;"
+                        "   font-weight: bold;"
+                        "}"
+                    )
+                    tabBar.setTabTextColor(tabIndex, QColor('red'))
+                    
+                    # Update the label with match text
+                    matchText = 'Matches: ' + str(matches)
+                    label = tab.findChild(QtWidgets.QLabel)
+                    
+                    print(f"DEBUG updateTabHighlight: Looking for label in tab, found: {label is not None}")
+                    
+                    if label:
+                        print(f"DEBUG updateTabHighlight: Setting label text to: {matchText}")
+                        label.setText(matchText)
+                        label.setVisible(True)
+                        label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
+                    else:
+                        print(f"DEBUG updateTabHighlight: No label found, tab children: {[child.__class__.__name__ for child in tab.children()]}")
+                else:
+                    tabBar.setStyleSheet('')
+                    tabBar.setTabTextColor(tabIndex, QColor('black'))
+                
+                # Force the ToolsTableView to repaint so tool names update color
+                if hasattr(self, 'ToolsTableModel'):
+                    self.ToolsTableModel.layoutChanged.emit()
+                if hasattr(self, 'ui') and hasattr(self.ui, 'ToolsTableView'):
+                    self.ui.ToolsTableView.viewport().update()
+                  
+                return
