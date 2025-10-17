@@ -157,6 +157,8 @@ class View(QtCore.QObject):
 
         self.ui.ServicesTabWidget.setTabsClosable(True)  # hide the close button (cross) from the fixed tabs
 
+        self.ui.actionNoteSelection.triggered.connect(self.sendSelectionToNotes)
+
         self.ui.ServicesTabWidget.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
         self.ui.ServicesTabWidget.tabBar().setTabButton(1, QTabBar.ButtonPosition.RightSide, None)
         self.ui.ServicesTabWidget.tabBar().setTabButton(2, QTabBar.ButtonPosition.RightSide, None)
@@ -2784,3 +2786,34 @@ class View(QtCore.QObject):
                     self.ui.ToolsTableView.viewport().update()
                   
                 return
+            
+    def sendSelectionToNotes(self):
+        selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
+        if not selectedTab == 'Hosts':
+            return
+
+        currentIndex = self.ui.ServicesTabWidget.currentIndex()
+        if currentIndex <= 3:
+            return
+
+        widget = self.ui.ServicesTabWidget.widget(currentIndex)
+        ###TODO: crashes if ctrl+b is pressed with nothing selected     
+        # selection = widget.findChild(QtWidgets.QTextEdit).textCursor().selectedText() AttributeError: 'NoneType' object has no attribute 'textCursor'
+        # selection = widget.findChild(QtWidgets.QTextEdit).textCursor().selectedText()
+        selection = ""
+        
+        textEdit = widget.findChild(QtWidgets.QTextEdit)
+        if textEdit:
+            selection = textEdit.textCursor().selectedText()
+            if not selection:
+                # Handle empty selection case, e.g. ignore or show message
+                selection = ""
+        else:
+            # Handle missing QTextEdit child widget if needed
+            selection = ""
+        
+        title = self.ui.ServicesTabWidget.tabText(currentIndex)
+        if selection:
+            self.ui.NotesTextEdit.insertPlainText("=== Selection from {} ===\n".format(title))
+            self.ui.NotesTextEdit.insertPlainText(selection)
+            self.ui.NotesTextEdit.insertPlainText('\n\n')
