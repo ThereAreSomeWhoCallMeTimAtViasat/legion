@@ -2480,6 +2480,7 @@ class View(QtCore.QObject):
         This MUST be called via QApplication.aboutToQuit signal.
         Prevents segmentation faults by cleaning up in proper order.
         """
+        log.info('!!! CLEANUPBEFOREEXIT WAS CALLED !!!')  # THIS LINE FIRST
         log.info('=== CLEANUP BEFORE EXIT STARTED ===')
         
         # === DIAGNOSTIC CODE ===
@@ -2487,31 +2488,32 @@ class View(QtCore.QObject):
         import sys
         import os
         import gc
+        import traceback
         
         log.info("=== EXIT DIAGNOSTIC START ===")
         log.info(f"Active threads: {threading.active_count()}")
         for t in threading.enumerate():
-            log.info(f"  Thread: {t.name}, daemon={t.daemon}")
+            log.info(f"  Thread: {t.name}, daemon={t.daemon}, alive={t.is_alive()}")
         
-        # Force exit with timeout watchdog
+        # Force exit with timeout watchdog - INCREASED TO 15 SECONDS FOR MORE DEBUG TIME
         def force_exit():
             import time
-            time.sleep(10)
-            log.error("!!! HUNG - FORCING EXIT AFTER 10 SECONDS !!!")
-            log.error("Stack traces at timeout:")
+            time.sleep(15)
+            log.error("!!! HUNG - FORCING EXIT AFTER 15 SECONDS !!!")
+            log.error("=== DUMPING STACK TRACES ===")
             for thread_id, frame in sys._current_frames().items():
                 log.error(f"\nThread {thread_id}:")
-                import traceback
                 log.error(''.join(traceback.format_stack(frame)))
+            log.error("=== END STACK TRACES ===")
             os._exit(0)
         
         watchdog = threading.Thread(target=force_exit, daemon=True)
         watchdog.start()
-        log.info("Started 10-second watchdog timer")
+        log.info("Started 15-second watchdog timer")
         # === END DIAGNOSTIC CODE ===
         
         try:
-            # STEP 1: Stop all timers first (critical to prevent callbacks during cleanup)
+            # STEP 1: Stop all timers first
             log.info('Step 1: Stopping all QTimer objects...')
             timers_stopped = 0
             for attr_name in dir(self):
@@ -2529,8 +2531,9 @@ class View(QtCore.QObject):
                 except (RuntimeError, AttributeError) as e:
                     log.warning(f'  Timer cleanup warning for {attr_name}: {e}')
             log.info(f'  Stopped {timers_stopped} timers')
+            log.info('Step 1: COMPLETE')
             
-            # STEP 2: Kill any remaining processes with proper cleanup
+            # STEP 2: Kill remaining processes
             log.info('Step 2: Cleaning up processes...')
             if hasattr(self, 'controller') and self.controller:
                 running = self.controller.getRunningProcesses()
@@ -2540,164 +2543,85 @@ class View(QtCore.QObject):
                 else:
                     log.info('  No running processes to clean')
                 
-                # CRITICAL: Wait for QProcess cleanup to complete
                 log.info('  Waiting for process cleanup to complete...')
                 QtWidgets.QApplication.processEvents()
                 import time
-                time.sleep(0.1)  # Give processes time to cleanup
+                time.sleep(0.2)
                 log.info('  Process cleanup wait completed')
+            log.info('Step 2: COMPLETE')
             
-            # STEP 3: Save settings with extra protection
+            # STEP 3: Save settings with EXTENSIVE debugging
             log.info('Step 3: Saving settings...')
             if hasattr(self, 'controller') and self.controller:
                 try:
-                    log.info('  Calling saveSettings()...')
-                    self.controller.saveSettings()
-                    log.info('  saveSettings() completed successfully')
-                    log.info(f'  Active threads after saveSettings: {threading.active_count()}')
+                    log.info('  [3A] About to call saveSettings()...')
+                    log.info(f'  [3A] Thread count before: {threading.active_count()}')
                     
-                    # CRITICAL: Process events after settings save
-                    log.info('  Processing events after saveSettings...')
+                    self.controller.saveSettings()
+                    
+                    log.info('  [3B] saveSettings() RETURNED successfully')
+                    log.info(f'  [3B] Thread count after: {threading.active_count()}')
+                    
+                    log.info('  [3C] Threads after saveSettings:')
+                    for t in threading.enumerate():
+                        log.info(f'    - {t.name}, daemon={t.daemon}')
+                    
+                    log.info('  [3D] Processing events after saveSettings...')
                     QtWidgets.QApplication.processEvents()
-                    log.info('  Events processed')
+                    log.info('  [3E] Events processed')
                     
                 except Exception as e:
-                    log.error(f'  saveSettings() error: {e}')
-                    import traceback
-                    log.error(f'  Traceback: {traceback.format_exc()}')
+                    log.error(f'  [3ERROR] saveSettings() exception: {e}')
+                    log.error(f'  [3ERROR] Traceback: {traceback.format_exc()}')
+            log.info('Step 3: COMPLETE')
             
-            # STEP 3.5: CRITICAL - Delete QSettings object explicitly before other cleanup
+            # STEP 3.5: Delete QSettings object
             log.info('Step 3.5: Cleaning up QSettings...')
             if hasattr(self, 'controller') and self.controller:
                 if hasattr(self.controller, 'settingsFile'):
                     try:
-                        log.info('  Syncing and deleting QSettings...')
+                        log.info('  [3.5A] Found settingsFile')
                         if hasattr(self.controller.settingsFile, 'actions'):
+                            log.info('  [3.5B] Syncing QSettings...')
                             self.controller.settingsFile.actions.sync()
-                            log.info('  QSettings synced')
+                            log.info('  [3.5C] QSettings synced')
+                            
+                            log.info('  [3.5D] Deleting QSettings.actions...')
                             del self.controller.settingsFile.actions
-                            log.info('  QSettings.actions deleted')
+                            log.info('  [3.5E] QSettings.actions deleted')
+                        
+                        log.info('  [3.5F] Deleting settingsFile...')
                         del self.controller.settingsFile
-                        log.info('  settingsFile deleted')
+                        log.info('  [3.5G] settingsFile deleted')
                     except Exception as e:
-                        log.error(f'  QSettings cleanup error: {e}')
+                        log.error(f'  [3.5ERROR] QSettings cleanup error: {e}')
+                        log.error(f'  [3.5ERROR] Traceback: {traceback.format_exc()}')
+            log.info('Step 3.5: COMPLETE')
             
-            # STEP 4: Close database connections explicitly
-            log.info('Step 4: Closing database connections...')
-            if hasattr(self, 'controller') and self.controller:
-                if hasattr(self.controller, 'db') and self.controller.db:
-                    log.info('  Closing database connection')
-                    try:
-                        # Force commit and close
-                        if hasattr(self.controller.db, 'commit'):
-                            self.controller.db.commit()
-                            log.info('  Database committed')
-                        if hasattr(self.controller.db, 'close'):
-                            self.controller.db.close()
-                            log.info('  Database closed')
-                    except Exception as e:
-                        log.error(f'  Database close error: {e}')
+            # STEP 4: Force garbage collection
+            log.info('Step 4: Running garbage collection...')
+            collected1 = gc.collect()
+            log.info(f'  First pass collected: {collected1} objects')
+            collected2 = gc.collect()
+            log.info(f'  Second pass collected: {collected2} objects')
+            log.info('Step 4: COMPLETE')
             
-            # STEP 5: Block signals and disconnect from all QProcess objects
-            log.info('Step 5: Disconnecting QProcess objects...')
-            if hasattr(self, 'controller') and self.controller:
-                if hasattr(self.controller, 'processes'):
-                    log.info(f'  Found {len(self.controller.processes)} process wrappers')
-                    for proc_id, proc_wrapper in list(self.controller.processes.items()):
-                        try:
-                            if hasattr(proc_wrapper, 'process'):
-                                log.info(f'  Cleaning process {proc_id}')
-                                proc_wrapper.process.blockSignals(True)
-                                # Disconnect all signals
-                                try:
-                                    proc_wrapper.process.finished.disconnect()
-                                except:
-                                    pass
-                                try:
-                                    proc_wrapper.process.readyReadStandardOutput.disconnect()
-                                except:
-                                    pass
-                                try:
-                                    proc_wrapper.process.errorOccurred.disconnect()
-                                except:
-                                    pass
-                                # Delete the process object
-                                proc_wrapper.process.deleteLater()
-                                log.info(f'  Process {proc_id} cleaned')
-                        except Exception as e:
-                            log.error(f'  Error cleaning process {proc_id}: {e}')
-            
-            # STEP 6: Disconnect all signal connections from main widgets
-            log.info('Step 6: Disconnecting signals from main widgets...')
-            widgets_to_clean = []
-            
-            if hasattr(self, 'ui'):
-                widgets_to_clean.append(('ui', self.ui))
-            if hasattr(self, 'settingsWidget'):
-                widgets_to_clean.append(('settingsWidget', self.settingsWidget))
-            if hasattr(self, 'displayWidget'):
-                widgets_to_clean.append(('displayWidget', self.displayWidget))
-            
-            for widget_name, widget in widgets_to_clean:
-                if widget:
-                    try:
-                        log.info(f'  Disconnecting signals from: {widget_name}')
-                        widget.blockSignals(True)
-                        if hasattr(widget, 'disconnect'):
-                            try:
-                                widget.disconnect()
-                            except TypeError:
-                                pass
-                    except (RuntimeError, AttributeError) as e:
-                        log.warning(f'  Widget cleanup warning for {widget_name}: {e}')
-            
-            # STEP 7: Close and delete child widgets explicitly
-            log.info('Step 7: Closing child widgets...')
-            if hasattr(self, 'ui') and self.ui:
-                children = self.ui.findChildren(QtWidgets.QWidget)
-                log.info(f'  Found {len(children)} child widgets')
-                for child in children:
-                    try:
-                        child.close()
-                    except (RuntimeError, AttributeError):
-                        pass
-            
-            # STEP 8: Force garbage collection
-            log.info('Step 8: Running garbage collection...')
-            gc.collect()
-            collected = gc.collect()
-            log.info(f'  Collected {collected} objects')
-            
-            # STEP 9: Process all pending events to clear Qt's event queue
-            log.info('Step 9: Processing pending Qt events...')
+            # STEP 5: Process pending events
+            log.info('Step 5: Processing pending Qt events...')
             QtWidgets.QApplication.processEvents()
             QtCore.QCoreApplication.processEvents()
-            log.info('  Events processed')
-            
-            # STEP 10: Close the main window
-            log.info('Step 10: Closing main window...')
-            try:
-                if hasattr(self, 'ui') and self.ui:
-                    self.ui.close()
-                    log.info('  Main window closed')
-            except (RuntimeError, AttributeError) as e:
-                log.warning(f'  Main window close warning: {e}')
-            
-            # STEP 11: Final event processing
-            log.info('Step 11: Final event processing...')
-            QtWidgets.QApplication.processEvents()
+            log.info('Step 5: COMPLETE')
             
             log.info('=== CLEANUP BEFORE EXIT COMPLETED SUCCESSFULLY ===')
             log.info(f"Final thread count: {threading.active_count()}")
+            log.info("Final threads:")
             for t in threading.enumerate():
-                log.info(f"  Final thread: {t.name}, daemon={t.daemon}")
+                log.info(f"  - {t.name}, daemon={t.daemon}")
             log.info("About to exit normally")
             
         except Exception as e:
             log.error(f'EXCEPTION during cleanupBeforeExit: {type(e).__name__}: {e}')
-            import traceback
             log.error(f'Traceback:\n{traceback.format_exc()}')
-            # Force exit on exception
             log.error('Forcing exit due to exception')
             os._exit(1)
 
