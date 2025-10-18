@@ -228,6 +228,26 @@ class Controller:
             self.settingsFile.backupAndSave(self.settings, saveBackup)
         else:
             log.info('Settings have NOT been changed.')
+        
+        # === ADD THIS DEBUG CODE ===
+        import threading
+        import sys
+        import traceback
+        
+        log.info("=== POST-SAVESETTINGS DIAGNOSTIC ===")
+        log.info(f"saveSettings() about to return")
+        log.info(f"Active threads: {threading.active_count()}")
+        for t in threading.enumerate():
+            log.info(f"  Thread: {t.name}, daemon={t.daemon}")
+        
+        # Check what's in the call stack
+        log.info("=== CALL STACK ===")
+        for line in traceback.format_stack():
+            log.info(line.strip())
+        
+        log.info("saveSettings() returning NOW")
+        # === END DEBUG CODE ===
+
 
     def getSettings(self):
         return self.settings
