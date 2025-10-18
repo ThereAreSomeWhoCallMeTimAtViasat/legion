@@ -996,7 +996,7 @@ class View(QtCore.QObject):
         self.ui.HostsTabWidget.currentChanged.connect(self.switchTabClick)
 
     def switchTabClick(self):
-        if self.ServiceNamesTableModel:                                 # fixes bug when switching tabs at start-up
+        if self.ServiceNamesTableModel:
             selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
         
             if selectedTab == 'Hosts':
@@ -1011,28 +1011,17 @@ class View(QtCore.QObject):
                 self.ui.ServicesTabWidget.tabBar().setTabButton(4, QTabBar.ButtonPosition.RightSide, None)
 
                 self.restoreToolTabWidget()
-                ###
                 if self.viewState.lazy_update_hosts == True:
                     self.updateHostsTableView()
-                ###
                 self.hostTableClick()
                     
             elif selectedTab == 'Services':
                 self.ui.ServicesTabWidget.setCurrentIndex(0)
-                self.removeToolTabs(0)                                  # remove the tool tabs
-                self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toPlainText())
+                self.removeToolTabs(0)
+                self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toHtml())
                 if self.viewState.lazy_update_services == True:
                     self.updateServiceNamesTableView()
                 self.serviceNamesTableClick()
-
-            # Todo
-            #elif selectedTab == 'CVEs':
-            #    self.ui.ServicesTabWidget.setCurrentIndex(0)
-            #    self.removeToolTabs(0)                                  # remove the tool tabs
-            #    self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toPlainText())
-            #    if self.viewState.lazy_update_services == True:
-            #        self.updateServiceNamesTableView()
-            #    self.serviceNamesTableClick()
                 
             elif selectedTab == 'Tools':
                 self.updateToolsTableView()
@@ -1043,9 +1032,8 @@ class View(QtCore.QObject):
                 else:
                     self.updateOsHostsTableView(self.viewState.os_clicked or 'Unknown')
 
-            # display tool panel if we are in tools tab, hide it otherwise
             self.displayToolPanel(selectedTab == 'Tools')
-    
+
     ###
 
     def connectSwitchMainTabClick(self):
@@ -1726,15 +1714,17 @@ class View(QtCore.QObject):
     def updateNotesView(self, hostid):
         self.viewState.lastHostIdClicked = str(hostid)
         note = self.controller.getNoteFromDB(hostid)
-        
-        saved_dirty = self.viewState.dirty  # save the status so we can restore it after we update the note panel
-        self.ui.NotesTextEdit.clear()                                   # clear the text box from the previous notes
-            
+        saveddirty = self.viewState.dirty
+        self.ui.NotesTextEdit.clear()
         if note:
-            self.ui.NotesTextEdit.insertPlainText(note.text)
-        
-        if saved_dirty == False:
+            # Check if note contains HTML formatting
+            if '<' in note.text and '>' in note.text:
+                self.ui.NotesTextEdit.setHtml(note.text)
+            else:
+                self.ui.NotesTextEdit.insertPlainText(note.text)
+        if saveddirty == False:
             self.setDirty(False)
+
 
     def updateToolHostsTableView(self, toolname):
         headers = ["Progress", "Display", "Elapsed", "Percent Complete", "Pid", "Name", "Tool", "Host", "Port",
@@ -1766,8 +1756,14 @@ class View(QtCore.QObject):
         self.updateServiceTableView(hostIP)
         self.updateScriptsView(hostIP)
         self.updateCvesByHostView(hostIP)
-        self.updateInformationView(hostIP)                              # populate host info tab
-        self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toPlainText())
+        self.updateInformationView(hostIP)
+        self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toHtml())
+
+        if hostIP:
+            self.updateNotesView(self.HostsTableModel.getHostIdForRow(self.HostsTableModel.getRowForIp(hostIP)))
+        else:
+            self.updateNotesView('')
+
 
         if hostIP:
             self.updateNotesView(self.HostsTableModel.getHostIdForRow(self.HostsTableModel.getRowForIp(hostIP)))
@@ -2797,23 +2793,86 @@ class View(QtCore.QObject):
             return
 
         widget = self.ui.ServicesTabWidget.widget(currentIndex)
-        ###TODO: crashes if ctrl+b is pressed with nothing selected     
-        # selection = widget.findChild(QtWidgets.QTextEdit).textCursor().selectedText() AttributeError: 'NoneType' object has no attribute 'textCursor'
-        # selection = widget.findChild(QtWidgets.QTextEdit).textCursor().selectedText()
-        selection = ""
         
         textEdit = widget.findChild(QtWidgets.QTextEdit)
-        if textEdit:
-            selection = textEdit.textCursor().selectedText()
-            if not selection:
-                # Handle empty selection case, e.g. ignore or show message
-                selection = ""
-        else:
-            # Handle missing QTextEdit child widget if needed
-            selection = ""
+        if not textEdit:
+            return
+            
+        cursor = textEdit.textCursor()
+        if not cursor.hasSelection():
+            return
+        
+        # Get selection boundaries
+        selectionStart = cursor.selectionStart()
+        selectionEnd = cursor.selectionEnd()
+        
+        # Create a temporary document with the selection
+        tempDocument = QtGui.QTextDocument()
+        tempCursor = QtGui.QTextCursor(tempDocument)
+        
+        # Copy the selected fragment to temp document
+        tempCursor.insertFragment(cursor.selection())
+        
+        # Apply QSyntaxHighlighter formats from original document to temp document
+        startBlock = textEdit.document().findBlock(selectionStart)
+        endBlock = textEdit.document().findBlock(selectionEnd)
+        endBlock = endBlock.next()
+        
+        endOfTempDocument = tempDocument.characterCount() - 1
+        
+        currentBlock = startBlock
+        while currentBlock.isValid() and currentBlock != endBlock:
+            layout = currentBlock.layout()
+            
+            if layout:
+                # Get the additional formats applied by QSyntaxHighlighter
+                additionalFormats = layout.formats()
+                
+                for formatRange in additionalFormats:
+                    # Calculate position in temp document
+                    start = currentBlock.position() + formatRange.start - selectionStart
+                    end = start + formatRange.length
+                    
+                    # Skip if outside temp document bounds
+                    if end <= 0 or start >= endOfTempDocument:
+                        continue
+                    
+                    # Clamp to document bounds
+                    start = max(start, 0)
+                    end = min(end, endOfTempDocument)
+                    
+                    # Apply the format to temp document
+                    tempCursor.setPosition(start)
+                    tempCursor.setPosition(end, QtGui.QTextCursor.MoveMode.KeepAnchor)
+                    tempCursor.mergeCharFormat(formatRange.format)
+            
+            currentBlock = currentBlock.next()
+        
+        # Get the HTML with all formatting preserved
+        tempCursor.select(QtGui.QTextCursor.SelectionType.Document)
+        htmlWithHighlighting = tempCursor.selection().toHtml()
         
         title = self.ui.ServicesTabWidget.tabText(currentIndex)
-        if selection:
-            self.ui.NotesTextEdit.insertPlainText("=== Selection from {} ===\n".format(title))
-            self.ui.NotesTextEdit.insertPlainText(selection)
-            self.ui.NotesTextEdit.insertPlainText('\n\n')
+        
+        # Insert into notes with orange header
+        notesCursor = self.ui.NotesTextEdit.textCursor()
+        notesCursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
+        
+        # Create format for orange background with black text
+        headerFormat = QtGui.QTextCharFormat()
+        headerFormat.setBackground(QtGui.QColor(255, 165, 0))  # Orange
+        headerFormat.setForeground(QtGui.QColor(0, 0, 0))      # Black
+        
+        # Insert the header with formatting
+        notesCursor.insertText("=== Selection from {} ===\n".format(title), headerFormat)
+        
+        # Insert the highlighted content
+        notesCursor.insertHtml(htmlWithHighlighting)
+        
+        # IMPORTANT: Clear the character format to prevent bleeding
+        notesCursor.setCharFormat(QtGui.QTextCharFormat())
+        
+        # Insert spacing with cleared format
+        notesCursor.insertText('\n\n')
+        
+        self.ui.NotesTextEdit.setTextCursor(notesCursor)
