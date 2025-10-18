@@ -2784,20 +2784,37 @@ class View(QtCore.QObject):
                 return
             
     def sendSelectionToNotes(self):
-        selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
-        if not selectedTab == 'Hosts':
-            return
-
-        currentIndex = self.ui.ServicesTabWidget.currentIndex()
-        if currentIndex <= 3:
-            return
-
-        widget = self.ui.ServicesTabWidget.widget(currentIndex)
+        textEdit = None
+        title = ""
         
-        textEdit = widget.findChild(QtWidgets.QTextEdit)
+        # First, check if we're in the DisplayWidget (tool output view)
+        displayTextEdit = self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit)
+        if displayTextEdit and displayTextEdit.textCursor().hasSelection():
+            textEdit = displayTextEdit
+            # Try to get a meaningful title from the tool host clicked
+            if self.viewState.tool_host_clicked:
+                title = f"Tool Output (Process {self.viewState.tool_host_clicked})"
+            else:
+                title = "Tool Output"
+        
+        # If not in DisplayWidget, check the standard tab location
         if not textEdit:
-            return
+            selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
+            if not selectedTab == 'Hosts':
+                return
+
+            currentIndex = self.ui.ServicesTabWidget.currentIndex()
+            if currentIndex <= 3:
+                return
+
+            widget = self.ui.ServicesTabWidget.widget(currentIndex)
             
+            textEdit = widget.findChild(QtWidgets.QTextEdit)
+            if not textEdit:
+                return
+                
+            title = self.ui.ServicesTabWidget.tabText(currentIndex)
+        
         cursor = textEdit.textCursor()
         if not cursor.hasSelection():
             return
@@ -2852,8 +2869,6 @@ class View(QtCore.QObject):
         tempCursor.select(QtGui.QTextCursor.SelectionType.Document)
         htmlWithHighlighting = tempCursor.selection().toHtml()
         
-        title = self.ui.ServicesTabWidget.tabText(currentIndex)
-        
         # Insert into notes with orange header
         notesCursor = self.ui.NotesTextEdit.textCursor()
         notesCursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
@@ -2876,3 +2891,4 @@ class View(QtCore.QObject):
         notesCursor.insertText('\n\n')
         
         self.ui.NotesTextEdit.setTextCursor(notesCursor)
+
