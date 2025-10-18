@@ -1029,7 +1029,7 @@ class Controller:
             self.processTableUiUpdateTimer.start(1000)
             # Allow up to max_concurrent_scans nmap (or other scan) processes, and up to max_fast_processes for others
             while (self.fastProcessesRunning < int(self.settings.general_max_fast_processes) and
-                   (running_scans < max_concurrent_scans or self.fastProcessQueue.empty())):
+                (running_scans < max_concurrent_scans or self.fastProcessQueue.empty())):
                 if self.fastProcessQueue.empty():
                     break
                 next_proc = self.fastProcessQueue.get()
@@ -1057,9 +1057,22 @@ class Controller:
                 elif not self.fastProcessQueue.empty():
                     log.debug('Process was canceled, checking queue again..')
                     continue
-        else:
-            log.info("Halting process panel update timer as all processes are finished.")
-            self.processTableUiUpdateTimer.stop()
+        
+        # FIXED: Check if processes are ACTUALLY running, not just queue status
+        from PyQt6.QtCore import QProcess
+        actually_running = [p for p in self.processes if p.state() == QProcess.ProcessState.Running]
+        
+        if len(actually_running) == 0 and self.fastProcessQueue.empty():
+            # Only stop timer if BOTH queue empty AND no processes actively running
+            if self.processTableUiUpdateTimer.isActive():
+                log.info("Halting process panel update timer as all processes are finished.")
+                self.processTableUiUpdateTimer.stop()
+        elif len(actually_running) > 0:
+            # Ensure timer is running if we have active processes
+            if not self.processTableUiUpdateTimer.isActive():
+                log.info(f"Restarting process panel update timer - {len(actually_running)} processes still running")
+                self.processTableUiUpdateTimer.start(1000)
+
 
     def cancelProcess(self, dbId):
         log.info('Canceling process: ' + str(dbId))
