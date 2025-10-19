@@ -455,36 +455,51 @@ if __name__ == "__main__":
         except Exception as e:
             startupLog.error(f"Error closing event loop: {e}")
         
-        # STEP 2: Process final Qt events
+        # STEP 2: Clean up Qt widgets WITHOUT triggering close events
+        startupLog.info("Cleaning up Qt widgets...")
+        try:
+            if 'app' in locals() and app is not None:
+                # CRITICAL: Block signals first to prevent close events from firing
+                for widget in app.topLevelWidgets():
+                    try:
+                        if widget:
+                            widget.blockSignals(True)  # Prevent closeEvent from firing
+                            widget.deleteLater()       # Schedule deletion without triggering events
+                    except (RuntimeError, AttributeError):
+                        pass
+                
+                # Process deleteLater() calls while QApplication still exists
+                app.processEvents()
+                startupLog.info("  All widgets cleaned up")
+        except Exception as e:
+            startupLog.error(f"Error cleaning up widgets: {e}")
+        
+        # STEP 3: Process final Qt events
         startupLog.info("Processing final events...")
         try:
-            QApplication.processEvents()
+            if 'app' in locals() and app is not None:
+                app.processEvents()
         except Exception:
             pass
         
-        # STEP 3: CRITICAL - Explicitly delete Qt objects in correct order
-        # This prevents segfault from Python's garbage collector
-        startupLog.info("Deleting Qt objects explicitly...")
+        # STEP 4: CRITICAL - Do NOT explicitly delete QApplication
+        # Let Python's garbage collector handle it naturally to prevent crashes
+        startupLog.info("Allowing QApplication to exit naturally...")
+        startupLog.info("Python garbage collection will handle cleanup in correct order")
+        
+        # Clear references to allow GC to work properly
         try:
-            # Delete MainWindow first (already closed via normal exit path)
-            if 'MainWindow' in locals() and MainWindow is not None:
-                startupLog.info("  Deleting MainWindow...")
-                # Don't call close() here - it triggers closeEvent again causing double dialog
-                MainWindow.deleteLater()
-                del MainWindow
-                startupLog.info("  MainWindow deleted")
-
-            
-            # Process deleteLater events
-            QApplication.processEvents()
-            
-            # Delete QApplication last
-            if 'app' in locals() and app is not None:
-                startupLog.info("  Deleting QApplication...")
-                del app
-                startupLog.info("  QApplication deleted")
-            
+            if 'MainWindow' in locals():
+                MainWindow = None
+            if 'view' in locals():
+                view = None
+            if 'controller' in locals():
+                controller = None
+            if 'ui' in locals():
+                ui = None
         except Exception as e:
-            startupLog.error(f"Error deleting Qt objects: {e}")
+            startupLog.warning(f"Error clearing references: {e}")
     
-    startupLog.info("Application shutdown complete")
+    startupLog.info("Application shutdown complete - exiting cleanly")
+
+    
