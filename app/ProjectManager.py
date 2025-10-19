@@ -84,26 +84,77 @@ class ProjectManager:
         repositoryContainer = self.repositoryFactory.buildRepositories(database)
         return Project(projectProperties, repositoryContainer, database)
 
-    def closeProject(self, project: Project) -> None:
+    def closeProject(self, project: Project) -> None:  
         self.logger.info(f"Closing project {project.properties.projectName}...")
         # if current project is not temporary & delete wordlists if necessary
         projectProperties = project.properties
+        
         try:
             if not projectProperties.isTemporary:
+                # Non-temporary project - only remove wordlists if requested
                 if not projectProperties.storeWordListsOnExit:
-                    self.logger.info('Removing wordlist files.')
-                    self.shell.remove_file(projectProperties.usernamesWordList.filename)
-                    self.shell.remove_file(projectProperties.passwordWordList.filename)
+                    self.logger.info('Removing wordlist files...')
+                    try:
+                        if os.path.exists(projectProperties.usernamesWordList.filename):
+                            self.shell.remove_file(projectProperties.usernamesWordList.filename)
+                            self.logger.info(f'  Removed {projectProperties.usernamesWordList.filename}')
+                    except FileNotFoundError:
+                        pass  # Already gone - not an error
+                    except Exception as e:
+                        self.logger.warning(f'Could not remove username wordlist: {e}')
+                    
+                    try:
+                        if os.path.exists(projectProperties.passwordWordList.filename):
+                            self.shell.remove_file(projectProperties.passwordWordList.filename)
+                            self.logger.info(f'  Removed {projectProperties.passwordWordList.filename}')
+                    except FileNotFoundError:
+                        pass  # Already gone - not an error
+                    except Exception as e:
+                        self.logger.warning(f'Could not remove password wordlist: {e}')
             else:
+                # Temporary project - remove all temporary files and folders
                 self.logger.info('Removing temporary files and folders...')
-                self.shell.remove_file(projectProperties.projectName)
-                self.shell.remove_directory(projectProperties.outputFolder)
-
+                
+                # Remove temporary database file
+                try:
+                    if os.path.exists(projectProperties.projectName):
+                        self.shell.remove_file(projectProperties.projectName)
+                        self.logger.info(f'  Removed database: {projectProperties.projectName}')
+                except FileNotFoundError:
+                    pass  # Already gone - not an error
+                except Exception as e:
+                    self.logger.warning(f'Could not remove database file: {e}')
+                
+                # Remove output folder and contents
+                try:
+                    if os.path.exists(projectProperties.outputFolder):
+                        self.shell.remove_directory(projectProperties.outputFolder)
+                        self.logger.info(f'  Removed output folder: {projectProperties.outputFolder}')
+                except FileNotFoundError:
+                    pass  # Already gone - not an error
+                except Exception as e:
+                    self.logger.warning(f'Could not remove output folder: {e}')
+            
+            # Remove running folder (always, for both temporary and non-temporary projects)
             self.logger.info('Removing running folder at close...')
-            self.shell.remove_directory(projectProperties.runningFolder)
-        except:
-            self.logger.info('Something went wrong removing temporary files and folders..')
-            self.logger.info("Unexpected error: {0}".format(sys.exc_info()[0]))
+            try:
+                if os.path.exists(projectProperties.runningFolder):
+                    self.shell.remove_directory(projectProperties.runningFolder)
+                    self.logger.info(f'  Removed running folder: {projectProperties.runningFolder}')
+                else:
+                    self.logger.info(f'  Running folder already removed: {projectProperties.runningFolder}')
+            except FileNotFoundError:
+                # Already gone - this is fine, not an error
+                self.logger.info(f'  Running folder already removed (FileNotFoundError): {projectProperties.runningFolder}')
+            except Exception as e:
+                self.logger.warning(f'Could not remove running folder: {e}')
+        
+        except Exception as e:
+            # Catch any unexpected errors in the outer scope
+            self.logger.error(f'Unexpected error during project cleanup: {type(e).__name__}: {e}')
+            import traceback
+            self.logger.error(traceback.format_exc())
+
 
     # this function copies the current project files and folder to a new location
     # if the replace flag is set to 1, it overwrites the destination file and folder
