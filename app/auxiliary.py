@@ -178,7 +178,7 @@ def checkHydraResults(output):
                 usernames.append(login.group(2))
             password = re.search(r'(password:[\s]*)([^\s]+)', line)
             if password:
-                # print 'Found password: ' + password.group(2)
+                # #print(f"DEBUG 'Found password: ' + password.group(2)
 
                 passwords.append(password.group(2))
         return True, usernames, passwords  # returns the lists of found usernames and passwords
@@ -237,11 +237,11 @@ class MyQProcess(QProcess):
             self.highlighter = None
         
         # CRITICAL: Connect the signals
-        print(f"DEBUG: Connecting signals for {self.name}")
+        #print(f"DEBUG: Connecting signals for {self.name}")
         try:
             self.readyReadStandardOutput.connect(self.readStdOutput)
             #self.readyReadStandardError.connect(self.readStdError)
-            print("DEBUG: Signals connected successfully")
+            #print(f"DEBUG("DEBUG: Signals connected successfully")
         except Exception as e:
             print(f"DEBUG: Error connecting signals: {e}")
 
@@ -251,92 +251,117 @@ class MyQProcess(QProcess):
     def getMatches(self, line, settings, name):
         matches = set()
         
+        #print(f"DEBUG getMatches: name={name}, line={repr(line[:100])}")
+        
         if name not in settings:
+            #print(f"DEBUG getMatches: '{name}' not in settings, returning empty")
             return matches
-
+        
         currentSettings = settings[name]
-
+        #print(f"DEBUG getMatches: currentSettings keys={list(currentSettings.keys())}")
+        
+        # Check negative patterns FIRST
         if 'negative' in currentSettings:
+            #print(f"DEBUG getMatches: Checking {len(currentSettings['negative'])} negative patterns")
             for match in currentSettings['negative']:
+                #print(f"DEBUG getMatches: Testing negative pattern {repr(match)} in line")
                 if match in line:
+                    #print(f"DEBUG getMatches: NEGATIVE MATCH '{match}' - blocking all matches!")
                     return matches
-
+        
+        # Check positive patterns
         if 'positive' in currentSettings:
+            #print(f"DEBUG getMatches: Checking {len(currentSettings['positive'])} positive patterns")
             for match in currentSettings['positive']:
                 if match in line:
-                    print(f"DEBUG: Pattern '{match}' found in line: {line[:80]}")
+                    #print(f"DEBUG getMatches: POSITIVE MATCH '{match}' found!")
                     matches.add(match)
-
+                else:
+                    print(f"DEBUG getMatches: Pattern {repr(match)} NOT in line")
+        
+        #print(f"DEBUG getMatches: Returning matches={matches}")
         return matches
+
 
     def handleMatches(self, output):
         if not self.settings or not hasattr(self.settings, 'matchSettings'):
-            print("DEBUG: No settings or matchSettings available")
+            #print(f"DEBUG("DEBUG: No settings or matchSettings available")
             return '<br />'.join(output.split('\n'))
         
-        print(f"DEBUG: handleMatches called for tool: {self.name}")
-        print(f"DEBUG: matchSettings keys: {list(self.settings.matchSettings.keys())}")
-            
+        #print(f"DEBUG: handleMatches called for tool: {self.name}")
+        #print(f"DEBUG: matchSettings structure:")
+        #for key, value in self.settings.matchSettings.items():
+            #print(f"DEBUG(f"  [{key}]: {value}")
+        #print(f"DEBUG: Output to be checked (length={len(output)}):")
+        #print(f"DEBUG(f"  First 200 chars: {repr(output[:200])}")
+        
         matchSettings = self.settings.matchSettings
         hlOutput = []
-
+        
         for line in output.split('\n'):
+            #if line.strip():  # Only #print(f"DEBUG non-empty lines
+                #print(f"DEBUG: Checking line: {repr(line[:100])}")
             globalMatches = self.getMatches(line, matchSettings, 'global')
             toolMatches = self.getMatches(line, matchSettings, self.name)
             matches = globalMatches.union(toolMatches)
+            #print(f"DEBUG:   globalMatches={globalMatches}, toolMatches={toolMatches}, combined={matches}")
             
             if matches:
                 self.matches.update(matches)
-                print(f"DEBUG: MATCH FOUND! Matches: {matches}")
+                #print(f"DEBUG: MATCH FOUND! Matches: {matches}")
                 self.sigHasMatch.emit(', '.join(self.matches))
+            
             hlOutput.append(line)
-
+        
         if self.highlighter:
             self.highlighter.updateMatches(self.matches)
         
-        #if self.matches:
-        #    print(f"DEBUG: Total matches accumulated: {self.matches}")
+        if self.matches:
+            # Connect the signals
+            pass
         
+        #print(f"DEBUG("DEBUG: handleMatches completed")
         return '<br />'.join(hlOutput)
+
 
     @pyqtSlot()
     def readStdOutput(self):
-        print(f"DEBUG: readStdOutput called for {self.name}")
+        #print(f"DEBUG: readStdOutput called for {self.name}")
         output = str(self.readAllStandardOutput(), 'utf-8')
-        print(f"DEBUG: Got output length: {len(output)}")
+        #print(f"DEBUG: Got output length: {len(output)}")
 
 
         try:
-            print("DEBUG: Starting ANSI conversion")
+            #print(f"DEBUG("DEBUG: Starting ANSI conversion")
             from ansi2html import Ansi2HTMLConverter
             conv = Ansi2HTMLConverter(inline=True, linkify=True)
             html = conv.convert(output, full=False)
-            print(f"DEBUG: HTML conversion successful, length: {len(html)}")
-            print(f"DEBUG: HTML preview: {html[:200]}")
+            #print(f"DEBUG: HTML conversion successful, length: {len(html)}")
+            #print(f"DEBUG: HTML preview: {html[:200]}")
 
 
-            print("DEBUG: Getting text cursor")
+            #print(f"DEBUG("DEBUG: Getting text cursor")
             cursor = self.display.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
-            print("DEBUG: Inserting HTML")
+            #print(f"DEBUG("DEBUG: Inserting HTML")
             cursor.insertHtml('<pre>' + html + ' < /pre>')  #spaces matter
-            print("DEBUG: HTML inserted successfully")
+            #print(f"DEBUG("DEBUG: HTML inserted successfully")
 
 
             doc = QTextDocument()
             doc.setHtml(html)
             plain_text = doc.toPlainText()
-            print(f"DEBUG: Plain text extracted, length: {len(plain_text)}")
+            #print(f"DEBUG: Plain text extracted, length: {len(plain_text)}")
 
 
             self.handleMatches(plain_text)
-            print("DEBUG: handleMatches completed")
+            #print(f"DEBUG("DEBUG: handleMatches completed")
             
         except ImportError as e:
-            print(f"DEBUG: ImportError - ansi2html not available: {e}")
+            #print(f"DEBUG: ImportError - ansi2html not available: {e}")
             self.display.insertPlainText(unicode(output).strip())
         except Exception as e:
-            print(f"DEBUG: Exception in readStdOutput: {e}")
+            #print(f"DEBUG: Exception in readStdOutput: {e}")
             import traceback
             traceback.print_exc()
             self.display.insertPlainText(unicode(output).strip())
