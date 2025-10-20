@@ -331,11 +331,25 @@ class Controller:
         return success
 
     def closeProject(self):
-        self.saveSettings() # backup and save config file, if necessary
-        self.screenshooter.terminate()
+        self.saveSettings()  # backup and save config file, if necessary
+        
+        # Terminate screenshooter with timeout
+        if hasattr(self, 'screenshooter') and self.screenshooter:
+            try:
+                log.info("Terminating screenshooter thread...")
+                if self.screenshooter.isRunning():
+                    self.screenshooter.requestInterruption()
+                    self.screenshooter.quit()
+                    if not self.screenshooter.wait(3000):  # 3 second timeout
+                        log.warning("Screenshooter thread did not terminate in time")
+                log.info("Screenshooter terminated")
+            except Exception as e:
+                log.error(f"Error terminating screenshooter: {e}")
+        
         self.initScreenshooter()
-        self.view.updateProcessesTableView() # clear process table
+        self.view.updateProcessesTableView()  # clear process table
         self.logic.projectManager.closeProject(self.logic.activeProject)
+
 
     def copyToClipboard(self, data):
         clipboard = QtWidgets.QApplication.clipboard()
