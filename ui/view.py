@@ -863,7 +863,7 @@ class View(QtCore.QObject):
             label.setText(matchText)
             label.setVisible(True)
             label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
-            #print(f"DEBUG ensureLabelUpdated: Set label for {tab.objectName()}")
+            print(f"DEBUG ensureLabelUpdated: Set label for {tab.objectName()}")
 
 
     def toolHostsClick(self):
@@ -2275,17 +2275,17 @@ class View(QtCore.QObject):
                 matched = False
                 tabIndex = self.ui.ServicesTabWidget.indexOf(tab)
                 
-                #print(f"DEBUG: Checking tab {tabName}, matches property: {matches}")
+                print(f"DEBUG: Checking tab {tabName}, matches property: {matches}")
                 
                 if matches:
                     matched = True
                     matchText = 'Matches:' + str(matches).strip()
                     label = tab.findChild(QtWidgets.QLabel)
                     
-                    #print(f"DEBUG: Found matches! Label found: {label is not None}")
+                    print(f"DEBUG: Found matches! Label found: {label is not None}")
                     
                     if label:
-                        #print(f"DEBUG: Setting label text to: {matchText}")
+                        print(f"DEBUG: Setting label text to: {matchText}")
                         label.setText(matchText)
                         label.setVisible(True)
                         label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
@@ -2664,7 +2664,7 @@ class View(QtCore.QObject):
                 tabBar = self.ui.ServicesTabWidget.tabBar()
                 matches = tab.property('matches')
                 
-                #print(f"DEBUG updateTabHighlight: tab={tabTitle}, matches={matches}")
+                print(f"DEBUG updateTabHighlight: tab={tabTitle}, matches={matches}")
                 
                 if matches:
                     # Update tab styling
@@ -2686,10 +2686,10 @@ class View(QtCore.QObject):
                     matchText = 'Matches: ' + str(matches)
                     label = tab.findChild(QtWidgets.QLabel)
                     
-                    #print(f"DEBUG updateTabHighlight: Looking for label in tab, found: {label is not None}")
+                    print(f"DEBUG updateTabHighlight: Looking for label in tab, found: {label is not None}")
                     
                     if label:
-                        #print(f"DEBUG updateTabHighlight: Setting label text to: {matchText}")
+                        print(f"DEBUG updateTabHighlight: Setting label text to: {matchText}")
                         label.setText(matchText)
                         label.setVisible(True)
                         label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")

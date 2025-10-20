@@ -17,8 +17,8 @@ Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@
 """
 
 applicationInfo = {
-    "name": "LEGION",
-    "version": "0.5.1",
+    "name": "TIMS_LEGION",
+    "version": "0.5.X",
     "build": '1760322071',
     "author": "Shane Scott",
     "copyright": "2025",
