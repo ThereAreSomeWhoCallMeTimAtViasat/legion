@@ -543,15 +543,21 @@ class View(QtCore.QObject):
             
     def closeProject(self):
         self.ui.statusbar.showMessage('Closing project..', msecs=1000)
-        # Wait for NmapImporter thread to finish before cleanup
+        
+        # Wait for NmapImporter thread to finish before cleanup (WITH TIMEOUT)
         try:
             if hasattr(self.controller, "nmapImporter") and self.controller.nmapImporter.isRunning():
                 log.info("Waiting for NmapImporter thread to finish before closing project...")
-                self.controller.nmapImporter.wait()
+                if not self.controller.nmapImporter.wait(5000):  # 5 second timeout
+                    log.warning("NmapImporter thread did not finish in time, forcing termination")
+                    self.controller.nmapImporter.terminate()
+                    self.controller.nmapImporter.wait(2000)  # Wait 2 more seconds for termination
         except Exception as e:
             log.info(f"Error waiting for NmapImporter: {e}")
+        
         self.controller.closeProject()
-        self.removeToolTabs()                                           # to make them disappear from the UI
+        self.removeToolTabs()  # to make them disappear from the UI
+                                       # to make them disappear from the UI
                 
     def connectAddHosts(self):
         self.ui.actionAddHosts.triggered.connect(self.connectAddHostsDialog)
@@ -757,14 +763,14 @@ class View(QtCore.QObject):
             self.controller.exportAsJson(filename)
 
     def appExit(self):
-        if self.dealWithCurrentProject(True):   # the parameter indicates that we are exiting the application
+        if self.dealWithCurrentProject(True):  # the parameter indicates that we are exiting the application
             self.closeProject()
             log.info('Exiting application..')
-            #self.loop.quit()
-            #self.app.quit()
-            from PyQt6.QtCore import QCoreApplication
-            QCoreApplication.quit()
-            #sys.exit(0)
+            
+            # Use QTimer to defer the quit call, allowing cleanup to complete
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, lambda: QCoreApplication.quit())
+
 
     ### TABLE ACTIONS ###
 
@@ -2275,17 +2281,17 @@ class View(QtCore.QObject):
                 matched = False
                 tabIndex = self.ui.ServicesTabWidget.indexOf(tab)
                 
-                print(f"DEBUG: Checking tab {tabName}, matches property: {matches}")
+                #print(f"DEBUG: Checking tab {tabName}, matches property: {matches}")
                 
                 if matches:
                     matched = True
                     matchText = 'Matches:' + str(matches).strip()
                     label = tab.findChild(QtWidgets.QLabel)
                     
-                    print(f"DEBUG: Found matches! Label found: {label is not None}")
+                    #print(f"DEBUG: Found matches! Label found: {label is not None}")
                     
                     if label:
-                        print(f"DEBUG: Setting label text to: {matchText}")
+                        #print(f"DEBUG: Setting label text to: {matchText}")
                         label.setText(matchText)
                         label.setVisible(True)
                         label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
@@ -2664,7 +2670,7 @@ class View(QtCore.QObject):
                 tabBar = self.ui.ServicesTabWidget.tabBar()
                 matches = tab.property('matches')
                 
-                print(f"DEBUG updateTabHighlight: tab={tabTitle}, matches={matches}")
+                #print(f"DEBUG updateTabHighlight: tab={tabTitle}, matches={matches}")
                 
                 if matches:
                     # Update tab styling
@@ -2686,15 +2692,15 @@ class View(QtCore.QObject):
                     matchText = 'Matches: ' + str(matches)
                     label = tab.findChild(QtWidgets.QLabel)
                     
-                    print(f"DEBUG updateTabHighlight: Looking for label in tab, found: {label is not None}")
+                    #print(f"DEBUG updateTabHighlight: Looking for label in tab, found: {label is not None}")
                     
                     if label:
-                        print(f"DEBUG updateTabHighlight: Setting label text to: {matchText}")
+                        #print(f"DEBUG updateTabHighlight: Setting label text to: {matchText}")
                         label.setText(matchText)
                         label.setVisible(True)
                         label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
-                    else:
-                        print(f"DEBUG updateTabHighlight: No label found, tab children: {[child.__class__.__name__ for child in tab.children()]}")
+                    #else:
+                        #print(f"DEBUG updateTabHighlight: No label found, tab children: {[child.__class__.__name__ for child in tab.children()]}")
                 else:
                     tabBar.setStyleSheet('')
                     tabBar.setTabTextColor(tabIndex, QColor('black'))
@@ -2742,6 +2748,15 @@ class View(QtCore.QObject):
         cursor = textEdit.textCursor()
         if not cursor.hasSelection():
             return
+        
+        # Flash effect - save original stylesheet
+        originalStyle = textEdit.styleSheet()
+        
+        # Set orange background
+        textEdit.setStyleSheet("QTextEdit { background-color: rgba(255, 165, 0, 180); }")
+        
+        # Create timer to restore original background after 200ms
+        QtCore.QTimer.singleShot(200, lambda: textEdit.setStyleSheet(originalStyle))
         
         # Get selection boundaries
         selectionStart = cursor.selectionStart()
@@ -2815,4 +2830,5 @@ class View(QtCore.QObject):
         notesCursor.insertText('\n\n')
         
         self.ui.NotesTextEdit.setTextCursor(notesCursor)
+
 

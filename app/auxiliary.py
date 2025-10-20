@@ -276,8 +276,8 @@ class MyQProcess(QProcess):
                 if match in line:
                     #print(f"DEBUG getMatches: POSITIVE MATCH '{match}' found!")
                     matches.add(match)
-                else:
-                    print(f"DEBUG getMatches: Pattern {repr(match)} NOT in line")
+                #else:
+                #    print(f"DEBUG getMatches: Pattern {repr(match)} NOT in line")
         
         #print(f"DEBUG getMatches: Returning matches={matches}")
         return matches
