@@ -44,7 +44,7 @@ from app.auxiliary import *
 from six import u as unicode
 import pandas as pd
 from PyQt6.QtWidgets import QAbstractItemView
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QCoreApplication
 
 log = getAppLogger()
 
@@ -74,6 +74,65 @@ class View(QtCore.QObject):
         self.processStatusFilter = None
         # Flag to prevent double close confirmation
         self._closing = False
+
+        #for update highlighting unread tabs
+        # Track tabs with unread updates
+        self.unread_tabs = {
+            'Services': False,
+            'Scripts': False,
+            'Information': False,
+            'CVEs': False,
+            'Notes': False
+        }
+        
+        # Add flag to track if app has finished initializing
+        self.app_initialized = False
+            
+        # Track previous counts for each host to detect NEW data
+        self.previous_data_counts = {}
+
+    def highlightTab(self, tab_name):
+        """Highlight a tab with orange text when new data is added"""
+        # Don't highlight during initial setup
+        if not self.app_initialized:
+            return
+        
+        tab_widget = self.ui.ServicesTabWidget
+        tab_bar = tab_widget.tabBar()
+        
+        for i in range(tab_widget.count()):
+            if tab_widget.tabText(i) == tab_name:
+                if not self.unread_tabs.get(tab_name, False):
+                    self.unread_tabs[tab_name] = True
+                    tab_bar.setTabTextColor(i, QtGui.QColor('orange'))
+                break
+
+            
+    def resetTabHighlight(self, tab_index):
+        """Reset tab to default color when clicked"""
+        tab_widget = self.ui.ServicesTabWidget
+        tab_bar = tab_widget.tabBar()
+        tab_name = tab_widget.tabText(tab_index)
+        
+        if tab_name in self.unread_tabs and self.unread_tabs[tab_name]:
+            self.unread_tabs[tab_name] = False
+            tab_bar.setTabTextColor(tab_index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
+
+    def initializeTabColors(self):
+        """Set all tabs to default color on startup"""
+        tab_widget = self.ui.ServicesTabWidget
+        tab_bar = tab_widget.tabBar()
+        
+        # Get default text color from palette
+        default_color = self.app.palette().color(QtGui.QPalette.ColorRole.WindowText)
+        
+        # Set all fixed tabs to default color
+        tab_names = ['Services', 'Scripts', 'Information', 'CVEs', 'Notes']
+        for i in range(tab_widget.count()):
+            tab_name = tab_widget.tabText(i)
+            if tab_name in tab_names:
+                tab_bar.setTabTextColor(i, default_color)
+                self.unread_tabs[tab_name] = False
 
     # the view needs access to controller methods to link gui actions with real actions
     def setController(self, controller):
@@ -172,7 +231,16 @@ class View(QtCore.QObject):
         self.displayAddHostsOverlay(True)
         self._initToolTabContextMenu()
 
+        #for update highlighting unread tabs
+        self.ui.ServicesTabWidget.setCurrentIndex(0)  # display Services tab by default
+        self.ui.BottomTabWidget.setCurrentIndex(0)  # display Log tab by default
+        self.ui.BruteTabWidget.setTabsClosable(True)  # sets all tabs as closable in bruteforcer
+        self.initializeTabColors()
+
     def startConnections(self):  # signal initialisations (signals/slots, actions, etc)
+        #for update highlighting unread tabs
+        self.ui.ServicesTabWidget.currentChanged.connect(self.resetTabHighlight)
+
         ### MENU ACTIONS ###
         self.connectCreateNewProject()
         self.connectOpenExistingProject()
@@ -763,13 +831,21 @@ class View(QtCore.QObject):
             self.controller.exportAsJson(filename)
 
     def appExit(self):
+        # Prevent re-entry into exit sequence
+        if hasattr(self, '_exiting') and self._exiting:
+            log.info('appExit already in progress, ignoring duplicate call')
+            return
+        
+        self._exiting = True
+        log.info('appExit called - setting exit flag')
+        
         if self.dealWithCurrentProject(True):  # the parameter indicates that we are exiting the application
             self.closeProject()
             log.info('Exiting application..')
             
-            # Use QTimer to defer the quit call, allowing cleanup to complete
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(100, lambda: QCoreApplication.quit())
+            # Directly quit without deferring - event filter will not trigger again due to flag
+            QCoreApplication.quit()
+
 
 
     ### TABLE ACTIONS ###
@@ -869,7 +945,7 @@ class View(QtCore.QObject):
             label.setText(matchText)
             label.setVisible(True)
             label.setStyleSheet("color: black; background-color: yellow; font-weight: bold;")
-            print(f"DEBUG ensureLabelUpdated: Set label for {tab.objectName()}")
+            #print(f"DEBUG ensureLabelUpdated: Set label for {tab.objectName()}")
 
 
     def toolHostsClick(self):
@@ -1622,6 +1698,7 @@ class View(QtCore.QObject):
             self.ui.ServicesTableView.setColumnHidden(i, True)
         
         self.ServicesTableModel.sort(2, Qt.SortOrder.DescendingOrder) # sort by port by default (override default)
+        self.highlightTab('Services')
 
     def updatePortsByServiceTableView(self, serviceName):
         headers = ["Host", "Port", "Port", "Protocol", "State", "HostId", "ServiceId", "Name", "Product", "Version",
@@ -1669,32 +1746,46 @@ class View(QtCore.QObject):
                                                  vendor=host.vendor, asn=host.asn, isp=host.isp,
                                                  countryCode=host.countryCode, city=host.city, latitude=host.latitude,
                                                  longitude=host.longitude)
+        self.highlightTab('Information')
 
     def updateScriptsView(self, hostIP):
-        headers = ["Id", "Script", "Port", "Protocol"]
-        self.ScriptsTableModel = ScriptsTableModel(self,self.controller.getScriptsFromDB(hostIP), headers)
+        headers = ['Id', 'Script', 'Port', 'Protocol']
+        scripts_data = self.controller.getScriptsFromDB(hostIP)
+        self.ScriptsTableModel = ScriptsTableModel(self, scripts_data, headers)
         self.ui.ScriptsTableView.setModel(self.ScriptsTableModel)
-
-        for i in [0,3]:                                                 # hide some columns
+        
+        for i in [0,3]:  # hide some columns
             self.ui.ScriptsTableView.setColumnHidden(i, True)
-    
-        scripts = []                                                    # ensure that there is always something selected
-        for row in range(self.ScriptsTableModel.rowCount("")):
+        
+        scripts = []  # ensure that there is always something selected
+        for row in range(self.ScriptsTableModel.rowCount(QtCore.QModelIndex())):
             scripts.append(self.ScriptsTableModel.getScriptDBIdForRow(row))
-
-        # the script we previously clicked may not be visible anymore (eg: due to filters)
+        
+        # the script we previously clicked may not be visible anymore (e.g. due to filters)
         if self.viewState.script_clicked in scripts:
             row = self.ScriptsTableModel.getRowForDBId(self.viewState.script_clicked)
-
         else:
-            row = 0                                                     # or select the first row
-            
-        if not row == None:
+            row = 0  # or select the first row
+        
+        if not (row is None):
             self.ui.ScriptsTableView.selectRow(row)
             self.scriptTableClick()
-
+        
         self.ui.ScriptsTableView.repaint()
         self.ui.ScriptsTableView.update()
+        
+        # Track script count and only highlight if NEW scripts were added
+        current_count = len(scripts_data) if scripts_data else 0
+        previous_count = self.previous_data_counts.get(f'{hostIP}_scripts', 0)
+        
+        # Only highlight if we have more scripts than before
+        if current_count > previous_count:
+            self.highlightTab('Scripts')
+        
+        # Update the count
+        self.previous_data_counts[f'{hostIP}_scripts'] = current_count
+
+
 
     def updateCvesByHostView(self, hostIP):
         headers = ["CVE Id", "CVSS Score", "Product", "Version", "CVE URL", "Source", "ExploitDb ID", "ExploitDb",
@@ -1709,6 +1800,10 @@ class View(QtCore.QObject):
         self.ui.CvesTableView.setModel(self.CvesTableModel)
         self.ui.CvesTableView.repaint()
         self.ui.CvesTableView.update()
+        
+        # Only highlight if there are actually CVEs
+        if cves and len(cves) > 0:
+            self.highlightTab('CVEs')
 
     def updateScriptsOutputView(self, scriptId):
         self.ui.ScriptsOutputTextEdit.clear()
@@ -1721,15 +1816,29 @@ class View(QtCore.QObject):
         self.viewState.lastHostIdClicked = str(hostid)
         note = self.controller.getNoteFromDB(hostid)
         saveddirty = self.viewState.dirty
+        
+        # Store current content before clearing
+        old_content = self.ui.NotesTextEdit.toPlainText()
+        
         self.ui.NotesTextEdit.clear()
+        
+        new_content = ""
         if note:
-            # Check if note contains HTML formatting
             if '<' in note.text and '>' in note.text:
                 self.ui.NotesTextEdit.setHtml(note.text)
+                new_content = self.ui.NotesTextEdit.toPlainText()
             else:
                 self.ui.NotesTextEdit.insertPlainText(note.text)
+                new_content = note.text
+        
         if saveddirty == False:
             self.setDirty(False)
+        
+        # Only highlight if content actually changed (new content added)
+        # Don't highlight when just switching between hosts
+        if new_content and new_content.strip() != old_content.strip():
+            self.highlightTab('Notes')
+
 
 
     def updateToolHostsTableView(self, toolname):
@@ -2065,7 +2174,9 @@ class View(QtCore.QObject):
             self.viewState.lazy_update_hosts = True
             self.viewState.lazy_update_services = True
             self.viewState.lazy_update_tools = True
-        
+
+        # After initial setup is complete, enable tab highlighting
+        self.app_initialized = True
     #################### TOOL TABS ####################
 
     # this function creates a new tool tab for a given host
@@ -2830,5 +2941,7 @@ class View(QtCore.QObject):
         notesCursor.insertText('\n\n')
         
         self.ui.NotesTextEdit.setTextCursor(notesCursor)
+        
+        self.highlightTab('Notes')
 
 

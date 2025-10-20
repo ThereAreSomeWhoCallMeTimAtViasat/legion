@@ -15,9 +15,12 @@ Copyright (c) 2025 Shane William Scott
 
 Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@gmail.com)
 """
+
 from PyQt6.QtCore import QObject, QEvent, Qt
 from PyQt6.QtWidgets import QApplication
+from app.logging.legionLog import getAppLogger
 
+log = getAppLogger()
 
 # This class is used to catch events such as arrow key presses or close window (X)
 class MyEventFilter(QObject):
@@ -42,6 +45,15 @@ class MyEventFilter(QObject):
         if event.type() == QEvent.Type.KeyPress and receiver in self.hosts_table_views:
             return self.filterKeyPressInHostsTableView(event.key(), receiver)
         elif event.type() == QEvent.Type.Close and receiver == self.main_window:
+            log.info("Close event detected by event filter")
+            
+            # Check if already exiting to prevent loop
+            if hasattr(self.view, '_exiting') and self.view._exiting:
+                log.info("Exit already in progress, accepting close event")
+                return False  # Let the event proceed
+            
+            # Normal exit flow
+            log.info("Starting exit sequence from event filter")
             event.ignore()
             self.view.appExit()
             return True
@@ -54,7 +66,6 @@ class MyEventFilter(QObject):
             return True
 
         index = receiver.selectionModel().selectedRows()[0].row()
-
         if key == Qt.Key.Key_Down:
             new_index = index + 1
             receiver.selectRow(new_index)
@@ -67,4 +78,5 @@ class MyEventFilter(QObject):
             selected = receiver.selectionModel().currentIndex()
             clipboard = QApplication.clipboard()
             clipboard.setText(selected.data().toString())
+
         return True
