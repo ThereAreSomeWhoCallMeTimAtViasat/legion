@@ -237,11 +237,11 @@ class MyQProcess(QProcess):
             self.highlighter = None
         
         # CRITICAL: Connect the signals
-        #print(f"DEBUG: Connecting signals for {self.name}")
+        print(f"DEBUG: Connecting signals for {self.name}")
         try:
             self.readyReadStandardOutput.connect(self.readStdOutput)
             #self.readyReadStandardError.connect(self.readStdError)
-            #print("DEBUG: Signals connected successfully")
+            print("DEBUG: Signals connected successfully")
         except Exception as e:
             print(f"DEBUG: Error connecting signals: {e}")
 
@@ -264,7 +264,7 @@ class MyQProcess(QProcess):
         if 'positive' in currentSettings:
             for match in currentSettings['positive']:
                 if match in line:
-                    #print(f"DEBUG: Pattern '{match}' found in line: {line[:80]}")
+                    print(f"DEBUG: Pattern '{match}' found in line: {line[:80]}")
                     matches.add(match)
 
         return matches
@@ -274,8 +274,8 @@ class MyQProcess(QProcess):
             print("DEBUG: No settings or matchSettings available")
             return '<br />'.join(output.split('\n'))
         
-        #print(f"DEBUG: handleMatches called for tool: {self.name}")
-        #print(f"DEBUG: matchSettings keys: {list(self.settings.matchSettings.keys())}")
+        print(f"DEBUG: handleMatches called for tool: {self.name}")
+        print(f"DEBUG: matchSettings keys: {list(self.settings.matchSettings.keys())}")
             
         matchSettings = self.settings.matchSettings
         hlOutput = []
@@ -287,7 +287,7 @@ class MyQProcess(QProcess):
             
             if matches:
                 self.matches.update(matches)
-                #print(f"DEBUG: MATCH FOUND! Matches: {matches}")
+                print(f"DEBUG: MATCH FOUND! Matches: {matches}")
                 self.sigHasMatch.emit(', '.join(self.matches))
             hlOutput.append(line)
 
@@ -301,42 +301,42 @@ class MyQProcess(QProcess):
 
     @pyqtSlot()
     def readStdOutput(self):
-        #print(f"DEBUG: readStdOutput called for {self.name}")
+        print(f"DEBUG: readStdOutput called for {self.name}")
         output = str(self.readAllStandardOutput(), 'utf-8')
-        #print(f"DEBUG: Got output length: {len(output)}")
+        print(f"DEBUG: Got output length: {len(output)}")
 
 
         try:
-            #print("DEBUG: Starting ANSI conversion")
+            print("DEBUG: Starting ANSI conversion")
             from ansi2html import Ansi2HTMLConverter
             conv = Ansi2HTMLConverter(inline=True, linkify=True)
             html = conv.convert(output, full=False)
-            #print(f"DEBUG: HTML conversion successful, length: {len(html)}")
-            #print(f"DEBUG: HTML preview: {html[:200]}")
+            print(f"DEBUG: HTML conversion successful, length: {len(html)}")
+            print(f"DEBUG: HTML preview: {html[:200]}")
 
 
-            #print("DEBUG: Getting text cursor")
+            print("DEBUG: Getting text cursor")
             cursor = self.display.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
-            #print("DEBUG: Inserting HTML")
+            print("DEBUG: Inserting HTML")
             cursor.insertHtml('<pre>' + html + ' < /pre>')  #spaces matter
-            #print("DEBUG: HTML inserted successfully")
+            print("DEBUG: HTML inserted successfully")
 
 
             doc = QTextDocument()
             doc.setHtml(html)
             plain_text = doc.toPlainText()
-            #print(f"DEBUG: Plain text extracted, length: {len(plain_text)}")
+            print(f"DEBUG: Plain text extracted, length: {len(plain_text)}")
 
 
             self.handleMatches(plain_text)
-            #print("DEBUG: handleMatches completed")
+            print("DEBUG: handleMatches completed")
             
         except ImportError as e:
-            #print(f"DEBUG: ImportError - ansi2html not available: {e}")
+            print(f"DEBUG: ImportError - ansi2html not available: {e}")
             self.display.insertPlainText(unicode(output).strip())
         except Exception as e:
-            #print(f"DEBUG: Exception in readStdOutput: {e}")
+            print(f"DEBUG: Exception in readStdOutput: {e}")
             import traceback
             traceback.print_exc()
             self.display.insertPlainText(unicode(output).strip())

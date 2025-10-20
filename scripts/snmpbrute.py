@@ -401,7 +401,7 @@ def enumerateSNMPWalk(result,options):
     printout('################## Enumerating Routing Table (snmpwalk)',YELLOW)
     try:
         for key, val in list(RouteOIDS.items()):	#Enumerate Routes
-            #print '\t *',val[1], val[0]
+           #print '\t *',val[1], val[0]
             out=os.popen('snmpwalk'+snmpwalk_args+' '+val[0]+' '+'| awk \'{print $NF}\' 2>&1').readlines()
             
             entry[val[1]]=out
