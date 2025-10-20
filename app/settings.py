@@ -33,24 +33,40 @@ log = getAppLogger()
 
 class AppSettings():
     def __init__(self):
-        config_dir = os.path.expanduser("~/.local/share/legion")
-        config_path = os.path.join(config_dir, "legion.conf")
-
-        #for matching
-        #Clean up stale lock files FIRST
+        configdir = os.path.expanduser('~/.local/share/legion')
+        configpath = os.path.join(configdir, 'legion.conf')
+        
+        # ADD THESE DEBUG LINES
+        #print(f"DEBUG: Config file path: {configpath}")
+        #print(f"DEBUG: Config file exists: {os.path.exists(configpath)}")
+        #if os.path.exists(configpath):
+            #print(f"DEBUG: Config file size: {os.path.getsize(configpath)} bytes")
+            #print(f"DEBUG: Config file modified: {os.path.getmtime(configpath)}")
+        
+        # Clean up stale lock files FIRST
         self.cleanupStaleLockFiles()
-
-        if not os.path.exists(config_path):
-            if not os.path.isdir(config_dir):
-                os.makedirs(config_dir, exist_ok=True)
-            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-            default_conf = os.path.join(repo_root, "legion.conf")
-            if os.path.exists(default_conf):
-                shutil.copy(default_conf, config_path)
+        
+        if not os.path.exists(configpath):
+            if not os.path.isdir(configdir):
+                os.makedirs(configdir, exist_ok=True)
+            reporoot = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+            defaultconf = os.path.join(reporoot, 'legion.conf')
+            
+            # ADD THIS DEBUG LINE
+            #print(f"DEBUG: Copying default config from: {defaultconf}")
+            
+            if os.path.exists(defaultconf):
+                shutil.copy(defaultconf, configpath)
             else:
-                log.error(f"Default configuration file not found at {default_conf}.")
-        log.info('Loading settings file..')
-        self.actions = QtCore.QSettings(config_path, QtCore.QSettings.Format.NativeFormat)
+                log.error(f"Default configuration file not found at {defaultconf}.")
+        
+        log.info("Loading settings file..")
+        
+        # ADD THESE DEBUG LINES
+        #print(f"DEBUG: Loading QSettings from: {configpath}")
+        self.actions = QtCore.QSettings(configpath, QtCore.QSettings.Format.IniFormat)
+        #print(f"DEBUG: QSettings fileName: {self.actions.fileName()}")
+
 
     #for matching
     def cleanupStaleLockFiles(self):
@@ -145,28 +161,76 @@ class AppSettings():
     
     #for matching settings
     def getMatchSettings(self):
+        """
+        Parse match settings from config file into nested structure.
+        """
+        # DEBUG: Read and display first 10 lines of config file
+        configpath = self.actions.fileName()
+        #print(f"DEBUG: Reading config file: {configpath}")
+        #try:
+        #    with open(configpath, 'r') as f:
+         #       lines = f.readlines()[:10]
+         #       print("DEBUG: First 10 lines of legion.conf:")
+         #       for i, line in enumerate(lines, 1):
+                    #print(f"  {i}: {line.rstrip()}")
+        #except Exception as e:
+            #print(f"DEBUG: Error reading config file: {e}")
+        
         self.actions.beginGroup('MatchSettings')
         settings = dict()
         keys = self.actions.childKeys()
         
+        #print(f"DEBUG getMatchSettings: Found {len(keys)} keys")
+        
         for k in keys:
             k = str(k)
-            name, direction = k.split('-')
             
-            if name in settings:
-                scannerSettings = settings[name]
-            else:
-                scannerSettings = dict()
-                settings[name] = scannerSettings
-
-            rawValue = str(self.actions.value(k))
+            # Split on first hyphen only
+            parts = k.split('-', 1)
+            if len(parts) != 2:
+                log.warning(f"Invalid match setting key format: {k}")
+                continue
+            
+            name, direction = parts
+            if direction not in ['positive', 'negative']:
+                log.warning(f"Invalid direction: {k}")
+                continue
+            
+            # Create nested structure
+            if name not in settings:
+                settings[name] = dict()
+            
+            # Get value with type hint to prevent list parsing
+            rawValue = self.actions.value(k, type=str)
+            
+            #print(f"DEBUG: Key={k}, rawValue (with type=str): {repr(rawValue)}")
+            
             if rawValue:
+                # Strip outer quotes
+                rawValue = rawValue.strip().strip('"').strip("'")
+                #print(f"DEBUG: After stripping quotes: {repr(rawValue)}")
+                
+                # Parse CSV
                 values = next(csv.reader([rawValue]))
-                scannerSettings[direction] = values
-                settings.update({str(k): str(self.actions.value(k))})
-
+                #print(f"DEBUG: After csv.reader: {values}")
+                
+                # Clean up
+                values = [v.strip() for v in values]
+                values = [v for v in values if v]
+                
+                settings[name][direction] = values
+                #print(f"DEBUG: Parsed {name}.{direction} = {values}")
+        
         self.actions.endGroup()
+        
+        #print(f"DEBUG: Final matchSettings structure: {settings}")
         return settings
+
+
+
+
+
+
    
     def backupAndSave(self, newSettings, saveBackup=True):
         # Backup and save
