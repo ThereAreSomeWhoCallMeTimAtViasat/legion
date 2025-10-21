@@ -529,17 +529,29 @@ class FiltersDialog(QtWidgets.QDialog):
         self.hostKeywordText.setText(keywords)
 
 # widget in which the host information is shown
+from PyQt6 import QtWidgets, QtGui
+from PyQt6.QtCore import QTimer
+
 class HostInformationWidget(QtWidgets.QWidget):
-    
     def __init__(self, informationTab, parent=None):
         QtWidgets.QWidget.__init__(self, parent)
         self.informationTab = informationTab
         self.setupLayout()
-        self.updateFields()     # set default values
         
+        # Track previous values per IP to detect changes
+        self.previous_values = {}
+        self.current_ip = None
+        
+        # Track blinking timer (single timer for sequential blinking)
+        self.blink_timer = None
+        
+        # Track labels that need to blink when Information tab is viewed
+        self.pending_blink_labels = []
+        
+        self.updateFields()  # set default values
+    
     def setupLayout(self):
         self.HostStatusLabel = QtWidgets.QLabel()
-
         self.HostStateLabel = QtWidgets.QLabel()
         self.HostStateText = QtWidgets.QLabel()
         self.HostStateLayout = QtWidgets.QHBoxLayout()
@@ -571,7 +583,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.FilteredPortsLayout.addWidget(self.FilteredPortsLabel)
         self.FilteredPortsLayout.addWidget(self.FilteredPortsText)
         self.FilteredPortsLayout.addStretch()
-        ###################
+        
         self.LocationLabel = QtWidgets.QLabel()
         self.AddressLabel = QtWidgets.QLabel()
         
@@ -598,7 +610,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.MacLayout.addWidget(self.MacLabel)
         self.MacLayout.addWidget(self.MacText)
         self.MacLayout.addStretch()
-
+        
         self.VendorLabel = QtWidgets.QLabel()
         self.VendorText = QtWidgets.QLabel()
         self.VendorLayout = QtWidgets.QHBoxLayout()
@@ -606,7 +618,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.VendorLayout.addWidget(self.VendorLabel)
         self.VendorLayout.addWidget(self.VendorText)
         self.VendorLayout.addStretch()
-
+        
         self.AsnLabel = QtWidgets.QLabel()
         self.AsnText = QtWidgets.QLabel()
         self.AsnLayout = QtWidgets.QHBoxLayout()
@@ -614,7 +626,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.AsnLayout.addWidget(self.AsnLabel)
         self.AsnLayout.addWidget(self.AsnText)
         self.AsnLayout.addStretch()
-
+        
         self.IspLabel = QtWidgets.QLabel()
         self.IspText = QtWidgets.QLabel()
         self.IspLayout = QtWidgets.QHBoxLayout()
@@ -630,9 +642,8 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.dummyLayout.addWidget(self.dummyLabel)
         self.dummyLayout.addWidget(self.dummyText)
         self.dummyLayout.addStretch()
-        #########
-        self.OSLabel = QtWidgets.QLabel()
         
+        self.OSLabel = QtWidgets.QLabel()
         self.OSNameLabel = QtWidgets.QLabel()
         self.OSNameText = QtWidgets.QLabel()
         self.OSNameLayout = QtWidgets.QHBoxLayout()
@@ -648,7 +659,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.OSAccuracyLayout.addWidget(self.OSAccuracyLabel)
         self.OSAccuracyLayout.addWidget(self.OSAccuracyText)
         self.OSAccuracyLayout.addStretch()
-
+        
         self.CountryLabel = QtWidgets.QLabel()
         self.CountryText = QtWidgets.QLabel()
         self.CountryLayout = QtWidgets.QHBoxLayout()
@@ -656,7 +667,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.CountryLayout.addWidget(self.CountryLabel)
         self.CountryLayout.addWidget(self.CountryText)
         self.CountryLayout.addStretch()
-
+        
         self.CityLabel = QtWidgets.QLabel()
         self.CityText = QtWidgets.QLabel()
         self.CityLayout = QtWidgets.QHBoxLayout()
@@ -664,7 +675,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.CityLayout.addWidget(self.CityLabel)
         self.CityLayout.addWidget(self.CityText)
         self.CityLayout.addStretch()
-
+        
         self.LatitudeLabel = QtWidgets.QLabel()
         self.LatitudeText = QtWidgets.QLabel()
         self.LatitudeLayout = QtWidgets.QHBoxLayout()
@@ -672,7 +683,7 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.LatitudeLayout.addWidget(self.LatitudeLabel)
         self.LatitudeLayout.addWidget(self.LatitudeText)
         self.LatitudeLayout.addStretch()
-
+        
         self.LongitudeLabel = QtWidgets.QLabel()
         self.LongitudeText = QtWidgets.QLabel()
         self.LongitudeLayout = QtWidgets.QHBoxLayout()
@@ -681,95 +692,213 @@ class HostInformationWidget(QtWidgets.QWidget):
         self.LongitudeLayout.addWidget(self.LongitudeText)
         self.LongitudeLayout.addStretch()
         
-        font = QtGui.QFont('Calibri', 12)        # in each different section
+        font = QtGui.QFont("Calibri", 12)
         font.setBold(True)
-        self.HostStatusLabel.setText('Host Status')
+        
+        self.HostStatusLabel.setText("Host Status")
         self.HostStatusLabel.setFont(font)
-        self.HostStateLabel.setText("State:")
-        self.OpenPortsLabel.setText('Open Ports:')
-        self.ClosedPortsLabel.setText('Closed Ports:')
-        self.FilteredPortsLabel.setText('Filtered Ports:')
-        self.LocationLabel.setText('Location')
+        self.HostStateLabel.setText("State")
+        self.OpenPortsLabel.setText("Open Ports")
+        self.ClosedPortsLabel.setText("Closed Ports")
+        self.FilteredPortsLabel.setText("Filtered Ports")
+        
+        self.LocationLabel.setText("Location")
         self.LocationLabel.setFont(font)
-        self.AddressLabel.setText('Addresses')
+        self.AddressLabel.setText("Addresses")
         self.AddressLabel.setFont(font)
-        self.IP4Label.setText('IPv4:')
-        self.IP6Label.setText('IPv6:')
-        self.MacLabel.setText('MAC:')
-        self.VendorLabel.setText('Vendor:')
-        self.AsnLabel.setText('ASN:')
-        self.IspLabel.setText('ISP:')
-        self.OSLabel.setText('Operating System')
+        self.IP4Label.setText("IPv4")
+        self.IP6Label.setText("IPv6")
+        self.MacLabel.setText("MAC")
+        self.VendorLabel.setText("Vendor")
+        self.AsnLabel.setText("ASN")
+        self.IspLabel.setText("ISP")
+        
+        self.OSLabel.setText("Operating System")
         self.OSLabel.setFont(font)
-        self.OSNameLabel.setText('Name:')
-        self.OSAccuracyLabel.setText('Accuracy:')
-        self.CountryLabel.setText('Country Code:')
-        self.CityLabel.setText('City:')
-        self.LatitudeLabel.setText('Latitude:')
-        self.LongitudeLabel.setText('Longitude:')
-        #########
-        self.vlayout_1 = QtWidgets.QVBoxLayout()
-        self.vlayout_2 = QtWidgets.QVBoxLayout()
-        self.vlayout_3 = QtWidgets.QVBoxLayout()
-        self.vlayout_4 = QtWidgets.QVBoxLayout()
-        self.vlayout_5 = QtWidgets.QVBoxLayout()
-        self.hlayout_1 = QtWidgets.QHBoxLayout()
+        self.OSNameLabel.setText("Name")
+        self.OSAccuracyLabel.setText("Accuracy")
         
-        self.vlayout_1.addWidget(self.HostStatusLabel)
-        self.vlayout_1.addLayout(self.HostStateLayout)
-        self.vlayout_1.addLayout(self.OpenPortsLayout)
-        self.vlayout_1.addLayout(self.ClosedPortsLayout)
-        self.vlayout_1.addLayout(self.FilteredPortsLayout)
+        self.CountryLabel.setText("Country Code")
+        self.CityLabel.setText("City")
+        self.LatitudeLabel.setText("Latitude")
+        self.LongitudeLabel.setText("Longitude")
         
-        self.vlayout_2.addWidget(self.AddressLabel)
-        self.vlayout_2.addLayout(self.IP4Layout)
-        self.vlayout_2.addLayout(self.IP6Layout)
-        self.vlayout_2.addLayout(self.MacLayout)
-        self.vlayout_2.addLayout(self.VendorLayout)
-        self.vlayout_2.addLayout(self.AsnLayout)
-        self.vlayout_2.addLayout(self.IspLayout)
-        self.vlayout_2.addLayout(self.dummyLayout)
+        self.vlayout1 = QtWidgets.QVBoxLayout()
+        self.vlayout2 = QtWidgets.QVBoxLayout()
+        self.vlayout3 = QtWidgets.QVBoxLayout()
+        self.vlayout4 = QtWidgets.QVBoxLayout()
+        self.vlayout5 = QtWidgets.QVBoxLayout()
+        self.hlayout1 = QtWidgets.QHBoxLayout()
         
-        self.hlayout_1.addLayout(self.vlayout_1)
-        self.hlayout_1.addSpacing(20)
-        self.hlayout_1.addLayout(self.vlayout_2)
-        self.hlayout_1.addSpacing(20)
-        self.hlayout_1.addLayout(self.vlayout_5)
-
-        self.vlayout_3.addWidget(self.OSLabel)
-        self.vlayout_3.addLayout(self.OSNameLayout)
-        self.vlayout_3.addLayout(self.OSAccuracyLayout)
-        self.vlayout_3.addStretch()
+        self.vlayout1.addWidget(self.HostStatusLabel)
+        self.vlayout1.addLayout(self.HostStateLayout)
+        self.vlayout1.addLayout(self.OpenPortsLayout)
+        self.vlayout1.addLayout(self.ClosedPortsLayout)
+        self.vlayout1.addLayout(self.FilteredPortsLayout)
         
-        self.vlayout_4.addLayout(self.hlayout_1)
-        self.vlayout_4.addSpacing(10)
-        self.vlayout_4.addLayout(self.vlayout_3)
-
-        self.vlayout_5.addWidget(self.LocationLabel)
-        self.vlayout_5.addLayout(self.CountryLayout)
-        self.vlayout_5.addLayout(self.CityLayout)
-        self.vlayout_5.addLayout(self.LatitudeLayout)
-        self.vlayout_5.addLayout(self.LongitudeLayout)
+        self.vlayout2.addWidget(self.AddressLabel)
+        self.vlayout2.addLayout(self.IP4Layout)
+        self.vlayout2.addLayout(self.IP6Layout)
+        self.vlayout2.addLayout(self.MacLayout)
+        self.vlayout2.addLayout(self.VendorLayout)
+        self.vlayout2.addLayout(self.AsnLayout)
+        self.vlayout2.addLayout(self.IspLayout)
+        self.vlayout2.addLayout(self.dummyLayout)
         
-        self.hlayout_4 = QtWidgets.QHBoxLayout(self.informationTab)
-        self.hlayout_4.addLayout(self.vlayout_4)
-        self.hlayout_4.insertStretch(-1,1)
-        self.hlayout_4.addStretch()
+        self.hlayout1.addLayout(self.vlayout1)
+        self.hlayout1.addSpacing(20)
+        self.hlayout1.addLayout(self.vlayout2)
+        self.hlayout1.addSpacing(20)
+        self.hlayout1.addLayout(self.vlayout5)
+        
+        self.vlayout3.addWidget(self.OSLabel)
+        self.vlayout3.addLayout(self.OSNameLayout)
+        self.vlayout3.addLayout(self.OSAccuracyLayout)
+        self.vlayout3.addStretch()
+        
+        self.vlayout4.addLayout(self.hlayout1)
+        self.vlayout4.addSpacing(10)
+        self.vlayout4.addLayout(self.vlayout3)
+        
+        self.vlayout5.addWidget(self.LocationLabel)
+        self.vlayout5.addLayout(self.CountryLayout)
+        self.vlayout5.addLayout(self.CityLayout)
+        self.vlayout5.addLayout(self.LatitudeLayout)
+        self.vlayout5.addLayout(self.LongitudeLayout)
+        
+        self.hlayout4 = QtWidgets.QHBoxLayout(self.informationTab)
+        self.hlayout4.addLayout(self.vlayout4)
+        self.hlayout4.insertStretch(-1, 1)
+        self.hlayout4.addStretch()
+    
+    def hasPendingChanges(self):
+        """Return True if there are changes waiting to be viewed"""
+        return len(self.pending_blink_labels) > 0
+    
+    def onTabViewed(self):
+        """Called when the Information tab is clicked/viewed - blink each pending change sequentially"""
+        if not self.pending_blink_labels:
+            return
+        
+        # Keep a copy of labels to blink
+        labels_to_blink = self.pending_blink_labels.copy()
+        current_label_index = 0
+        blink_count = 0
+        blinks_per_label = 2  # One full cycle (green/default) per label
+        
+        def toggle_style():
+            nonlocal current_label_index, blink_count
+            
+            # Check if we've finished all labels
+            if current_label_index >= len(labels_to_blink):
+                # All done - stop the timer
+                if self.blink_timer:
+                    self.blink_timer.stop()
+                    self.blink_timer = None
+                return
+            
+            current_label = labels_to_blink[current_label_index]
+            
+            # Check if this label has finished its blink cycle
+            if blink_count >= blinks_per_label:
+                # Reset this label to default and move to next
+                current_label.setStyleSheet("")
+                current_label_index += 1
+                blink_count = 0
                 
+                # If there are more labels, continue
+                if current_label_index < len(labels_to_blink):
+                    # Start blinking the next label
+                    return
+                else:
+                    # All done
+                    if self.blink_timer:
+                        self.blink_timer.stop()
+                        self.blink_timer = None
+                    return
+            
+            # Toggle between green and default
+            if blink_count % 2 == 0:
+                # Green background with black text
+                current_label.setStyleSheet("QLabel { color: black; background-color: green; font-weight: bold; }")
+            else:
+                # Default style
+                current_label.setStyleSheet("")
+            
+            blink_count += 1
+        
+        # Stop any existing blink timer
+        if self.blink_timer:
+            self.blink_timer.stop()
+        
+        # Clear the pending list now that we're processing them
+        self.pending_blink_labels.clear()
+        
+        # Create timer for sequential blinking
+        self.blink_timer = QTimer()
+        self.blink_timer.timeout.connect(toggle_style)
+        self.blink_timer.start(500)  # 500ms interval
+        
+        # Start with first label
+        toggle_style()
+    
     def updateFields(self, **kwargs):
-        self.HostStateText.setText(kwargs.get('status') or 'unknown')
-        self.OpenPortsText.setText(str(kwargs.get('openPorts') or 0))
-        self.ClosedPortsText.setText(str(kwargs.get('closedPorts') or 0))
-        self.FilteredPortsText.setText(str(kwargs.get('filteredPorts') or 0))
-        self.IP4Text.setText(kwargs.get('ipv4') or 'unknown')
-        self.IP6Text.setText(kwargs.get('ipv6') or 'unknown')
-        self.MacText.setText(kwargs.get('macaddr') or 'unknown')
-        self.VendorText.setText(kwargs.get('vendor') or 'unknown')
-        self.AsnText.setText(kwargs.get('asn') or 'unknown')
-        self.IspText.setText(kwargs.get('isp') or 'unknown')
-        self.OSNameText.setText(kwargs.get('osMatch') or 'unknown')
-        self.OSAccuracyText.setText(kwargs.get('osAccuracy') or 'unknown')
-        self.CountryText.setText(kwargs.get('countryCode') or 'unknown')
-        self.CityText.setText(kwargs.get('city') or 'unknown')
-        self.LatitudeText.setText(kwargs.get('latitude') or 'unknown')
-        self.LongitudeText.setText(kwargs.get('longitude') or 'unknown')
+        # Get the current IP (use ipv4 or ipv6 as the identifier)
+        current_ip = kwargs.get('ipv4') or kwargs.get('ipv6') or 'unknown'
+        
+        # If this is a new host, save the previous host's data
+        if current_ip != self.current_ip:
+            # Switching to a different host - reset colors to default and clear pending
+            for label in [self.HostStateText, self.OpenPortsText, self.ClosedPortsText, 
+                          self.FilteredPortsText, self.IP4Text, self.IP6Text, self.MacText,
+                          self.VendorText, self.AsnText, self.IspText, self.OSNameText,
+                          self.OSAccuracyText, self.CountryText, self.CityText,
+                          self.LatitudeText, self.LongitudeText]:
+                label.setStyleSheet("")
+            
+            # Stop any active blinking
+            if self.blink_timer:
+                self.blink_timer.stop()
+                self.blink_timer = None
+            
+            self.pending_blink_labels.clear()
+            self.current_ip = current_ip
+            
+            # Initialize storage for this host if we haven't seen it before
+            if current_ip not in self.previous_values:
+                self.previous_values[current_ip] = {}
+        
+        # Helper function to update a label with change highlighting
+        def updateLabel(label, key, new_value, default='unknown'):
+            value_str = str(new_value or default)
+            old_value = self.previous_values[self.current_ip].get(key, None)
+            
+            # Set the text
+            label.setText(value_str)
+            
+            # If value changed from previous and old value was not None, queue for blinking
+            if old_value is not None and old_value != value_str:
+                # Add to pending list instead of blinking immediately
+                if label not in self.pending_blink_labels:
+                    self.pending_blink_labels.append(label)
+            
+            # Store current value for this host
+            self.previous_values[self.current_ip][key] = value_str
+        
+        # Update all fields with change detection
+        updateLabel(self.HostStateText, 'status', kwargs.get('status'), 'unknown')
+        updateLabel(self.OpenPortsText, 'openPorts', kwargs.get('openPorts', 0), '0')
+        updateLabel(self.ClosedPortsText, 'closedPorts', kwargs.get('closedPorts', 0), '0')
+        updateLabel(self.FilteredPortsText, 'filteredPorts', kwargs.get('filteredPorts', 0), '0')
+        updateLabel(self.IP4Text, 'ipv4', kwargs.get('ipv4'), 'unknown')
+        updateLabel(self.IP6Text, 'ipv6', kwargs.get('ipv6'), 'unknown')
+        updateLabel(self.MacText, 'macaddr', kwargs.get('macaddr'), 'unknown')
+        updateLabel(self.VendorText, 'vendor', kwargs.get('vendor'), 'unknown')
+        updateLabel(self.AsnText, 'asn', kwargs.get('asn'), 'unknown')
+        updateLabel(self.IspText, 'isp', kwargs.get('isp'), 'unknown')
+        updateLabel(self.OSNameText, 'osMatch', kwargs.get('osMatch'), 'unknown')
+        updateLabel(self.OSAccuracyText, 'osAccuracy', kwargs.get('osAccuracy'), 'unknown')
+        updateLabel(self.CountryText, 'countryCode', kwargs.get('countryCode'), 'unknown')
+        updateLabel(self.CityText, 'city', kwargs.get('city'), 'unknown')
+        updateLabel(self.LatitudeText, 'latitude', kwargs.get('latitude'), 'unknown')
+        updateLabel(self.LongitudeText, 'longitude', kwargs.get('longitude'), 'unknown')
