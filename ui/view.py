@@ -93,7 +93,6 @@ class View(QtCore.QObject):
 
     def highlightTab(self, tab_name):
         """Highlight a tab with orange text when new data is added"""
-        # Don't highlight during initial setup
         if not self.app_initialized:
             return
         
@@ -105,18 +104,41 @@ class View(QtCore.QObject):
                 if not self.unread_tabs.get(tab_name, False):
                     self.unread_tabs[tab_name] = True
                     tab_bar.setTabTextColor(i, QtGui.QColor('orange'))
+                    #print(f"DEBUG: Set {tab_name} tab to ORANGE at index {i}")
                 break
+
+    def preserveFixedTabColors(self):
+        """Reapply colors to fixed tabs after dynamic tabs are added/removed"""
+        tab_widget = self.ui.ServicesTabWidget
+        tab_bar = tab_widget.tabBar()
+        
+        fixed_tabs = ['Services', 'Scripts', 'Information', 'CVEs', 'Notes']
+        
+        for i in range(min(len(fixed_tabs), tab_widget.count())):
+            tab_name = tab_widget.tabText(i)
+            if tab_name in fixed_tabs and self.unread_tabs.get(tab_name, False):
+                # Reapply orange color if this tab is marked as unread
+                tab_bar.setTabTextColor(i, QtGui.QColor('orange'))
 
             
     def resetTabHighlight(self, tab_index):
-        """Reset tab to default color when clicked"""
+        """Reset tab to default color when clicked - only if it's actually being viewed"""
         tab_widget = self.ui.ServicesTabWidget
         tab_bar = tab_widget.tabBar()
         tab_name = tab_widget.tabText(tab_index)
         
+        # Only reset if this tab is marked as unread AND we're actually viewing it
         if tab_name in self.unread_tabs and self.unread_tabs[tab_name]:
+            # For Information tab, only reset after blinking animation completes
+            if tab_name == 'Information':
+                # Don't reset immediately - the animation in onTabViewed handles this
+                # We'll reset it after the user has viewed the changes
+                return
+            
+            # For other tabs, reset immediately when clicked
             self.unread_tabs[tab_name] = False
             tab_bar.setTabTextColor(tab_index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
+
 
     def initializeTabColors(self):
         """Set all tabs to default color on startup"""
@@ -133,6 +155,83 @@ class View(QtCore.QObject):
             if tab_name in tab_names:
                 tab_bar.setTabTextColor(i, default_color)
                 self.unread_tabs[tab_name] = False
+
+    def highlightChangesInText(self, old_text, new_text, text_widget):
+        """
+        Compare old_text and new_text, highlight changes in red in the text_widget
+        """
+        import difflib
+        from PyQt6.QtGui import QTextCursor, QTextCharFormat, QColor
+        
+        # Clear the text widget
+        text_widget.clear()
+        
+        # Create a differ object
+        differ = difflib.Differ()
+        
+        # Split texts into lines
+        old_lines = old_text.splitlines() if old_text else []
+        new_lines = new_text.splitlines() if new_text else []
+        
+        # Compare the texts
+        diff = list(differ.compare(old_lines, new_lines))
+        
+        # Create text formats
+        normal_format = QTextCharFormat()
+        normal_format.setForeground(text_widget.palette().color(QtGui.QPalette.ColorRole.Text))
+        
+        changed_format = QTextCharFormat()
+        changed_format.setForeground(QColor('red'))
+        
+        cursor = text_widget.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        
+        # Process diff results
+        for line in diff:
+            if line.startswith('  '):  # Unchanged line
+                cursor.insertText(line[2:] + '\n', normal_format)
+            elif line.startswith('+ '):  # Added line (new content)
+                cursor.insertText(line[2:] + '\n', changed_format)
+            elif line.startswith('- '):  # Removed line (skip it, we only show what's new)
+                continue
+            elif line.startswith('? '):  # Diff marker (skip)
+                continue
+
+    def buildInformationText(self, host, counterOpen, counterClosed, counterFiltered):
+        """Build the information text from host data"""
+        info_lines = []
+        info_lines.append(f"Status: {host.status}")
+        info_lines.append(f"Open Ports: {counterOpen}")
+        info_lines.append(f"Closed Ports: {counterClosed}")
+        info_lines.append(f"Filtered Ports: {counterFiltered}")
+        
+        if host.ipv4:
+            info_lines.append(f"IPv4: {host.ipv4}")
+        if host.ipv6:
+            info_lines.append(f"IPv6: {host.ipv6}")
+        if host.macaddr:
+            info_lines.append(f"MAC Address: {host.macaddr}")
+        if host.osMatch:
+            info_lines.append(f"OS Match: {host.osMatch}")
+        if host.osAccuracy:
+            info_lines.append(f"OS Accuracy: {host.osAccuracy}")
+        if host.vendor:
+            info_lines.append(f"Vendor: {host.vendor}")
+        if host.asn:
+            info_lines.append(f"ASN: {host.asn}")
+        if host.isp:
+            info_lines.append(f"ISP: {host.isp}")
+        if host.countryCode:
+            info_lines.append(f"Country Code: {host.countryCode}")
+        if host.city:
+            info_lines.append(f"City: {host.city}")
+        if host.latitude:
+            info_lines.append(f"Latitude: {host.latitude}")
+        if host.longitude:
+            info_lines.append(f"Longitude: {host.longitude}")
+        
+        return '\n'.join(info_lines)
+
 
     # the view needs access to controller methods to link gui actions with real actions
     def setController(self, controller):
@@ -286,6 +385,26 @@ class View(QtCore.QObject):
         #self.settingsWidget.cmdCancelButton.clicked.connect(self.cancelSettings)
         #self.settingsWidget.applyButton.clicked.connect(self.controller.applySettings(self.settingsWidget.settings))
         #self.tick.connect(self.importProgressWidget.setProgress, QtCore.Qt.ConnectionType.QueuedConnection)
+
+        # Connect tab click to reset highlight
+        self.ui.ServicesTabWidget.currentChanged.connect(self.resetTabHighlight)
+        
+        # Connect to trigger blinking when Information tab is viewed
+        self.ui.ServicesTabWidget.currentChanged.connect(self.onInformationTabViewed)
+
+    def onInformationTabViewed(self, index):
+        """Called when user switches tabs - trigger blinking if Information tab is selected"""
+        tab_name = self.ui.ServicesTabWidget.tabText(index)
+        if tab_name == 'Information':
+            # Start the sequential blinking animation
+            self.hostInfoWidget.onTabViewed()
+            
+            # Reset the tab color to default after user views it
+            if 'Information' in self.unread_tabs and self.unread_tabs['Information']:
+                self.unread_tabs['Information'] = False
+                tab_bar = self.ui.ServicesTabWidget.tabBar()
+                tab_bar.setTabTextColor(index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
+
 
     #################### AUXILIARY ####################
 
@@ -1719,34 +1838,52 @@ class View(QtCore.QObject):
         self.PortsByServiceTableModel.sort(0, Qt.SortOrder.DescendingOrder) # sort by IP by default (override default)
 
     def updateInformationView(self, hostIP):
-
         if hostIP:
             host = self.controller.getHostInformation(hostIP)
             
             if host:
                 states = self.controller.getPortStatesForHost(host.id)
                 counterOpen = counterClosed = counterFiltered = 0
-
+                
                 for s in states:
                     if s[0] == 'open':
-                        counterOpen+=1
+                        counterOpen += 1
                     elif s[0] == 'closed':
-                        counterClosed+=1
+                        counterClosed += 1
                     else:
-                        counterFiltered+=1
+                        counterFiltered += 1
                 
-                if host.state == 'closed':                              # check the extra ports
+                if host.state == 'closed':
                     counterClosed = 65535 - counterOpen - counterFiltered
                 else:
                     counterFiltered = 65535 - counterOpen - counterClosed
+                
+                # Update the host information widget
+                self.hostInfoWidget.updateFields(
+                    status=host.status, 
+                    openPorts=counterOpen, 
+                    closedPorts=counterClosed, 
+                    filteredPorts=counterFiltered,
+                    ipv4=host.ipv4, 
+                    ipv6=host.ipv6, 
+                    macaddr=host.macaddr, 
+                    osMatch=host.osMatch, 
+                    osAccuracy=host.osAccuracy,
+                    vendor=host.vendor, 
+                    asn=host.asn, 
+                    isp=host.isp, 
+                    countryCode=host.countryCode, 
+                    city=host.city,
+                    latitude=host.latitude, 
+                    longitude=host.longitude
+                )
+                
+                # Only highlight the tab if there are pending changes
+                if self.hostInfoWidget.hasPendingChanges():
+                    self.highlightTab('Information')
 
-                self.hostInfoWidget.updateFields(status=host.status, openPorts=counterOpen, closedPorts=counterClosed,
-                                                 filteredPorts=counterFiltered, ipv4=host.ipv4, ipv6=host.ipv6,
-                                                 macaddr=host.macaddr, osMatch=host.osMatch, osAccuracy=host.osAccuracy,
-                                                 vendor=host.vendor, asn=host.asn, isp=host.isp,
-                                                 countryCode=host.countryCode, city=host.city, latitude=host.latitude,
-                                                 longitude=host.longitude)
-        self.highlightTab('Information')
+
+
 
     def updateScriptsView(self, hostIP):
         headers = ['Id', 'Script', 'Port', 'Protocol']
@@ -2335,9 +2472,14 @@ class View(QtCore.QObject):
     # this function removes tabs that were created when running tools (starting from the end to avoid index problems)
     def removeToolTabs(self, position=-1):
         if position == -1:
-            position = self.fixedTabsCount-1
-        for i in range(self.ui.ServicesTabWidget.count()-1, position, -1):
+            position = self.fixedTabsCount - 1
+        
+        for i in range(self.ui.ServicesTabWidget.count() - 1, position, -1):
             self.ui.ServicesTabWidget.removeTab(i)
+        
+        # Preserve fixed tab colors after removing dynamic tabs
+        self.preserveFixedTabColors()
+
 
     # this function restores the tool tabs based on the DB content (should be called when opening an existing project).
     def restoreToolTabs(self):
@@ -2423,6 +2565,9 @@ class View(QtCore.QObject):
             
             for tab in nonMatchedTabs:
                 self.ui.ServicesTabWidget.addTab(tab, tab.objectName())
+
+        # After all tabs are restored, preserve the colors on fixed tabs
+        self.preserveFixedTabColors()
 
     # this function restores the textview widget (now in the tools display widget) to its original tool tab
     # (under the correct host)
