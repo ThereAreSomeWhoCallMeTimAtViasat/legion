@@ -139,22 +139,23 @@ class View(QtCore.QObject):
         tabbar = tabwidget.tabBar()
         tabname = tabwidget.tabText(tabindex)
         
-        print(f"DEBUG: resetTabHighlight: tabindex={tabindex}, tabname='{tabname}', before unreadtabs={self.unreadtabs}")
+        print(f"DEBUG: resetTabHighlight: tabindex={tabindex}, tabname='{tabname}', before unread_tabs={self.unread_tabs}")
         print(f"DEBUG: resetTabHighlight: ServicesTabWidget count = {self.ui.ServicesTabWidget.count()}")
         
-        if tabname in self.unreadtabs and self.unreadtabs[tabname]:
-            if tabname == "Information":
+        if tabname in self.unread_tabs and self.unread_tabs[tabname]:
+            if tabname == 'Information':
                 print(f"DEBUG: resetTabHighlight: '{tabname}' is Information tab, skipping reset (waiting for blinking)")
                 return
                 
             print(f"DEBUG: resetTabHighlight: Resetting '{tabname}' to default color")
-            self.unreadtabs[tabname] = False
+            self.unread_tabs[tabname] = False
             tabbar.setTabTextColor(tabindex, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
-            print(f"DEBUG: resetTabHighlight: RESET '{tabname}', after unreadtabs={self.unreadtabs}")
+            print(f"DEBUG: resetTabHighlight: RESET '{tabname}', after unread_tabs={self.unread_tabs}")
         else:
-            print(f"DEBUG: resetTabHighlight: '{tabname}' not in unreadtabs or already False, no action taken")
+            print(f"DEBUG: resetTabHighlight: '{tabname}' not in unread_tabs or already False, no action taken")
             
         print(f"DEBUG: ========== resetTabHighlight END ==========\n")
+
 
 
 
@@ -997,10 +998,11 @@ class View(QtCore.QObject):
     # TODO: review - especially what tab is selected when coming from another host
     def hostTableClick(self):
         print(f"DEBUG: ========== hostTableClick START ==========")
-        print(f"DEBUG: hostTableClick - BEFORE: unreadtabs = {self.unreadtabs}")
+        print(f"DEBUG: hostTableClick - BEFORE: unread_tabs = {self.unread_tabs}")
         
-        if self.ui.HostsTableView.selectionModel().selectedRows():
-            row = self.ui.HostsTableView.selectionModel().selectedRows()[len(self.ui.HostsTableView.selectionModel().selectedRows())-1].row()
+        if self.ui.HostsTableView.selectionModel().selectedRows(): # get the IP address of the selected host (if any)
+            row = self.ui.HostsTableView.selectionModel().selectedRows()[len(self.ui.HostsTableView.
+                selectionModel().selectedRows())-1].row()
             ip = self.HostsTableModel.getHostIPForRow(row)
             print(f"DEBUG: hostTableClick - Selected row {row}, ip = {ip}")
             
@@ -1017,6 +1019,7 @@ class View(QtCore.QObject):
             print(f"DEBUG: hostTableClick - restoreToolTabsForHost() completed")
             print(f"DEBUG: hostTableClick - Restoring ServicesTabWidget index to {save}")
             
+            # display services tab if we are coming from a dynamic tab (non-fixed)
             self.ui.ServicesTabWidget.setCurrentIndex(save)
             print(f"DEBUG: hostTableClick - About to call updateRightPanel()")
             
@@ -1025,10 +1028,14 @@ class View(QtCore.QObject):
         else:
             print(f"DEBUG: hostTableClick - No rows selected")
             self.removeToolTabs()
-            self.updateRightPanel()
+            print(f"DEBUG: hostTableClick - About to call updateRightPanel with empty string")
+            self.updateRightPanel('')
+            print(f"DEBUG: hostTableClick - updateRightPanel() completed")
             
-        print(f"DEBUG: hostTableClick - AFTER: unreadtabs = {self.unreadtabs}")
+        print(f"DEBUG: hostTableClick - AFTER: unread_tabs = {self.unread_tabs}")
         print(f"DEBUG: ========== hostTableClick END ==========\n")
+
+
 
 
     ###
@@ -1240,22 +1247,20 @@ class View(QtCore.QObject):
         if self.ServiceNamesTableModel:
             selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
             print(f"DEBUG: switchTabClick - selectedTab = '{selectedTab}'")
-            print(f"DEBUG: switchTabClick - BEFORE: unreadtabs = {self.unreadtabs}")
+            print(f"DEBUG: switchTabClick - BEFORE: unread_tabs = {self.unread_tabs}")
             
-            if selectedTab == "Hosts":
+            if selectedTab == 'Hosts':
                 print(f"DEBUG: switchTabClick - Entering Hosts tab logic")
                 print(f"DEBUG: switchTabClick - About to insert fixed tabs back")
                 
-                # Inserting fixed tabs
-                self.ui.ServicesTabWidget.insertTab(1, self.ui.ScriptsTab, "Scripts")
-                self.ui.ServicesTabWidget.insertTab(2, self.ui.InformationTab, "Information")
-                self.ui.ServicesTabWidget.insertTab(3, self.ui.CvesRightTab, "CVEs")
-                self.ui.ServicesTabWidget.insertTab(4, self.ui.NotesTab, "Notes")
+                self.ui.ServicesTabWidget.insertTab(1,self.ui.ScriptsTab,("Scripts"))
+                self.ui.ServicesTabWidget.insertTab(2,self.ui.InformationTab,("Information"))
+                self.ui.ServicesTabWidget.insertTab(3,self.ui.CvesRightTab,("CVEs"))
+                self.ui.ServicesTabWidget.insertTab(4,self.ui.NotesTab,("Notes"))
                 
                 print(f"DEBUG: switchTabClick - Fixed tabs inserted")
                 print(f"DEBUG: switchTabClick - ServicesTabWidget count = {self.ui.ServicesTabWidget.count()}")
                 
-                # Set tab close buttons
                 self.ui.ServicesTabWidget.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
                 self.ui.ServicesTabWidget.tabBar().setTabButton(1, QTabBar.ButtonPosition.RightSide, None)
                 self.ui.ServicesTabWidget.tabBar().setTabButton(2, QTabBar.ButtonPosition.RightSide, None)
@@ -1280,7 +1285,7 @@ class View(QtCore.QObject):
                 else:
                     print(f"DEBUG: switchTabClick - lazy_update_hosts is False, skipping updateHostsTableView()")
                     
-            elif selectedTab == "Services":
+            elif selectedTab == 'Services':
                 print(f"DEBUG: switchTabClick - Entering Services tab logic")
                 self.ui.ServicesTabWidget.setCurrentIndex(0)
                 self.removeToolTabs(0)
@@ -1289,24 +1294,25 @@ class View(QtCore.QObject):
                     self.updateServiceNamesTableView()
                     self.serviceNamesTableClick()
                     
-            elif selectedTab == "Tools":
+            elif selectedTab == 'Tools':
                 print(f"DEBUG: switchTabClick - Entering Tools tab logic")
                 print(f"DEBUG: switchTabClick - About to call updateToolsTableView()")
                 self.updateToolsTableView()
                 print(f"DEBUG: switchTabClick - updateToolsTableView() completed")
                 
-            elif selectedTab == "OS":
+            elif selectedTab == 'OS':
                 print(f"DEBUG: switchTabClick - Entering OS tab logic")
                 if self.viewState.lazy_update_os or not self.OsListTableModel:
                     self.updateOsListView()
                 else:
-                    self.updateOsHostsTableView(self.viewState.os_clicked or "Unknown")
+                    self.updateOsHostsTableView(self.viewState.os_clicked or 'Unknown')
                     
             print(f"DEBUG: switchTabClick - About to call displayToolPanel()")
-            self.displayToolPanel(selectedTab == "Tools")
+            self.displayToolPanel(selectedTab == 'Tools')
             print(f"DEBUG: switchTabClick - displayToolPanel() completed")
-            print(f"DEBUG: switchTabClick - AFTER: unreadtabs = {self.unreadtabs}")
+            print(f"DEBUG: switchTabClick - AFTER: unread_tabs = {self.unread_tabs}")
             print(f"DEBUG: ========== switchTabClick END ==========\n")
+
 
 
     ###
@@ -2117,23 +2123,26 @@ class View(QtCore.QObject):
         else:
             self.updateNotesView('')
             
-    def displayToolPanel(self, show):
+    def displayToolPanel(self, display=False):
         print(f"DEBUG: ========== displayToolPanel START ==========")
-        print(f"DEBUG: displayToolPanel - show = {show}")
+        print(f"DEBUG: displayToolPanel - display = {display}")
         
-        size = self.ui.splitter.parentWidget().width()
-        print(f"DEBUG: displayToolPanel - Parent widget width = {size}")
+        size = self.ui.splitter.parentWidget().width() - self.leftPanelSize - 24 # note: 24 is a fixed value
+        print(f"DEBUG: displayToolPanel - Calculated size = {size}")
         
-        if show:
+        if display:
             print(f"DEBUG: displayToolPanel - Showing tool panel")
             self.ui.ServicesTabWidget.hide()
             self.ui.splitter_3.show()
-            self.ui.splitter.setSizes([self.leftPanelSize, 0, size])
+            self.ui.splitter.setSizes([self.leftPanelSize, 0, size]) # reset hoststableview width
             print(f"DEBUG: displayToolPanel - Set splitter sizes: [{self.leftPanelSize}, 0, {size}]")
             
             if self.viewState.tool_clicked == 'screenshooter':
                 print(f"DEBUG: displayToolPanel - Tool is screenshooter, calling displayScreenshots(True)")
                 self.displayScreenshots(True)
+            else:
+                print(f"DEBUG: displayToolPanel - Tool is not screenshooter")
+                self.displayScreenshots(False)
         else:
             print(f"DEBUG: displayToolPanel - Hiding tool panel")
             self.ui.splitter_3.hide()
@@ -2142,6 +2151,7 @@ class View(QtCore.QObject):
             print(f"DEBUG: displayToolPanel - Set splitter sizes: [{self.leftPanelSize}, {size}, 0]")
             
         print(f"DEBUG: ========== displayToolPanel END ==========\n")
+
 
 
     def displayScreenshots(self, display=False):
@@ -2579,7 +2589,7 @@ class View(QtCore.QObject):
         print(f"DEBUG: removeToolTabs - position = {position}")
         print(f"DEBUG: removeToolTabs - fixedTabsCount = {self.fixedTabsCount}")
         print(f"DEBUG: removeToolTabs - ServicesTabWidget count BEFORE = {self.ui.ServicesTabWidget.count()}")
-        print(f"DEBUG: removeToolTabs - BEFORE: unreadtabs = {self.unreadtabs}")
+        print(f"DEBUG: removeToolTabs - BEFORE: unread_tabs = {self.unread_tabs}")
         
         if position == -1:
             position = self.fixedTabsCount - 1
@@ -2594,10 +2604,12 @@ class View(QtCore.QObject):
             
         print(f"DEBUG: removeToolTabs - ServicesTabWidget count AFTER = {self.ui.ServicesTabWidget.count()}")
         print(f"DEBUG: removeToolTabs - About to call preserveFixedTabColors()")
+        # Preserve fixed tab colors after removing dynamic tabs
         self.preserveFixedTabColors()
         print(f"DEBUG: removeToolTabs - preserveFixedTabColors() completed")
-        print(f"DEBUG: removeToolTabs - AFTER: unreadtabs = {self.unreadtabs}")
+        print(f"DEBUG: removeToolTabs - AFTER: unread_tabs = {self.unread_tabs}")
         print(f"DEBUG: ========== removeToolTabs END ==========\n")
+
 
 
 
@@ -2640,10 +2652,10 @@ class View(QtCore.QObject):
     def restoreToolTabsForHost(self, ip):
         print(f"DEBUG: ========== restoreToolTabsForHost START ==========")
         print(f"DEBUG: restoreToolTabsForHost - ip = {ip}")
-        print(f"DEBUG: restoreToolTabsForHost - BEFORE: unreadtabs = {self.unreadtabs}")
+        print(f"DEBUG: restoreToolTabsForHost - BEFORE: unread_tabs = {self.unread_tabs}")
         
         settings = self.controller.getSettings()
-        if not hasattr(self, "viewState") or not hasattr(self.viewState, "hostTabs"):
+        if not hasattr(self, 'viewState') or not hasattr(self.viewState, 'hostTabs'):
             print(f"DEBUG: restoreToolTabsForHost - No viewState or hostTabs, returning")
             return
             
@@ -2656,7 +2668,7 @@ class View(QtCore.QObject):
             
             for tab in tabs:
                 tabName = tab.objectName()
-                matches = tab.property("matches")
+                matches = tab.property('matches')
                 matched = False
                 tabIndex = self.ui.ServicesTabWidget.indexOf(tab)
                 
@@ -2664,7 +2676,7 @@ class View(QtCore.QObject):
                 
                 if matches:
                     matched = True
-                    matchText = f"Matches {str(matches).strip()}"
+                    matchText = 'Matches:' + str(matches).strip()
                     label = tab.findChild(QtWidgets.QLabel)
                     print(f"DEBUG: Found matches! Label found = {label is not None}")
                     
@@ -2676,7 +2688,7 @@ class View(QtCore.QObject):
                     else:
                         print(f"DEBUG: ERROR - Label not found in tab '{tabName}'")
                         
-                if "hydra" in tabName or "nmap" in tabName:
+                if 'hydra' in tabName or 'nmap' in tabName:
                     continue
                     
                 if matched:
@@ -2691,7 +2703,7 @@ class View(QtCore.QObject):
             for tab in matchedTabs:
                 tabindex = self.ui.ServicesTabWidget.addTab(tab, tab.objectName())
                 print(f"DEBUG: restoreToolTabsForHost - Added matched tab '{tab.objectName()}' at index {tabindex}")
-                self.ui.ServicesTabWidget.tabBar().setTabTextColor(tabindex, QtGui.QColor("red"))
+                self.ui.ServicesTabWidget.tabBar().setTabTextColor(tabindex, QtGui.QColor('red'))
                 
             for tab in nonMatchedTabs:
                 tabindex = self.ui.ServicesTabWidget.addTab(tab, tab.objectName())
@@ -2699,13 +2711,15 @@ class View(QtCore.QObject):
                 
             print(f"DEBUG: restoreToolTabsForHost - ServicesTabWidget count AFTER adding tabs = {self.ui.ServicesTabWidget.count()}")
             print(f"DEBUG: restoreToolTabsForHost - About to call preserveFixedTabColors()")
+            # After all tabs are restored, preserve the colors on fixed tabs
             self.preserveFixedTabColors()
             print(f"DEBUG: restoreToolTabsForHost - preserveFixedTabColors() completed")
         else:
             print(f"DEBUG: restoreToolTabsForHost - No tabs found for host {ip}")
             
-        print(f"DEBUG: restoreToolTabsForHost - AFTER: unreadtabs = {self.unreadtabs}")
+        print(f"DEBUG: restoreToolTabsForHost - AFTER: unread_tabs = {self.unread_tabs}")
         print(f"DEBUG: ========== restoreToolTabsForHost END ==========\n")
+
 
 
     # this function restores the textview widget (now in the tools display widget) to its original tool tab
@@ -2715,7 +2729,7 @@ class View(QtCore.QObject):
         print(f"DEBUG: restoreToolTabWidget - clear = {clear}")
         print(f"DEBUG: restoreToolTabWidget - Checking for QTextEdit in DisplayWidget")
         
-        if self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit):
+        if self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit) == self.ui.toolOutputTextView:
             print(f"DEBUG: restoreToolTabWidget - toolOutputTextView already in DisplayWidget, returning early")
             return
             
@@ -2728,7 +2742,7 @@ class View(QtCore.QObject):
                 tabName = str(tab.objectName())
                 print(f"DEBUG: restoreToolTabWidget - Checking tab '{tabName}'")
                 
-                if "screenshot" not in str(tab.objectName()) and not tab.findChild(QtWidgets.QTextEdit):
+                if 'screenshot' not in str(tab.objectName()) and not tab.findChild(QtWidgets.QTextEdit):
                     print(f"DEBUG: restoreToolTabWidget - Found tab without QTextEdit: '{tabName}'")
                     print(f"DEBUG: restoreToolTabWidget - Adding DisplayWidget's QTextEdit to this tab")
                     tab.layout().addWidget(self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit))
@@ -2736,11 +2750,13 @@ class View(QtCore.QObject):
                     
         if clear:
             print(f"DEBUG: restoreToolTabWidget - clear=True, clearing toolOutputTextView")
+            # remove the tool output currently in the tools display panel
             if self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit):
                 self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit).setParent(None)
             self.ui.DisplayWidgetLayout.addWidget(self.ui.toolOutputTextView)
             
         print(f"DEBUG: ========== restoreToolTabWidget END ==========\n")
+
 
 
     #################### BRUTE TABS ####################
