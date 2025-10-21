@@ -93,18 +93,26 @@ class View(QtCore.QObject):
 
     def highlightTab(self, tab_name):
         """Highlight a tab with orange text when new data is added"""
+        print(f"DEBUG: highlightTab called for '{tab_name}', app_initialized={self.app_initialized}")
+        
         if not self.app_initialized:
+            print(f"DEBUG: Not highlighting {tab_name} - app not initialized yet")
             return
         
         tab_widget = self.ui.ServicesTabWidget
         tab_bar = tab_widget.tabBar()
         
+        print(f"DEBUG highlightTab: tab_name={tab_name}, current unread_tabs={self.unread_tabs}")
+        
         for i in range(tab_widget.count()):
             if tab_widget.tabText(i) == tab_name:
+                print(f"DEBUG: Found {tab_name} at index {i}, currently unread={self.unread_tabs.get(tab_name, False)}")
                 if not self.unread_tabs.get(tab_name, False):
                     self.unread_tabs[tab_name] = True
                     tab_bar.setTabTextColor(i, QtGui.QColor('orange'))
-                    #print(f"DEBUG: Set {tab_name} tab to ORANGE at index {i}")
+                    print(f"DEBUG: Set {tab_name} tab to ORANGE at index {i}, visible={tab_widget.isVisible()}")
+                else:
+                    print(f"DEBUG: {tab_name} already marked as unread, skipping")
                 break
 
     def preserveFixedTabColors(self):
@@ -114,11 +122,15 @@ class View(QtCore.QObject):
         
         fixed_tabs = ['Services', 'Scripts', 'Information', 'CVEs', 'Notes']
         
+        print(f"DEBUG preserveFixedTabColors: unread_tabs={self.unread_tabs}")
+        
         for i in range(min(len(fixed_tabs), tab_widget.count())):
             tab_name = tab_widget.tabText(i)
             if tab_name in fixed_tabs and self.unread_tabs.get(tab_name, False):
                 # Reapply orange color if this tab is marked as unread
                 tab_bar.setTabTextColor(i, QtGui.QColor('orange'))
+                print(f"DEBUG: Reapplied ORANGE to {tab_name} at index {i}")
+
 
             
     def resetTabHighlight(self, tab_index):
@@ -126,6 +138,8 @@ class View(QtCore.QObject):
         tab_widget = self.ui.ServicesTabWidget
         tab_bar = tab_widget.tabBar()
         tab_name = tab_widget.tabText(tab_index)
+        
+        print(f"DEBUG resetTabHighlight: tab_index={tab_index}, tab_name={tab_name}, before unread_tabs={self.unread_tabs}")
         
         # Only reset if this tab is marked as unread AND we're actually viewing it
         if tab_name in self.unread_tabs and self.unread_tabs[tab_name]:
@@ -138,6 +152,8 @@ class View(QtCore.QObject):
             # For other tabs, reset immediately when clicked
             self.unread_tabs[tab_name] = False
             tab_bar.setTabTextColor(tab_index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
+            print(f"DEBUG resetTabHighlight: RESET {tab_name}, after unread_tabs={self.unread_tabs}")
+
 
 
     def initializeTabColors(self):
