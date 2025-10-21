@@ -62,6 +62,11 @@ class CvesTableModel(QtCore.QAbstractTableModel):
         return resolveHeaders(role, orientation, section, self.__headers)
                 
     def data(self, index, role):  # this method takes care of how the information is displayed
+        # Center-align the CVSS Score column (column 1) and Version column (column 3)
+        if role == QtCore.Qt.ItemDataRole.TextAlignmentRole:
+            if index.column() == 1 or index.column() == 3:  # CVSS Score and Version columns
+                return QtCore.Qt.AlignmentFlag.AlignCenter
+        
         if (
             role == QtCore.Qt.ItemDataRole.DisplayRole
             or role == QtCore.Qt.ItemDataRole.EditRole
@@ -69,6 +74,7 @@ class CvesTableModel(QtCore.QAbstractTableModel):
             row = index.row()
             column = index.column()
             return self.__cves[row][self.columnMapping[column]]
+
 
     def sort(self, Ncol, order):
         self.layoutAboutToBeChanged.emit()

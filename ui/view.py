@@ -1925,22 +1925,43 @@ class View(QtCore.QObject):
 
 
     def updateCvesByHostView(self, hostIP):
-        headers = ["CVE Id", "CVSS Score", "Product", "Version", "CVE URL", "Source", "ExploitDb ID", "ExploitDb",
-                   "ExploitDb URL"]
+        headers = ['CVE Id', 'CVSS Score', 'Product', 'Version', 'CVE URL', 'Source', 'ExploitDb ID', 'ExploitDb', 'ExploitDb URL']
         cves = self.controller.getCvesFromDB(hostIP)
-        self.CvesTableModel = CvesTableModel(self, cves, headers)
-
-        self.ui.CvesTableView.horizontalHeader().resizeSection(0,175)
-        self.ui.CvesTableView.horizontalHeader().resizeSection(2,175)
-        self.ui.CvesTableView.horizontalHeader().resizeSection(4,225)
-
-        self.ui.CvesTableView.setModel(self.CvesTableModel)
-        self.ui.CvesTableView.repaint()
-        self.ui.CvesTableView.update()
         
-        # Only highlight if there are actually CVEs
-        if cves and len(cves) > 0:
-            self.highlightTab('CVEs')
+        # Check if CVE data has changed
+        cves_changed = False
+        
+        # Create a hashable representation of current CVEs for comparison
+        current_cve_signature = str([(c.get('name'), c.get('severity'), c.get('product'), c.get('version')) for c in cves]) if cves else ""
+        
+        # Store previous CVE data per host
+        if not hasattr(self, 'previous_cves'):
+            self.previous_cves = {}
+        
+        # Get previous CVE signature for this host
+        previous_cve_signature = self.previous_cves.get(hostIP, "")
+        
+        # Only update if CVEs have changed
+        if current_cve_signature != previous_cve_signature:
+            cves_changed = True
+            self.previous_cves[hostIP] = current_cve_signature
+            
+            # Update the model
+            self.CvesTableModel = CvesTableModel(self, cves, headers)
+            self.ui.CvesTableView.horizontalHeader().resizeSection(0,175)
+            self.ui.CvesTableView.horizontalHeader().resizeSection(2,175)
+            self.ui.CvesTableView.horizontalHeader().resizeSection(4,225)
+            self.ui.CvesTableView.setModel(self.CvesTableModel)
+            self.ui.CvesTableView.repaint()
+            self.ui.CvesTableView.update()
+            
+            # Only highlight if there are actually CVEs AND data changed
+            if cves and len(cves) > 0:
+                self.highlightTab('CVEs')
+
+
+
+
 
     def updateScriptsOutputView(self, scriptId):
         self.ui.ScriptsOutputTextEdit.clear()
