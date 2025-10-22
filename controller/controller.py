@@ -1206,14 +1206,11 @@ class Controller:
             self.processTimers[qProcess.id] = None
             procTime = timer.elapsed() / 1000
             qProcess.elapsed = procTime
-            self.logic.activeProject.repositoryContainer.processRepository.storeProcessRunningElapsedTime(qProcess.id,
-                                                                                                          procTime)
-
+            self.logic.activeProject.repositoryContainer.processRepository.storeProcessRunningElapsedTime(qProcess.id, procTime)
 
         def handleProcUpdate(*vargs):
             procTime = timer.elapsed() / 1000
             self.processMeasurements[getPid(qProcess)] = procTime
-
 
         name = args[0]
         tabTitle = args[1]
@@ -1224,9 +1221,9 @@ class Controller:
         startTime = args[6]
         outputfile = args[7]
         textbox = args[8]
+
         timer = QElapsedTimer()
         updateElapsed = QTimer()
-
 
         if 'python-script' in name:
             log.info(f'Running python script {name}')
@@ -1236,13 +1233,11 @@ class Controller:
             script_path = None
             arg = None
             output = ""
+
             if "macvendors" in name.lower():
                 script_path = "scripts/python/macvendors.py"
-                # Try to get MAC address from hostIp or port (hostIp is used for IP, but we need MAC)
-                # Fallback: use hostIp as MAC if it looks like a MAC, else skip
                 mac = hostIp if hostIp and ":" in hostIp else ""
                 if not mac and hasattr(self, "view"):
-                    # Try to get MAC from selected host in the UI
                     try:
                         selected_row = self.view.ui.HostsTableView.selectionModel().selectedRows()[0].row()
                         mac = self.view.HostsTableModel.getMacForRow(selected_row)
@@ -1252,6 +1247,7 @@ class Controller:
             elif "shodan" in name.lower():
                 script_path = "scripts/python/pyShodan.py"
                 arg = hostIp
+
             if script_path and arg:
                 try:
                     cmd = f"python3 {shlex.quote(script_path)} {shlex.quote(str(arg))}"
@@ -1262,60 +1258,71 @@ class Controller:
                     output = f"Error running script: {e}"
             else:
                 output = "No valid script or argument found."
-            # Display output in the tab
+
             if textbox:
                 textbox.setPlainText(output)
             return 0
 
-
         self.logic.createFolderForTool(name)
-        #new MyQProcess for the updated class
+
+        # FIX FOR BASH SCRIPTS: Check if script exists and wrap with stdbuf
+        if 'bash' in str(command).lower() and '.sh' in str(command).lower():
+            import re
+            script_match = re.search(r'(\.\/scripts\/[^\s]+\.sh)', str(command))
+            if script_match:
+                script_path = script_match.group(1)
+                if not os.path.exists(script_path):
+                    error_msg = f"ERROR: Script does not exist: {script_path}\n"
+                    log.error(error_msg.strip())
+                    if textbox and not sip.isdeleted(textbox):
+                        textbox.setPlainText(error_msg)
+                    return 0
+            
+            log.info(f"Detected bash script, wrapping with stdbuf for unbuffered output: {command}")
+            command = f"stdbuf -o0 -e0 {command}"
+
+        # new MyQProcess for the updated class
         qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox, self.settings)
         qProcess.sigHasMatch.connect(lambda matchStr: self.handleMatch(hostIp, tabTitle, matchStr))
 
-
         qProcess.started.connect(timer.start)
         qProcess.finished.connect(handleProcStop)
-        updateElapsed.timeout.connect(handleProcUpdate)
 
+        updateElapsed.timeout.connect(handleProcUpdate)
 
         processRepository = self.logic.activeProject.repositoryContainer.processRepository
         dbId = str(processRepository.storeProcess(qProcess))
+
         textbox.setProperty('dbId', dbId)
-        # Also set dbId on parent widget to ensure it's accessible even if QTextEdit relationship breaks
         if textbox.parentWidget():
             textbox.parentWidget().setProperty('dbId', dbId)
-        
+
         updateElapsed.start(1000)
         self.processTimers[qProcess.id] = updateElapsed
         self.processMeasurements[getPid(qProcess)] = 0
 
-
         log.info('Queuing: ' + str(command))
+
         self.fastProcessQueue.put(qProcess)
-
-
         self.checkProcessQueue()
 
-
-        # update the processes table
         self.updateUITimer.stop()
-        # while the process is running, when there's output to read, display it in the GUI
         self.updateUITimer.start(900)
 
-
+        # Set MergedChannels mode - this merges stderr into stdout automatically
         qProcess.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
+        
+        # Connect ONLY stdout since MergedChannels already includes stderr
         qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.insertPlainText(
             str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))))
-
 
         qProcess.sigHydra.connect(self.handleHydraFindings)
         qProcess.finished.connect(lambda: self.processFinished(qProcess))
         qProcess.errorOccurred.connect(lambda error, proc=qProcess: self.processCrashed(proc, error))
+
         log.info(f"runCommand called for stage {str(stage)}")
 
-
-        if stage > 0 and stage < 6:  # if this is a staged nmap, launch the next stage
+        if stage > 0 and stage < 6:
             log.info(f"runCommand connected for stage {str(stage)}")
             nextStage = stage + 1
             qProcess.finished.connect(
@@ -1330,8 +1337,12 @@ class Controller:
                 )
             )
 
+        return getPid(qProcess)
 
-        return getPid(qProcess)  # return the pid so that we can kill the process if needed
+
+
+
+
 
 
 
