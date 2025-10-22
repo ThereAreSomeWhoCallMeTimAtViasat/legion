@@ -1,5 +1,6 @@
 #!/usr/bin/python
 from db.entities.cve import cve
+from app.logging.legionLog import getAppLogger
 
 __author__ =  'ketchup'
 __version__=  '0.1'
@@ -7,6 +8,8 @@ __modified_by = 'ketchup'
 
 import parsers.CVE as CVE
 from pyExploitDb import PyExploitDb
+
+log = getAppLogger()
 
 class Script:
     scriptId = ''
@@ -92,12 +95,12 @@ class Script:
 
         if len(cveOutput) > 0:
            cvesResults = self.processVulnersScriptOutput(cveOutput)
-           print("NEW CVERESULTS: {0}".format(cvesResults))
+           log.debug("NEW CVERESULTS: {0}".format(cvesResults))
 
            for product in cvesResults:
                serviceCpes = cvesResults[product]
                for cveData in serviceCpes:
-                   print("NEW CVE ENTRY: {0}".format(cveData))
+                   log.debug("NEW CVE ENTRY: {0}".format(cveData))
                    cveObj = CVE.CVE(cveData)
                    cveObjects.append(cveObj)
            return cveObjects
@@ -108,7 +111,7 @@ class Script:
         scriptId = str(self.scriptId).lower()
         results = []
         if 'vulners' in scriptId:
-            print("------------------------VULNERS")
+            log.debug("------------------------VULNERS")
             cveResults = self.getCves()
             if cveResults:  # Added None check here
                 for cveEntry in cveResults:
@@ -119,17 +122,17 @@ class Script:
                     results.append(t_cve)
             return results
         elif 'shodan-api' in scriptId:
-            print("------------------------SHODAN")
+            log.debug("------------------------SHODAN")
             self.processShodanScriptOutput(self.output)
             return results
         else:
-            print("-----------------------*{0}".format(scriptId))
+            log.debug("-----------------------*{0}".format(scriptId))
             return results
 
         scriptId = str(self.scriptId).lower()
         results = []
         if 'vulners' in scriptId:
-            print("------------------------VULNERS")
+            log.debug("------------------------VULNERS")
             cveResults = self.getCves()
             for cveEntry in cveResults:
                 t_cve = cve(name=cveEntry.name, url=cveEntry.url, source=cveEntry.source,
@@ -139,9 +142,9 @@ class Script:
                 results.append(t_cve)
             return results
         elif 'shodan-api' in scriptId:
-            print("------------------------SHODAN")
+            log.debug("------------------------SHODAN")
             self.processShodanScriptOutput(self.output)
             return results
         else:
-            print("-----------------------*{0}".format(scriptId))
+            log.debug("-----------------------*{0}".format(scriptId))
             return results
