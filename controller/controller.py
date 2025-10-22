@@ -1209,9 +1209,11 @@ class Controller:
             self.logic.activeProject.repositoryContainer.processRepository.storeProcessRunningElapsedTime(qProcess.id,
                                                                                                           procTime)
 
+
         def handleProcUpdate(*vargs):
             procTime = timer.elapsed() / 1000
             self.processMeasurements[getPid(qProcess)] = procTime
+
 
         name = args[0]
         tabTitle = args[1]
@@ -1224,6 +1226,7 @@ class Controller:
         textbox = args[8]
         timer = QElapsedTimer()
         updateElapsed = QTimer()
+
 
         if 'python-script' in name:
             log.info(f'Running python script {name}')
@@ -1264,39 +1267,53 @@ class Controller:
                 textbox.setPlainText(output)
             return 0
 
+
         self.logic.createFolderForTool(name)
         #new MyQProcess for the updated class
         qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox, self.settings)
         qProcess.sigHasMatch.connect(lambda matchStr: self.handleMatch(hostIp, tabTitle, matchStr))
 
+
         qProcess.started.connect(timer.start)
         qProcess.finished.connect(handleProcStop)
         updateElapsed.timeout.connect(handleProcUpdate)
 
+
         processRepository = self.logic.activeProject.repositoryContainer.processRepository
-        textbox.setProperty('dbId', str(processRepository.storeProcess(qProcess)))
+        dbId = str(processRepository.storeProcess(qProcess))
+        textbox.setProperty('dbId', dbId)
+        # Also set dbId on parent widget to ensure it's accessible even if QTextEdit relationship breaks
+        if textbox.parentWidget():
+            textbox.parentWidget().setProperty('dbId', dbId)
+        
         updateElapsed.start(1000)
         self.processTimers[qProcess.id] = updateElapsed
         self.processMeasurements[getPid(qProcess)] = 0
 
+
         log.info('Queuing: ' + str(command))
         self.fastProcessQueue.put(qProcess)
 
+
         self.checkProcessQueue()
+
 
         # update the processes table
         self.updateUITimer.stop()
         # while the process is running, when there's output to read, display it in the GUI
         self.updateUITimer.start(900)
 
+
         qProcess.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
         qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.insertPlainText(
             str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))))
+
 
         qProcess.sigHydra.connect(self.handleHydraFindings)
         qProcess.finished.connect(lambda: self.processFinished(qProcess))
         qProcess.errorOccurred.connect(lambda error, proc=qProcess: self.processCrashed(proc, error))
         log.info(f"runCommand called for stage {str(stage)}")
+
 
         if stage > 0 and stage < 6:  # if this is a staged nmap, launch the next stage
             log.info(f"runCommand connected for stage {str(stage)}")
@@ -1313,7 +1330,12 @@ class Controller:
                 )
             )
 
+
         return getPid(qProcess)  # return the pid so that we can kill the process if needed
+
+
+
+
 
     def runPython(self):
         textbox = self.view.createNewConsole("python")
@@ -1743,5 +1765,8 @@ class Controller:
                         tab.setProperty('matches', matchStr)
                         self.view.updateTabHighlight(hostIp, tabTitle)
                         break
+
+
+
 
 
