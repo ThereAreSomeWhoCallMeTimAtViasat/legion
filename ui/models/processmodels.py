@@ -113,50 +113,7 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
         # Cache the result
         self.__match_cache[row] = has_matches
         return has_matches
-    
-    #for matching
-    def _has_matches_for_this_process(self, row):
-        """Check if this specific process has matches, with caching"""
-        # Create a unique cache key for this specific process
-        cache_key = f"process_{row}"
-        
-        # Check cache first
-        if cache_key in self.__match_cache:
-            return self.__match_cache[cache_key]
-        
-        # Check for matches for this specific process
-        has_matches = False
-        try:
-            from PyQt6 import QtWidgets
-            
-            toolName = self.__processes[row].get('name', '')
-            hostIp = self.__processes[row].get('hostIp', '')
-            processId = self.__processes[row].get('id', '')
-            
-            view = self.__controller
-            
-            if hasattr(view, 'viewState') and hasattr(view.viewState, 'hostTabs'):
-                # Check only tabs for this specific host
-                tabs = view.viewState.hostTabs.get(hostIp, [])
-                for tab in tabs:
-                    # Match by tab name containing tool name
-                    tabName = tab.objectName()
-                    if toolName in tabName:
-                        # Check if this tab is for this specific process by comparing dbId
-                        text_widget = tab.findChild(QtWidgets.QTextEdit)
-                        if text_widget:
-                            tab_process_id = str(text_widget.property('dbId'))
-                            if tab_process_id == str(processId):
-                                matches = tab.property('matches')
-                                if matches:
-                                    has_matches = True
-                                    break
-        except:
-            pass
-        
-        # Cache the result
-        self.__match_cache[cache_key] = has_matches
-        return has_matches
+
 
     # this method takes care of how the information is displayed
     def data(self, index, role):
@@ -365,3 +322,64 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
         
     def getOutputfileForRow(self, row):
         return self.__processes[row]['outputfile']
+    
+    #for matching
+    def _has_matches_for_this_process(self, row):
+        """Check if this specific process has matches, with caching"""
+        processId = self.__processes[row].get('id', '')
+        cache_key = f"process_{processId}"
+        
+        # Check cache first
+        if cache_key in self.__match_cache:
+            cached = self.__match_cache[cache_key]
+            log.debug(f"_has_matches: row={row}, processId={processId}, CACHED={cached}")
+            return cached
+        
+        # Check for matches for this specific process
+        has_matches = False
+        try:
+            from PyQt6 import QtWidgets
+            
+            toolName = self.__processes[row].get('name', '')
+            hostIp = self.__processes[row].get('hostIp', '')
+            
+            log.debug(f"_has_matches: row={row}, processId={processId}, toolName='{toolName}', CHECKING...")
+            
+            view = self.__controller
+            
+            if hasattr(view, 'viewState') and hasattr(view.viewState, 'hostTabs'):
+                # Check only tabs for this specific host
+                tabs = view.viewState.hostTabs.get(hostIp, [])
+                log.debug(f"_has_matches: row={row}, processId={processId}, found {len(tabs)} tabs")
+                
+                for tab in tabs:
+                    # Match by tab name containing tool name
+                    tabName = tab.objectName()
+                    if toolName in tabName:
+                        log.debug(f"_has_matches: row={row}, processId={processId}, checking tab '{tabName}'")
+                        # Check if this tab is for this specific process by comparing dbId
+                        text_widget = tab.findChild(QtWidgets.QTextEdit)
+                        if text_widget:
+                            tab_process_id = str(text_widget.property('dbId'))
+                        else:
+                            # Fallback: check dbId on the tab widget itself
+                            tab_process_id = str(tab.property('dbId'))
+                            log.debug(f"_has_matches: row={row}, processId={processId}, tab '{tabName}' using fallback dbId from parent widget")
+                        
+                        matches_prop = tab.property('matches')
+                        log.debug(f"_has_matches: row={row}, processId={processId}, tab '{tabName}' dbId={tab_process_id}, matches={matches_prop}")
+                        
+                        if tab_process_id == str(processId):
+                            matches = tab.property('matches')
+                            if matches:
+                                has_matches = True
+                                log.debug(f"_has_matches: row={row}, processId={processId}, MATCH FOUND! has_matches=True")
+                                break
+        except Exception as e:
+            log.debug(f"_has_matches: row={row}, processId={processId}, EXCEPTION: {e}")
+        
+        # Cache the result
+        self.__match_cache[cache_key] = has_matches
+        log.debug(f"_has_matches: row={row}, processId={processId}, FINAL has_matches={has_matches} (cached)")
+        return has_matches
+
