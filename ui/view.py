@@ -1332,7 +1332,17 @@ class View(QtCore.QObject):
                 self.ui.ServicesTabWidget.tabBar().setTabButton(3, QTabBar.ButtonPosition.RightSide, None)
                 self.ui.ServicesTabWidget.tabBar().setTabButton(4, QTabBar.ButtonPosition.RightSide, None)
                 
-                # Preserve colors while flag is set
+                log.debug("switchTabClick - About to call restoreToolTabWidget()")
+                self.restoreToolTabWidget()
+                log.debug("switchTabClick - restoreToolTabWidget() completed")
+                
+                # Always restore tool tabs for the current host BEFORE preserving colors
+                if self.viewState.ip_clicked:
+                    log.debug(f"switchTabClick - Restoring tool tabs for host {self.viewState.ip_clicked}")
+                    self.restoreToolTabsForHost(self.viewState.ip_clicked)
+                    log.debug("switchTabClick - Tool tabs restored")
+                
+                # Preserve colors while flag is set (AFTER all tabs are added)
                 log.debug("switchTabClick - About to call preserveFixedTabColors()")
                 self.preserveFixedTabColors()
                 log.debug("switchTabClick - preserveFixedTabColors() completed")
@@ -1340,7 +1350,7 @@ class View(QtCore.QObject):
                 # Restore the previously selected tab (clamped to fixed tabs only)
                 if saved_tab_index >= self.fixedTabsCount:
                     saved_tab_index = 0  # Default to Services if was on a tool tab
-                    
+                
                 log.debug(f"switchTabClick - Restoring ServicesTabWidget to index {saved_tab_index}")
                 self.ui.ServicesTabWidget.blockSignals(True)
                 self.ui.ServicesTabWidget.setCurrentIndex(saved_tab_index)
@@ -1348,26 +1358,50 @@ class View(QtCore.QObject):
                 log.debug(f"switchTabClick - ServicesTabWidget set to index {saved_tab_index}")
                 
                 # Manually reset the now-visible tab since it's being viewed
+                # BUT skip Information tab - it has special blinking behavior
                 current_tab_name = self.ui.ServicesTabWidget.tabText(saved_tab_index)
-                log.debug(f"switchTabClick - Manually resetting '{current_tab_name}' tab to white (now visible)")
-                if self.unread_tabs.get(current_tab_name, False):
+                log.debug(f"switchTabClick - Checking if '{current_tab_name}' should be reset")
+                
+                if current_tab_name != 'Information' and self.unread_tabs.get(current_tab_name, False):
+                    log.debug(f"switchTabClick - Manually resetting '{current_tab_name}' tab to white (now visible)")
                     self.unread_tabs[current_tab_name] = False
                     self.ui.ServicesTabWidget.tabBar().setTabTextColor(saved_tab_index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
                     log.debug(f"switchTabClick - '{current_tab_name}' tab reset to white")
-                
-                log.debug("switchTabClick - About to call restoreToolTabWidget()")
-                self.restoreToolTabWidget()
-                log.debug("switchTabClick - restoreToolTabWidget() completed")
+                elif current_tab_name == 'Information' and self.unread_tabs.get(current_tab_name, False):
+                    # Information tab is visible - manually trigger its viewed behavior
+                    log.debug("switchTabClick - Information tab is visible, triggering blinking")
+                    self.hostInfoWidget.onTabViewed()
+                    self.unread_tabs['Information'] = False
+                    self.ui.ServicesTabWidget.tabBar().setTabTextColor(saved_tab_index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
+                    log.debug("switchTabClick - Information tab reset to white with blinking")
+                else:
+                    log.debug(f"switchTabClick - NOT resetting '{current_tab_name}' (not unread)")
                 
                 if self.viewState.lazy_update_hosts == True:
                     log.debug("switchTabClick - lazy_update_hosts is True, calling updateHostsTableView()")
                     self.updateHostsTableView()
-                    log.debug("switchTabClick - About to call hostTableClick()")
-                    self.hostTableClick()
-                    log.debug("switchTabClick - hostTableClick() completed")
-                else:
-                    log.debug("switchTabClick - lazy_update_hosts is False, skipping updateHostsTableView()")
-                    
+                
+                log.debug("switchTabClick - About to call hostTableClick()")
+                self.hostTableClick()
+                log.debug("switchTabClick - hostTableClick() completed")
+                
+                # Use QTimer to clear flag AND reapply colors after queued events process
+                log.debug("switchTabClick - Scheduling flag clear and color reapply via QTimer.singleShot()")
+                def clearFlagAndReapplyColors():
+                    log.debug("_clearFlagAndReapplyColors - Clearing suppress_reset_highlight flag")
+                    self.suppress_reset_highlight = False
+                    log.debug("_clearFlagAndReapplyColors - Reapplying fixed tab colors")
+                    self.preserveFixedTabColors()
+                    # Reset visible tab again if needed (except Information)
+                    visible_index = self.ui.ServicesTabWidget.currentIndex()
+                    visible_name = self.ui.ServicesTabWidget.tabText(visible_index)
+                    if visible_name != 'Information' and visible_index < self.fixedTabsCount and self.unread_tabs.get(visible_name, False):
+                        self.unread_tabs[visible_name] = False
+                        self.ui.ServicesTabWidget.tabBar().setTabTextColor(visible_index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
+                        log.debug(f"_clearFlagAndReapplyColors - Reset {visible_name} to white")
+                
+                QtCore.QTimer.singleShot(100, clearFlagAndReapplyColors)
+                
             elif selectedTab == 'Services':
                 log.debug("switchTabClick - Entering Services tab logic")
                 self.ui.ServicesTabWidget.setCurrentIndex(0)
@@ -1382,10 +1416,18 @@ class View(QtCore.QObject):
                 # Set flag when switching TO Tools to preserve unread_tabs state
                 log.debug("switchTabClick - Setting suppress_reset_highlight flag for Tools tab")
                 self.suppress_reset_highlight = True
-                    
+                
                 log.debug("switchTabClick - About to call updateToolsTableView()")
                 self.updateToolsTableView()
                 log.debug("switchTabClick - updateToolsTableView() completed")
+                
+                # Clear flag with timer and reapply colors
+                def clearFlagForTools():
+                    log.debug("clearFlagForTools - Clearing flag and reapplying colors")
+                    self.suppress_reset_highlight = False
+                    self.preserveFixedTabColors()
+                
+                QtCore.QTimer.singleShot(100, clearFlagForTools)
                 
             elif selectedTab == 'OS':
                 log.debug("switchTabClick - Entering OS tab logic")
@@ -1393,18 +1435,15 @@ class View(QtCore.QObject):
                     self.updateOsListView()
                 else:
                     self.updateOsHostsTableView(self.viewState.os_clicked or 'Unknown')
-                    
+            
             log.debug("switchTabClick - About to call displayToolPanel()")
             self.displayToolPanel(selectedTab == 'Tools')
             log.debug("switchTabClick - displayToolPanel() completed")
             
-            # Delay clearing flag - use longer delay to ensure all operations complete
-            if selectedTab in ['Hosts', 'Tools']:
-                log.debug("switchTabClick - Scheduling flag clear via QTimer.singleShot()")
-                QtCore.QTimer.singleShot(500, lambda: self._clearSuppressFlag())  # Changed from 100 to 500ms
-            
             log.debug(f"switchTabClick - AFTER: unread_tabs = {self.unread_tabs}")
             log.debug("========== switchTabClick END ==========\n")
+
+
 
 
     
