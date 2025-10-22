@@ -3269,32 +3269,52 @@ class View(QtCore.QObject):
         textEdit = None
         title = ""
         
+        # Check if we're in the Scripts tab
+        selectedTab = self.ui.ServicesTabWidget.tabText(self.ui.ServicesTabWidget.currentIndex())
+        if selectedTab == 'Scripts':
+            cursor = self.ui.ScriptsOutputTextEdit.textCursor()
+            if cursor.hasSelection():
+                textEdit = self.ui.ScriptsOutputTextEdit
+                # Get the script name and port from the currently selected row
+                if self.ui.ScriptsTableView.selectionModel().selectedRows():
+                    row = self.ui.ScriptsTableView.selectionModel().selectedRows()[0].row()
+                    # Get script name from column 1 (headers are: Id, Script, Port, Protocol)
+                    scriptNameIndex = self.ScriptsTableModel.index(row, 1)
+                    scriptName = self.ScriptsTableModel.data(scriptNameIndex, Qt.ItemDataRole.DisplayRole)
+                    # Get port from column 2
+                    portIndex = self.ScriptsTableModel.index(row, 2)
+                    port = self.ScriptsTableModel.data(portIndex, Qt.ItemDataRole.DisplayRole)
+                    # Build title with port if present
+                    if port:
+                        title = f"Scripts - {scriptName} (Port {port})"
+                    else:
+                        title = f"Scripts - {scriptName}"
+                else:
+                    title = "Scripts Output"
+        
         # First, check if we're in the DisplayWidget (tool output view)
-        displayTextEdit = self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit)
-        if displayTextEdit and displayTextEdit.textCursor().hasSelection():
-            textEdit = displayTextEdit
-            # Try to get a meaningful title from the tool host clicked
-            if self.viewState.tool_host_clicked:
-                title = f"Tool Output (Process {self.viewState.tool_host_clicked})"
-            else:
-                title = "Tool Output"
+        if not textEdit:
+            displayTextEdit = self.ui.DisplayWidget.findChild(QtWidgets.QTextEdit)
+            if displayTextEdit and displayTextEdit.textCursor().hasSelection():
+                textEdit = displayTextEdit
+                # Try to get a meaningful title from the tool host clicked
+                if self.viewState.tool_host_clicked:
+                    title = f"Tool Output (Process {self.viewState.tool_host_clicked})"
+                else:
+                    title = "Tool Output"
         
         # If not in DisplayWidget, check the standard tab location
         if not textEdit:
             selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
             if not selectedTab == 'Hosts':
                 return
-
             currentIndex = self.ui.ServicesTabWidget.currentIndex()
             if currentIndex <= 3:
                 return
-
             widget = self.ui.ServicesTabWidget.widget(currentIndex)
-            
             textEdit = widget.findChild(QtWidgets.QTextEdit)
             if not textEdit:
                 return
-                
             title = self.ui.ServicesTabWidget.tabText(currentIndex)
         
         cursor = textEdit.textCursor()
@@ -3303,10 +3323,8 @@ class View(QtCore.QObject):
         
         # Flash effect - save original stylesheet
         originalStyle = textEdit.styleSheet()
-        
         # Set orange background
         textEdit.setStyleSheet("QTextEdit { background-color: rgba(255, 165, 0, 180); }")
-        
         # Create timer to restore original background after 200ms
         QtCore.QTimer.singleShot(200, lambda: textEdit.setStyleSheet(originalStyle))
         
@@ -3317,7 +3335,6 @@ class View(QtCore.QObject):
         # Create a temporary document with the selection
         tempDocument = QtGui.QTextDocument()
         tempCursor = QtGui.QTextCursor(tempDocument)
-        
         # Copy the selected fragment to temp document
         tempCursor.insertFragment(cursor.selection())
         
@@ -3325,35 +3342,28 @@ class View(QtCore.QObject):
         startBlock = textEdit.document().findBlock(selectionStart)
         endBlock = textEdit.document().findBlock(selectionEnd)
         endBlock = endBlock.next()
-        
         endOfTempDocument = tempDocument.characterCount() - 1
-        
         currentBlock = startBlock
+        
         while currentBlock.isValid() and currentBlock != endBlock:
             layout = currentBlock.layout()
-            
             if layout:
                 # Get the additional formats applied by QSyntaxHighlighter
                 additionalFormats = layout.formats()
-                
                 for formatRange in additionalFormats:
                     # Calculate position in temp document
                     start = currentBlock.position() + formatRange.start - selectionStart
                     end = start + formatRange.length
-                    
                     # Skip if outside temp document bounds
                     if end <= 0 or start >= endOfTempDocument:
                         continue
-                    
                     # Clamp to document bounds
                     start = max(start, 0)
                     end = min(end, endOfTempDocument)
-                    
                     # Apply the format to temp document
                     tempCursor.setPosition(start)
                     tempCursor.setPosition(end, QtGui.QTextCursor.MoveMode.KeepAnchor)
                     tempCursor.mergeCharFormat(formatRange.format)
-            
             currentBlock = currentBlock.next()
         
         # Get the HTML with all formatting preserved
@@ -3366,8 +3376,8 @@ class View(QtCore.QObject):
         
         # Create format for orange background with black text
         headerFormat = QtGui.QTextCharFormat()
-        headerFormat.setBackground(QtGui.QColor(255, 165, 0))  # Orange
-        headerFormat.setForeground(QtGui.QColor(0, 0, 0))      # Black
+        headerFormat.setBackground(QtGui.QColor(255, 165, 0)) # Orange
+        headerFormat.setForeground(QtGui.QColor(0, 0, 0)) # Black
         
         # Insert the header with formatting
         notesCursor.insertText("=== Selection from {} ===\n".format(title), headerFormat)
@@ -3382,7 +3392,9 @@ class View(QtCore.QObject):
         notesCursor.insertText('\n\n')
         
         self.ui.NotesTextEdit.setTextCursor(notesCursor)
-        
         self.highlightTab('Notes')
+
+
+
 
 
