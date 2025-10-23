@@ -502,16 +502,15 @@ class Controller:
     @timing
     def handleHostAction(self, ip, hostid, actions, action):
         repositoryContainer = self.logic.activeProject.repositoryContainer
-
         runningFolder = self.logic.activeProject.properties.runningFolder
         # Use the session directory for temp files
-        session_path = getattr(self.logic.activeProject, "sessionFile", None)
-        if session_path:
-            session_dir = os.path.dirname(session_path)
+        sessionpath = getattr(self.logic.activeProject, 'sessionFile', None)
+        if sessionpath:
+            sessiondir = os.path.dirname(sessionpath)
         else:
-            session_dir = runningFolder
+            sessiondir = runningFolder
         # Use the tool output directory directly, not a subdirectory
-        tool_output_dir = session_dir
+        tooloutputdir = sessiondir
 
         if action.text() == 'Mark as checked' or action.text() == 'Mark as unchecked':
             repositoryContainer.hostRepository.toggleHostCheckStatus(ip)
@@ -539,16 +538,146 @@ class Controller:
             return
 
         if action.text() == 'Delete':
-            log.info('Purging previous portscan data for host {0}'.format(str(ip)))
-            if repositoryContainer.portRepository.getPortsByIPAndProtocol(ip, 'tcp'):
-                repositoryContainer.portRepository.deleteAllPortsAndScriptsByHostId(hostid, 'tcp')
-            if repositoryContainer.portRepository.getPortsByIPAndProtocol(ip, 'udp'):
-                repositoryContainer.portRepository.deleteAllPortsAndScriptsByHostId(hostid, 'udp')
-            self.logic.activeProject.repositoryContainer.hostRepository.deleteHost(ip)
+            log.info("=" * 80)
+            log.info(f'=== DELETE HOST START: {str(ip)} ===')
+            log.info("=" * 80)
+
+            # STEP 1: Cancel screenshots
+            log.info("STEP 1: Cancelling screenshots...")
+            try:
+                if hasattr(self, 'screenshooter') and self.screenshooter:
+                    log.info(f" - Screenshooter exists, calling cancelScreenshotsForIp({ip})")
+                    removed = self.screenshooter.cancelScreenshotsForIp(ip)
+                    log.info(f" - Cancelled {removed} queued screenshots and blacklisted {ip}")
+                else:
+                    log.info(" - No screenshooter found, skipping")
+            except Exception as e:
+                log.error(f" - ERROR cancelling screenshots: {e}")
+
+            # STEP 2: Mark processes as killed in DB
+            log.info("STEP 2: Marking processes as killed...")
+            try:
+                processRepo = repositoryContainer.processRepository
+                running_processes = [p for p in self.processes if hasattr(p, 'hostIp') and p.hostIp == ip]
+                log.info(f" - Found {len(running_processes)} running processes")
+                for proc in running_processes:
+                    proc_id = getattr(proc, 'id', None)
+                    if proc_id:
+                        processRepo.storeProcessKillStatus(str(proc_id))
+                        log.info(f" - Marked process {proc_id} as killed")
+            except Exception as e:
+                log.error(f" - ERROR marking processes as killed: {e}")
+
+            # STEP 3: Kill all running processes
+            log.info("STEP 3: Killing running processes...")
+            try:
+                running_processes = [p for p in self.processes if hasattr(p, 'hostIp') and p.hostIp == ip]
+                log.info(f" - Processing {len(running_processes)} processes")
+                for proc in running_processes:
+                    proc_id = getattr(proc, 'id', None)
+                    pid = getPid(proc)
+                    log.info(f" - Processing proc_id={proc_id}, pid={pid}")
+
+                    # Stop timer
+                    if proc_id and proc_id in self.processTimers:
+                        timer = self.processTimers[proc_id]
+                        if timer and timer.isActive():
+                            timer.stop()
+                        del self.processTimers[proc_id]
+                        log.info(f"   * Stopped and removed timer")
+
+                    # Disconnect ALL signals
+                    for signal_name in ['finished', 'errorOccurred', 'readyReadStandardOutput', 'readyReadStandardError']:
+                        try:
+                            getattr(proc, signal_name).disconnect()
+                            log.info(f"   * Disconnected {signal_name}")
+                        except:
+                            pass
+
+                    # Kill process
+                    if pid:
+                        try:
+                            os.kill(int(pid), signal.SIGKILL)
+                            log.info(f"   * Sent SIGKILL to pid {pid}")
+                        except:
+                            pass
+
+                    # Remove from list
+                    if proc in self.processes:
+                        self.processes.remove(proc)
+                        log.info(f"   * Removed from self.processes")
+
+                log.info(f" - Completed killing {len(running_processes)} processes")
+            except Exception as e:
+                log.error(f" - ERROR killing processes: {e}")
+
+            # STEP 4: Clear process queue
+            log.info("STEP 4: Clearing process queue...")
+            try:
+                temp_queue = queue.Queue()
+                removed_count = 0
+                original_size = self.fastProcessQueue.qsize()
+                log.info(f" - Original queue size: {original_size}")
+
+                while not self.fastProcessQueue.empty():
+                    try:
+                        proc = self.fastProcessQueue.get_nowait()
+                        proc_host = getattr(proc, 'hostIp', 'unknown')
+                        if hasattr(proc, 'hostIp') and proc.hostIp == ip:
+                            removed_count += 1
+                            log.info(f" - Removed queued process for {proc_host}")
+                        else:
+                            temp_queue.put(proc)
+                    except:
+                        break
+
+                while not temp_queue.empty():
+                    try:
+                        self.fastProcessQueue.put(temp_queue.get_nowait())
+                    except:
+                        break
+
+                log.info(f" - Removed {removed_count} queued processes")
+            except Exception as e:
+                log.error(f" - ERROR clearing queue: {e}")
+
+            # STEP 5: Delete from database
+            log.info("STEP 5: Deleting from database...")
+            repositoryContainer.hostRepository.deleteHost(ip)
+            log.info(" - Host deleted from database")
+
+            # STEP 6: Clear tab highlights
+            log.info("STEP 6: Clearing tab highlights...")
+            try:
+                self.view.clearAllTabHighlights()
+                log.info(" - Tab highlights cleared")
+            except Exception as e:
+                log.error(f" - ERROR clearing highlights: {e}")
+
+            # STEP 7: Update interface
+            log.info("STEP 7: Updating interface...")
             self.view.updateInterface()
+            log.info(" - Interface updated")
+
+            # STEP 7.5: Clear the Information tab for the deleted host
+            log.debug("STEP 7.5: Clearing Information tab...")
+            if hasattr(self.view.viewState, 'ipclicked') and self.view.viewState.ipclicked == ip:
+                log.debug(f" - Deleted host {ip} was currently selected, clearing Information tab")
+                self.view.updateInformationView(None)
+                log.debug(" - Information tab cleared")
+            else:
+                log.debug(f" - Deleted host {ip} was not currently selected, no clear needed")
+
+            # STEP 8: Schedule cleanup validation for 2 seconds later
+            log.info("STEP 8: Scheduling cleanup validation in 2 seconds...")
+            QTimer.singleShot(2000, lambda: self.cleanupDeletedHost(ip))
+            log.info("=" * 80)
+            log.info(f'=== DELETE HOST END: {ip} ===')
+            log.info("=" * 80)
             return
 
-        for i in range(0,len(actions)):
+        # Handle other actions (tool execution)
+        for i in range(0, len(actions)):
             if action == actions[i]:
                 name = self.settings.hostActions[i][1]
                 invisibleTab = False
@@ -558,19 +687,39 @@ class Controller:
                     invisibleTab = True
                 elif 'python-script' in name:
                     invisibleTab = True
-                
+
                 outputfile = normalize_path(os.path.join(
-                    tool_output_dir,
+                    tooloutputdir,
                     f"{getTimestamp()}-{re.sub('[^0-9a-zA-Z]', '', str(self.settings.hostActions[i][1]))}-{ip}"
                 ))
+
                 command = str(self.settings.hostActions[i][2])
                 command = command.replace('[IP]', ip).replace('[OUTPUT]', outputfile)
                 command = f"{command} -oA {outputfile}"
-
                 tabTitle = self.settings.hostActions[i][1]
-                self.runCommand(name, tabTitle, ip, '', '', command, getTimestamp(True), outputfile,
-                                self.view.createNewTabForHost(ip, tabTitle, invisibleTab))
+
+                self.runCommand(name, tabTitle, ip, '', '', command, getTimestamp(True),
+                               outputfile, self.view.createNewTabForHost(ip, tabTitle, invisibleTab))
                 break
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     @timing
     def getContextMenuForServiceName(self, serviceName='*', menu=None):
@@ -1479,17 +1628,40 @@ class Controller:
         QtCore.QMetaObject.invokeMethod(self.view, "updateInterface", QtCore.Qt.ConnectionType.QueuedConnection)
 
     def screenshotFinished(self, ip, port, filename):
-        log.info("---------------Screenshoot done. Args %s, %s, %s" % (str(ip), str(port), str(filename)))
+        log.info(f"---------------Screenshoot done. Args {ip}, {port}, {filename}")
+        
+        # FIRST: Check if this IP is blacklisted (host was deleted)
+        if hasattr(self, 'screenshooter') and self.screenshooter and ip in self.screenshooter.blacklisted_ips:
+            log.info(f"Ignoring screenshot for blacklisted IP {ip} - host was deleted")
+            return
+        
+        # SECOND: Check if filename is empty (screenshot was cancelled or failed)
+        if not filename or filename.strip() == "":
+            log.info(f"Screenshot for {ip}:{port} was cancelled or failed - no file saved")
+            return
+        
+        # THIRD: Verify host still exists in database before storing screenshot
+        try:
+            repositoryContainer = self.logic.activeProject.repositoryContainer
+            from db.entities.host import hostObj
+            session = repositoryContainer.hostRepository.dbAdapter.session()
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            session.close()
+            
+            if not host:
+                log.info(f"Host {ip} no longer exists in database - ignoring screenshot")
+                return
+        except Exception as e:
+            log.error(f"Error checking if host exists: {e}")
+            return
+        
+        # Finally: Store the screenshot and create UI tab
         outputFolder = self.logic.activeProject.properties.outputFolder
-        dbId = self.logic.activeProject.repositoryContainer.processRepository.storeScreenshot(str(ip), str(port),
-                                                                                              str(filename))
-        imageviewer = self.view.createNewTabForHost(ip, 'screenshot (' + port + '/tcp)', True, '',
-                                                    str(outputFolder) + '/screenshots/' + str(filename))
+        dbId = self.logic.activeProject.repositoryContainer.processRepository.storeScreenshot(ip, port, filename)
+        
+        imageviewer = self.view.createNewTabForHost(ip, f'screenshot ({port}) [tcp]', True, '', f'{outputFolder}/screenshots/{filename}')
         imageviewer.setProperty('dbId', QVariant(str(dbId)))
-        # to make sure the screenshot tab appears when it is launched from the host services tab
-        self.view.switchTabClick()
-        #self.updateUITimer.stop()  # update the processes table
-        #self.updateUITimer.start(900)
+
 
     def processCrashed(self, proc, error=None):
         if proc is None or sip.isdeleted(proc):
@@ -1728,7 +1900,7 @@ class Controller:
                             log.debug(f"Running tool command: {str(command)}")
 
                             if self.findDuplicateTab(self.view.ui.ServicesTabWidget, tabTitle):
-                                log.debug("Duplicate tab name. Tool might have already run.")
+                                log.info("Duplicate tab name. Tool might have already run.")
                                 break
                             tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
                             self.runCommand(tool[0], tabTitle, ip, port, protocol, command,
@@ -1776,6 +1948,100 @@ class Controller:
                         tab.setProperty('matches', matchStr)
                         self.view.updateTabHighlight(hostIp, tabTitle)
                         break
+
+
+    def cleanupDeletedHost(self, ip):
+        """
+        Delayed cleanup to catch any processes that finished after host deletion.
+        """
+        from sqlalchemy import text
+        
+        log.info("=" * 80)
+        log.info(f"=== CLEANUP VALIDATION START for {ip} ===")
+        log.info("=" * 80)
+        
+        repositoryContainer = self.logic.activeProject.repositoryContainer
+        
+        # STEP 1: Check if host still exists
+        try:
+            from db.entities.host import hostObj
+            session = repositoryContainer.hostRepository.dbAdapter.session()
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            session.close()
+            
+            if host:
+                log.warning(f"  - WARNING: Host {ip} still exists in database!")
+            else:
+                log.info(f"  - Host {ip} confirmed deleted from database")
+        except Exception as e:
+            log.error(f"  - Error checking host: {e}")
+        
+        # STEP 2: Delete any orphaned processes
+        try:
+            all_processes = repositoryContainer.processRepository.getProcesses(filters='', showProcesses='', sort='desc', ncol='id')
+            orphaned = [p for p in all_processes if getattr(p, 'hostIp', None) == ip]
+            
+            if orphaned:
+                log.warning(f"  - Found {len(orphaned)} orphaned process records for deleted host {ip}")
+                for proc in orphaned:
+                    proc_id = getattr(proc, 'id', None)
+                    if proc_id:
+                        try:
+                            session = repositoryContainer.processRepository.dbAdapter.session()
+                            session.execute(text("DELETE FROM process_output WHERE id = :id"), {"id": str(proc_id)})
+                            session.execute(text("DELETE FROM process WHERE id = :id"), {"id": str(proc_id)})
+                            session.commit()
+                            session.close()
+                            log.info(f"    * Deleted orphaned process {proc_id}")
+                        except Exception as e:
+                            log.error(f"    * Failed to delete process {proc_id}: {e}")
+            else:
+                log.info(f"  - No orphaned processes found for {ip}")
+        except Exception as e:
+            log.error(f"  - Error cleaning orphaned processes: {e}")
+        
+        # STEP 3: Delete any other orphaned data
+        try:
+            from db.entities.port import portObj
+            session = repositoryContainer.portRepository.dbAdapter.session()
+            orphaned_ports = session.query(portObj).filter_by(hostId=ip).all()
+            if orphaned_ports:
+                log.warning(f"  - Found {len(orphaned_ports)} orphaned ports")
+                for port in orphaned_ports:
+                    session.delete(port)
+                session.commit()
+            session.close()
+        except Exception as e:
+            log.error(f"  - Error cleaning orphaned ports: {e}")
+        
+        # STEP 4: Remove IP from screenshooter blacklist
+        try:
+            if hasattr(self, 'screenshooter') and self.screenshooter:
+                removed = self.screenshooter.removeFromBlacklist(ip)
+                if removed:
+                    log.info(f"  - Removed {ip} from screenshooter blacklist")
+                else:
+                    log.info(f"  - {ip} was not in screenshooter blacklist")
+        except Exception as e:
+            log.error(f"  - Error removing from blacklist: {e}")
+        
+        # STEP 5: Force UI refresh
+        log.info("  - Forcing UI refresh...")
+        self.view.updateInterface()
+        
+        # STEP 6: Clear tab highlights AGAIN after UI refresh
+        log.info("  - Clearing tab highlights after refresh...")
+        try:
+            self.view.clearAllTabHighlights()
+            log.info("  - Tab highlights cleared after refresh")
+        except Exception as e:
+            log.error(f"  - Error clearing tab highlights: {e}")
+        
+        log.info("=" * 80)
+        log.info(f"=== CLEANUP VALIDATION END for {ip} ===")
+        log.info("=" * 80)
+
+
 
 
 

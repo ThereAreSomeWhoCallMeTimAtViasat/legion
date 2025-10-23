@@ -1,24 +1,32 @@
 """
+
 LEGION (https://shanewilliamscott.com)
+
 Copyright (c) 2025 Shane William Scott
 
-    This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
-    License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
-    version.
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
 
-    This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
-    warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
-    details.
+License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
 
-    You should have received a copy of the GNU General Public License along with this program.
-    If not, see <http://www.gnu.org/licenses/>.
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+
+details.
+
+You should have received a copy of the GNU General Public License along with this program.
+
+If not, see <http://www.gnu.org/licenses/>.
 
 Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@gmail.com)
+
 """
 
 import os
-
 import warnings
+import signal
 warnings.filterwarnings("ignore", category=UserWarning)
 
 from PyQt6 import QtCore
@@ -31,6 +39,7 @@ from app.auxiliary import isKali
 logger = getAppLogger()
 
 class Screenshooter(QtCore.QThread):
+
     done = QtCore.pyqtSignal(str, str, str, name="done")  # signal sent after each individual screenshot is taken
     log = QtCore.pyqtSignal(str, name="log")
 
@@ -39,6 +48,9 @@ class Screenshooter(QtCore.QThread):
         self.queue = []
         self.processing = False
         self.timeout = timeout  # screenshooter timeout (ms)
+        self.current_subprocess = None  # Track running subprocess
+        self.blacklisted_ips = set()  # IPs to skip screenshots for
+        self.current_ip = None  # Track which IP we're currently processing
 
     def tsLog(self, msg):
         self.log.emit(str(msg))
@@ -63,9 +75,16 @@ class Screenshooter(QtCore.QThread):
                 ip = queueItem[0]
                 port = queueItem[1]
                 url = queueItem[2]
+                
+                # Check blacklist before processing
+                if ip in self.blacklisted_ips:
+                    self.tsLog(f'Skipping screenshot for blacklisted IP: {ip}')
+                    continue
+                
+                self.current_ip = ip
                 outputfile = getTimestamp() + '-screenshot-' + url.replace(':', '-') + '.png'
                 self.save(url, ip, port, outputfile)
-
+                self.current_ip = None
             except Exception as e:
                 self.tsLog('Unable to take the screenshot. Error follows.')
                 self.tsLog(e)
@@ -78,6 +97,12 @@ class Screenshooter(QtCore.QThread):
             self.run()
 
     def save(self, url, ip, port, outputfile):
+        # Check if this IP is blacklisted
+        if ip in self.blacklisted_ips:
+            self.tsLog(f'Skipping screenshot for blacklisted IP: {ip}')
+            self.done.emit(ip, port, "")
+            return
+        
         # Handle single node URI case by pivot to IP
         if len(str(url).split('.')) == 1:
             url = '{0}:{1}'.format(str(ip), str(port))
@@ -85,7 +110,7 @@ class Screenshooter(QtCore.QThread):
         host_for_https = str(url)
         if '://' in host_for_https:
             host_for_https = host_for_https.split('://', 1)[1]
-        host_for_https = host_for_https.split(':', 1)[0]
+            host_for_https = host_for_https.split(':', 1)[0]
 
         if isHttps(host_for_https, port):
             url = 'https://{0}'.format(url)
@@ -94,9 +119,6 @@ class Screenshooter(QtCore.QThread):
 
         self.tsLog('Taking Screenshot of: {0}'.format(str(url)))
 
-        # Use eyewitness under Kali.
-        # Use webdriver if not Kali.
-        # Once eyewitness is more broadly available, the counter case can be eliminated.
         if isKali():
             eyewitness_path = "/usr/bin/eyewitness"
         else:
@@ -107,6 +129,7 @@ class Screenshooter(QtCore.QThread):
 
         try:
             tmpOutputfolder = tempfile.mkdtemp(dir=self.outputfolder)
+
             if not os.path.isfile(eyewitness_path):
                 raise FileNotFoundError("EyeWitness not found at /usr/bin/eyewitness. Please install it.")
 
@@ -117,10 +140,19 @@ class Screenshooter(QtCore.QThread):
                 url=url,
                 outputfolder=tmpOutputfolder
             )
+
             self.tsLog(f'Executing: {command}')
-            # Flake8: break up long command string if needed
-            p = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            p.wait()  # wait for command to finish
+
+            # Store subprocess so we can kill it if needed
+            self.current_subprocess = subprocess.Popen(command, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.current_subprocess.wait()  # wait for command to finish
+            self.current_subprocess = None
+
+            # Check again if IP was blacklisted while we were processing
+            if ip in self.blacklisted_ips:
+                self.tsLog(f'IP {ip} was blacklisted during screenshot - discarding result')
+                self.done.emit(ip, port, "")
+                return
 
             screens_dir = os.path.join(tmpOutputfolder, 'screens')
             if not os.path.isdir(screens_dir):
@@ -131,26 +163,24 @@ class Screenshooter(QtCore.QThread):
                 raise FileNotFoundError(f"No screenshot PNG found in {screens_dir}. EyeWitness may have failed.")
 
             fileName = files[0]
-            # Remove prefix in a way compatible with all Python versions
+
             if tmpOutputfolder.startswith(self.outputfolder):
                 rel_tmp = tmpOutputfolder[len(self.outputfolder):].lstrip(os.sep)
             else:
                 rel_tmp = tmpOutputfolder
+
             outputfile = os.path.join(rel_tmp, 'screens', fileName)
-            # Normalize for DB/UI
             normalized_outputfile = outputfile.replace("\\", "/")
             outputfile = normalized_outputfile
 
-            # Copy/rename to deterministic filename for deduplication
             deterministic_name = f"{ip}-{port}-screenshot.png"
             deterministic_path = os.path.join(self.outputfolder, deterministic_name)
+
             try:
                 import shutil
                 src_path = os.path.join(tmpOutputfolder, 'screens', fileName)
                 shutil.copy2(src_path, deterministic_path)
-                self.tsLog(
-                f"Copied screenshot to deterministic filename: {deterministic_path}"
-            )
+                self.tsLog(f"Copied screenshot to deterministic filename: {deterministic_path}")
             except Exception as e:
                 self.tsLog(f"Failed to copy screenshot to deterministic filename: {e}")
 
@@ -158,6 +188,42 @@ class Screenshooter(QtCore.QThread):
             self.tsLog(f"EyeWitness screenshot failed: {e}")
             self.done.emit(ip, port, "")
             return
-        
+
         self.tsLog('Saving screenshot as: {0}'.format(str(outputfile)))
-        self.done.emit(ip, port, outputfile)  # send a signal to add the 'process' to the DB
+        self.done.emit(ip, port, outputfile)
+
+    def cancelScreenshotsForIp(self, ip):
+        """Cancel all queued and in-progress screenshots for a specific IP."""
+        self.tsLog(f"=== cancelScreenshotsForIp START for IP: {ip} ===")
+        self.tsLog(f"Queue length BEFORE: {len(self.queue)}")
+        
+        # Add to blacklist
+        self.blacklisted_ips.add(ip)
+        self.tsLog(f"Added {ip} to blacklist")
+        
+        # Remove from queue
+        original_length = len(self.queue)
+        self.queue = [item for item in self.queue if item[0] != ip]
+        removed_from_queue = original_length - len(self.queue)
+        self.tsLog(f"Removed {removed_from_queue} items from queue")
+        
+        # Kill current subprocess if it's for this IP
+        if self.current_subprocess and self.current_ip == ip:
+            try:
+                self.current_subprocess.send_signal(signal.SIGKILL)
+                self.current_subprocess = None
+                self.tsLog(f"Killed running screenshot subprocess for {ip}")
+            except Exception as e:
+                self.tsLog(f"Error killing subprocess: {e}")
+        
+        self.tsLog(f"Queue length AFTER: {len(self.queue)}")
+        self.tsLog(f"=== cancelScreenshotsForIp END ===")
+        return removed_from_queue
+
+    def removeFromBlacklist(self, ip):
+        """Remove an IP from the blacklist."""
+        if ip in self.blacklisted_ips:
+            self.blacklisted_ips.remove(ip)
+            self.tsLog(f"Removed {ip} from blacklist")
+            return True
+        return False

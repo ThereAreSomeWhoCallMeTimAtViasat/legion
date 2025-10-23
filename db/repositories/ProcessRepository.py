@@ -438,3 +438,50 @@ class ProcessRepository:
             session.commit()
         finally:
             session.close()
+
+    def deleteProcess(self, processId: str):
+        """Delete a specific process and its output from the database."""
+        session = self.dbAdapter.session()
+        try:
+            # Delete process_output first
+            session.execute(
+                text("DELETE FROM process_output WHERE id = :processId"),
+                {"processId": str(processId)}
+            )
+            # Delete process
+            session.execute(
+                text("DELETE FROM process WHERE id = :processId"),
+                {"processId": str(processId)}
+            )
+            session.commit()
+            self.log.info(f"Deleted process {processId} from database")
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to delete process {processId}: {e}")
+            raise
+        finally:
+            session.close()
+    
+    def deleteProcessesByHostIp(self, hostIp: str):
+        """Delete all processes for a given host IP."""
+        session = self.dbAdapter.session()
+        try:
+            # Delete process outputs first
+            session.execute(
+                text("DELETE FROM process_output WHERE id IN (SELECT id FROM process WHERE hostIp = :hostip)"),
+                {"hostip": str(hostIp)}
+            )
+            # Delete processes
+            session.execute(
+                text("DELETE FROM process WHERE hostIp = :hostip"),
+                {"hostip": str(hostIp)}
+            )
+            session.commit()
+            self.log.info(f"Deleted all processes for host {hostIp}")
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to delete processes for host {hostIp}: {e}")
+            raise
+        finally:
+            session.close()
+
