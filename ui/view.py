@@ -2055,13 +2055,19 @@ class View(QtCore.QObject):
         self.PortsByServiceTableModel.sort(0, Qt.SortOrder.DescendingOrder) # sort by IP by default (override default)
 
     def updateInformationView(self, hostIP):
+        log.debug("=" * 60)
+        log.debug("updateInformationView START")
+        log.debug(f"  hostIP: {hostIP}")
+        
         if hostIP:
+            log.debug(f"  Calling getHostInformation for {hostIP}...")
             host = self.controller.getHostInformation(hostIP)
+            log.debug(f"  Host query result: {host}")
             
             if host:
+                log.debug(f"  Host EXISTS in database - updating Information tab with data")
                 states = self.controller.getPortStatesForHost(host.id)
                 counterOpen = counterClosed = counterFiltered = 0
-                
                 for s in states:
                     if s[0] == 'open':
                         counterOpen += 1
@@ -2069,37 +2075,42 @@ class View(QtCore.QObject):
                         counterClosed += 1
                     else:
                         counterFiltered += 1
-                
                 if host.state == 'closed':
                     counterClosed = 65535 - counterOpen - counterFiltered
                 else:
                     counterFiltered = 65535 - counterOpen - counterClosed
                 
-                # Update the host information widget
+                log.debug(f"  Updating widget with: status={host.status}, open={counterOpen}, closed={counterClosed}, filtered={counterFiltered}")
                 self.hostInfoWidget.updateFields(
-                    status=host.status, 
-                    openPorts=counterOpen, 
-                    closedPorts=counterClosed, 
-                    filteredPorts=counterFiltered,
-                    ipv4=host.ipv4, 
-                    ipv6=host.ipv6, 
-                    macaddr=host.macaddr, 
-                    osMatch=host.osMatch, 
-                    osAccuracy=host.osAccuracy,
-                    vendor=host.vendor, 
-                    asn=host.asn, 
-                    isp=host.isp, 
-                    countryCode=host.countryCode, 
-                    city=host.city,
-                    latitude=host.latitude, 
-                    longitude=host.longitude
+                    status=host.status, openPorts=counterOpen, closedPorts=counterClosed, filteredPorts=counterFiltered,
+                    ipv4=host.ipv4, ipv6=host.ipv6, macaddr=host.macaddr, osMatch=host.osMatch,
+                    osAccuracy=host.osAccuracy, vendor=host.vendor, asn=host.asn, isp=host.isp,
+                    countryCode=host.countryCode, city=host.city, latitude=host.latitude, longitude=host.longitude
                 )
-                
-                # Only highlight the tab if there are pending changes
-                if self.hostInfoWidget.hasPendingChanges():
-                    self.highlightTab('Information')
-
-
+                log.debug(f"  Widget updated successfully with host data")
+            else:
+                # Host doesn't exist in database - clear the widget
+                log.debug(f"  Host DOES NOT EXIST in database - clearing Information tab")
+                self.hostInfoWidget.updateFields(
+                    status=None, openPorts=0, closedPorts=0, filteredPorts=0,
+                    ipv4=None, ipv6=None, macaddr=None, osMatch=None,
+                    osAccuracy=None, vendor=None, asn=None, isp=None,
+                    countryCode=None, city=None, latitude=None, longitude=None
+                )
+                log.debug(f"  Widget cleared - host {hostIP} was deleted or doesn't exist")
+        else:
+            # No IP provided - clear the widget
+            log.debug(f"  No hostIP provided (None or empty) - clearing Information tab")
+            self.hostInfoWidget.updateFields(
+                status=None, openPorts=0, closedPorts=0, filteredPorts=0,
+                ipv4=None, ipv6=None, macaddr=None, osMatch=None,
+                osAccuracy=None, vendor=None, asn=None, isp=None,
+                countryCode=None, city=None, latitude=None, longitude=None
+            )
+            log.debug(f"  Widget cleared - no IP provided")
+        
+        log.debug("updateInformationView END")
+        log.debug("=" * 60)
 
 
     def updateScriptsView(self, hostIP):
@@ -3393,6 +3404,32 @@ class View(QtCore.QObject):
         
         self.ui.NotesTextEdit.setTextCursor(notesCursor)
         self.highlightTab('Notes')
+
+    def clearAllTabHighlights(self):
+        """Clear all orange tab highlights (reset all tabs to default color)."""
+        log.info("=== clearAllTabHighlights START ===")
+        log.info(f"unread_tabs BEFORE: {self.unread_tabs}")
+        
+        # Reset all unread tab states
+        for tabname in list(self.unread_tabs.keys()):
+            self.unread_tabs[tabname] = False
+            log.info(f"  - Set {tabname} unread state to False")
+        
+        # Reset all tab colors to default
+        tabwidget = self.ui.ServicesTabWidget
+        tabbar = tabwidget.tabBar()
+        defaultcolor = self.app.palette().color(QtGui.QPalette.ColorRole.WindowText)
+        
+        fixedtabs = ['Services', 'Scripts', 'Information', 'CVEs', 'Notes']
+        for i in range(min(len(fixedtabs), tabwidget.count())):
+            tabname = tabwidget.tabText(i)
+            if tabname in fixedtabs:
+                tabbar.setTabTextColor(i, defaultcolor)
+                log.info(f"  - Reset tab '{tabname}' at index {i} to default color")
+        
+        log.info(f"unread_tabs AFTER: {self.unread_tabs}")
+        log.info("=== clearAllTabHighlights END ===")
+
 
 
 

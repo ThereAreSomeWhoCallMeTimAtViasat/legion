@@ -22,6 +22,8 @@ from db.SqliteDbAdapter import Database
 from db.entities.host import hostObj
 from app.osclassification import classify_os, ORDERED_OS_CATEGORIES
 from db.filters import applyFilters, applyHostsFilters
+from app.logging.legionLog import getDbLogger
+
 
 
 class HostRepository:
@@ -74,12 +76,70 @@ class HostRepository:
         return result
 
     def deleteHost(self, hostIP):
+        """Delete a host and ALL related records from the database."""
+        log = getDbLogger()
         session = self.dbAdapter.session()
-        host = session.query(hostObj).filter_by(ip=str(hostIP)).first()
-        if host:
+        try:
+            # Get the host first to retrieve its ID
+            host = session.query(hostObj).filter_by(ip=str(hostIP)).first()
+            if not host:
+                log.warning(f"Host {hostIP} not found in database")
+                session.close()
+                return
+            
+            hostId = host.id
+            log.info(f"Deleting host {hostIP} (ID: {hostId}) and all related records...")
+            
+            # 1. Delete all processes and their outputs for this host (by hostIp)
+            session.execute(
+                text("DELETE FROM process_output WHERE id IN (SELECT id FROM process WHERE hostIp = :hostip)"),
+                {"hostip": str(hostIP)}
+            )
+            session.execute(
+                text("DELETE FROM process WHERE hostIp = :hostip"),
+                {"hostip": str(hostIP)}
+            )
+            
+            # 2. Delete all scripts for this host (both host-level and port-level)
+            # Note: l1ScriptObj stores output inline, no separate output table
+            session.execute(
+                text("DELETE FROM l1ScriptObj WHERE hostId = :hostid OR portId IN (SELECT id FROM portObj WHERE hostId = :hostid)"),
+                {"hostid": str(hostId)}
+            )
+            
+            # 3. Delete all ports for this host
+            session.execute(
+                text("DELETE FROM portObj WHERE hostId = :hostid"),
+                {"hostid": str(hostId)}
+            )
+            
+            # 4. Delete all CVEs for this host
+            session.execute(
+                text("DELETE FROM cve WHERE hostId = :hostid"),
+                {"hostid": str(hostId)}
+            )
+            
+            # 5. Delete all notes for this host
+            session.execute(
+                text("DELETE FROM note WHERE hostId = :hostid"),
+                {"hostid": str(hostId)}
+            )
+            
+            # 6. Finally, delete the host itself
             session.delete(host)
+            
             session.commit()
-        session.close()
+            log.info(f"Successfully deleted host {hostIP} and all related records")
+        except Exception as e:
+            session.rollback()
+            log.error(f"Failed to delete host {hostIP}: {e}")
+            raise
+        finally:
+            session.close()
+
+
+
+
 
     def toggleHostCheckStatus(self, ipAddress):
         session = self.dbAdapter.session()
