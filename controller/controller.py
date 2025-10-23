@@ -321,8 +321,25 @@ class Controller:
             log.exception("Failed to reset process display status when opening project")
 
     def saveProject(self, lastHostIdClicked, notes):
-        if not lastHostIdClicked == '':
-            self.logic.activeProject.repositoryContainer.noteRepository.storeNotes(lastHostIdClicked, notes)
+        """Save project with notes for the specified host ID"""
+        if lastHostIdClicked:
+            # Ensure we're passing the numeric host ID, not an IP address
+            try:
+                # If lastHostIdClicked is an IP address, resolve it to host ID
+                if isinstance(lastHostIdClicked, str) and '.' in lastHostIdClicked:
+                    host = self.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(lastHostIdClicked)
+                    if host:
+                        hostId = host.id
+                    else:
+                        log.warning(f"Cannot save notes: host {lastHostIdClicked} not found")
+                        return
+                else:
+                    hostId = int(lastHostIdClicked)
+                
+                self.logic.activeProject.repositoryContainer.noteRepository.storeNotes(hostId, notes)
+            except Exception as e:
+                log.error(f"Error saving notes for {lastHostIdClicked}: {e}")
+
 
     def saveProjectAs(self, filename, replace=0):
         success = self.logic.saveProjectAs(filename, replace)
@@ -537,144 +554,164 @@ class Controller:
             self.view.updateInterface()
             return
 
-        if action.text() == 'Delete':
+        if action.text() == "Delete":
             log.info("=" * 80)
-            log.info(f'=== DELETE HOST START: {str(ip)} ===')
+            log.info(f"DELETE HOST START: {ip}")
             log.info("=" * 80)
-
+            
             # STEP 1: Cancel screenshots
             log.info("STEP 1: Cancelling screenshots...")
             try:
                 if hasattr(self, 'screenshooter') and self.screenshooter:
-                    log.info(f" - Screenshooter exists, calling cancelScreenshotsForIp({ip})")
+                    log.info(f"  - Screenshooter exists, calling cancelScreenshotsForIp({ip})")
                     removed = self.screenshooter.cancelScreenshotsForIp(ip)
-                    log.info(f" - Cancelled {removed} queued screenshots and blacklisted {ip}")
+                    log.info(f"  - Cancelled {removed} queued screenshots and blacklisted {ip}")
                 else:
-                    log.info(" - No screenshooter found, skipping")
+                    log.info("  - No screenshooter found, skipping")
             except Exception as e:
-                log.error(f" - ERROR cancelling screenshots: {e}")
-
-            # STEP 2: Mark processes as killed in DB
+                log.error(f"  - ERROR cancelling screenshots: {e}")
+            
+            # STEP 2: Mark processes as killed
             log.info("STEP 2: Marking processes as killed...")
             try:
                 processRepo = repositoryContainer.processRepository
                 running_processes = [p for p in self.processes if hasattr(p, 'hostIp') and p.hostIp == ip]
-                log.info(f" - Found {len(running_processes)} running processes")
+                log.info(f"  - Found {len(running_processes)} running processes")
                 for proc in running_processes:
-                    proc_id = getattr(proc, 'id', None)
-                    if proc_id:
-                        processRepo.storeProcessKillStatus(str(proc_id))
-                        log.info(f" - Marked process {proc_id} as killed")
+                    procid = getattr(proc, 'id', None)
+                    if procid:
+                        processRepo.storeProcessKillStatus(str(procid))
+                        log.info(f"  - Marked process {procid} as killed")
             except Exception as e:
-                log.error(f" - ERROR marking processes as killed: {e}")
-
-            # STEP 3: Kill all running processes
+                log.error(f"  - ERROR marking processes as killed: {e}")
+            
+            # STEP 3: Kill running processes
             log.info("STEP 3: Killing running processes...")
             try:
                 running_processes = [p for p in self.processes if hasattr(p, 'hostIp') and p.hostIp == ip]
-                log.info(f" - Processing {len(running_processes)} processes")
+                log.info(f"  - Processing {len(running_processes)} processes")
                 for proc in running_processes:
-                    proc_id = getattr(proc, 'id', None)
+                    procid = getattr(proc, 'id', None)
                     pid = getPid(proc)
-                    log.info(f" - Processing proc_id={proc_id}, pid={pid}")
-
+                    log.info(f"  - Processing procid={procid}, pid={pid}")
+                    
                     # Stop timer
-                    if proc_id and proc_id in self.processTimers:
-                        timer = self.processTimers[proc_id]
+                    if procid and procid in self.processTimers:
+                        timer = self.processTimers[procid]
                         if timer and timer.isActive():
                             timer.stop()
-                        del self.processTimers[proc_id]
-                        log.info(f"   * Stopped and removed timer")
-
+                        del self.processTimers[procid]
+                        log.info(f"    Stopped and removed timer")
+                    
                     # Disconnect ALL signals
-                    for signal_name in ['finished', 'errorOccurred', 'readyReadStandardOutput', 'readyReadStandardError']:
+                    for signalname in ['finished', 'errorOccurred', 'readyReadStandardOutput', 'readyReadStandardError']:
                         try:
-                            getattr(proc, signal_name).disconnect()
-                            log.info(f"   * Disconnected {signal_name}")
+                            getattr(proc, signalname).disconnect()
+                            log.info(f"    Disconnected {signalname}")
                         except:
                             pass
-
+                    
                     # Kill process
                     if pid:
                         try:
                             os.kill(int(pid), signal.SIGKILL)
-                            log.info(f"   * Sent SIGKILL to pid {pid}")
+                            log.info(f"    Sent SIGKILL to pid {pid}")
                         except:
                             pass
-
+                    
                     # Remove from list
                     if proc in self.processes:
                         self.processes.remove(proc)
-                        log.info(f"   * Removed from self.processes")
-
-                log.info(f" - Completed killing {len(running_processes)} processes")
+                        log.info(f"    Removed from self.processes")
+                
+                log.info(f"  - Completed killing {len(running_processes)} processes")
             except Exception as e:
-                log.error(f" - ERROR killing processes: {e}")
-
+                log.error(f"  - ERROR killing processes: {e}")
+            
             # STEP 4: Clear process queue
             log.info("STEP 4: Clearing process queue...")
             try:
-                temp_queue = queue.Queue()
+                tempqueue = queue.Queue()
                 removed_count = 0
                 original_size = self.fastProcessQueue.qsize()
-                log.info(f" - Original queue size: {original_size}")
-
+                log.info(f"  - Original queue size: {original_size}")
+                
                 while not self.fastProcessQueue.empty():
                     try:
                         proc = self.fastProcessQueue.get_nowait()
-                        proc_host = getattr(proc, 'hostIp', 'unknown')
+                        prochost = getattr(proc, 'hostIp', 'unknown')
                         if hasattr(proc, 'hostIp') and proc.hostIp == ip:
                             removed_count += 1
-                            log.info(f" - Removed queued process for {proc_host}")
+                            log.info(f"  - Removed queued process for {prochost}")
                         else:
-                            temp_queue.put(proc)
+                            tempqueue.put(proc)
                     except:
                         break
-
-                while not temp_queue.empty():
+                
+                while not tempqueue.empty():
                     try:
-                        self.fastProcessQueue.put(temp_queue.get_nowait())
+                        self.fastProcessQueue.put(tempqueue.get_nowait())
                     except:
                         break
-
-                log.info(f" - Removed {removed_count} queued processes")
+                
+                log.info(f"  - Removed {removed_count} queued processes")
             except Exception as e:
-                log.error(f" - ERROR clearing queue: {e}")
-
+                log.error(f"  - ERROR clearing queue: {e}")
+            
+            # STEP 4.5: Close all tool tabs for this host
+            log.info("STEP 4.5: Closing tool tabs...")
+            try:
+                closed_count = self.view.closeAllTabsForHost(ip)
+                log.info(f"  - Closed {closed_count} tool tabs for {ip}")
+            except Exception as e:
+                log.error(f"  - ERROR closing tool tabs: {e}")
+            
             # STEP 5: Delete from database
             log.info("STEP 5: Deleting from database...")
             repositoryContainer.hostRepository.deleteHost(ip)
-            log.info(" - Host deleted from database")
-
+            log.info("  - Host deleted from database")
+            
             # STEP 6: Clear tab highlights
             log.info("STEP 6: Clearing tab highlights...")
             try:
                 self.view.clearAllTabHighlights()
-                log.info(" - Tab highlights cleared")
+                log.info("  - Tab highlights cleared")
             except Exception as e:
-                log.error(f" - ERROR clearing highlights: {e}")
-
+                log.error(f"  - ERROR clearing highlights: {e}")
+            
             # STEP 7: Update interface
             log.info("STEP 7: Updating interface...")
             self.view.updateInterface()
-            log.info(" - Interface updated")
-
+            log.info("  - Interface updated")
+            
             # STEP 7.5: Clear the Information tab for the deleted host
             log.debug("STEP 7.5: Clearing Information tab...")
             if hasattr(self.view.viewState, 'ipclicked') and self.view.viewState.ipclicked == ip:
-                log.debug(f" - Deleted host {ip} was currently selected, clearing Information tab")
+                log.debug(f"  - Deleted host {ip} was currently selected, clearing Information tab")
                 self.view.updateInformationView(None)
-                log.debug(" - Information tab cleared")
+                log.debug("  - Information tab cleared")
             else:
-                log.debug(f" - Deleted host {ip} was not currently selected, no clear needed")
-
-            # STEP 8: Schedule cleanup validation for 2 seconds later
+                log.debug(f"  - Deleted host {ip} was not currently selected, no clear needed")
+            
+            log.info("=" * 80)
+            log.info(f"DELETE HOST END: {ip}")
+            log.info("=" * 80)
+            
+            # STEP 8: Schedule cleanup validation (2 seconds)
             log.info("STEP 8: Scheduling cleanup validation in 2 seconds...")
             QTimer.singleShot(2000, lambda: self.cleanupDeletedHost(ip))
-            log.info("=" * 80)
-            log.info(f'=== DELETE HOST END: {ip} ===')
-            log.info("=" * 80)
+            
+            # STEP 9: Schedule verification check (3 seconds)
+            log.info("STEP 9: Scheduling verification in 3 seconds...")
+            QTimer.singleShot(3000, lambda: self.verifyHostDeleted(ip))
+            
+            # STEP 10: Schedule complete database dump (4 seconds)
+            log.info("STEP 10: Scheduling database dump in 4 seconds...")
+            QTimer.singleShot(4000, lambda: self.dumpDatabaseAfterDelete(ip))
+            
             return
+
+
 
         # Handle other actions (tool execution)
         for i in range(0, len(actions)):
@@ -2041,8 +2078,596 @@ class Controller:
         log.info(f"=== CLEANUP VALIDATION END for {ip} ===")
         log.info("=" * 80)
 
+    def verifyHostDeleted(self, ip):
+        """
+        Comprehensive verification that host and ALL related data is deleted.
+        Call this after deletion to confirm complete removal.
+        """
+        from sqlalchemy import text
+        log.info("=" * 80)
+        log.info(f"VERIFICATION START - Checking if {ip} is completely deleted")
+        log.info("=" * 80)
+        
+        repositoryContainer = self.logic.activeProject.repositoryContainer
+        issues_found = []
+        
+        # 1. Check Host Table
+        try:
+            from db.entities.host import hostObj
+            session = repositoryContainer.hostRepository.dbAdapter.session
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            session.close()
+            
+            if host:
+                issues_found.append(f"❌ FAILED: Host {ip} still exists in host table (ID: {host.id})")
+                log.error(f"❌ Host {ip} still exists in database!")
+            else:
+                log.info(f"✓ Host {ip} NOT found in host table (GOOD)")
+        except Exception as e:
+            log.error(f"❌ Error checking host table: {e}")
+            issues_found.append(f"Error checking host: {e}")
+        
+        # 2. Check Ports Table
+        try:
+            from db.entities.port import portObj
+            session = repositoryContainer.portRepository.dbAdapter.session
+            
+            # Direct SQL query to find orphaned ports
+            result = session.execute(
+                text("SELECT COUNT(*) as cnt, GROUP_CONCAT(id) as ids FROM portObj WHERE hostId IN (SELECT id FROM hostObj WHERE ip = :ip)"),
+                {"ip": str(ip)}
+            ).first()
+            
+            count = result[0] if result else 0
+            port_ids = result[1] if result and len(result) > 1 else ""
+            
+            if count > 0:
+                issues_found.append(f"❌ FAILED: {count} orphaned ports found (IDs: {port_ids})")
+                log.error(f"❌ Found {count} orphaned ports for {ip}: {port_ids}")
+            else:
+                log.info(f"✓ No orphaned ports found for {ip} (GOOD)")
+            
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking ports: {e}")
+            issues_found.append(f"Error checking ports: {e}")
+        
+        # 3. Check Scripts Table
+        try:
+            from db.entities.l1script import l1ScriptObj
+            session = repositoryContainer.scriptRepository.dbAdapter.session
+            
+            result = session.execute(
+                text("SELECT COUNT(*) as cnt FROM l1ScriptObj WHERE hostId IN (SELECT id FROM hostObj WHERE ip = :ip)"),
+                {"ip": str(ip)}
+            ).first()
+            
+            count = result[0] if result else 0
+            
+            if count > 0:
+                issues_found.append(f"❌ FAILED: {count} orphaned scripts found")
+                log.error(f"❌ Found {count} orphaned scripts for {ip}")
+            else:
+                log.info(f"✓ No orphaned scripts found for {ip} (GOOD)")
+            
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking scripts: {e}")
+            issues_found.append(f"Error checking scripts: {e}")
+        
+        # 4. Check Process Table
+        try:
+            session = repositoryContainer.processRepository.dbAdapter.session
+            
+            result = session.execute(
+                text("SELECT COUNT(*) as cnt, GROUP_CONCAT(id) as ids FROM process WHERE hostIp = :ip"),
+                {"ip": str(ip)}
+            ).first()
+            
+            count = result[0] if result else 0
+            proc_ids = result[1] if result and len(result) > 1 else ""
+            
+            if count > 0:
+                issues_found.append(f"❌ FAILED: {count} orphaned process records (IDs: {proc_ids})")
+                log.error(f"❌ Found {count} orphaned processes for {ip}: {proc_ids}")
+            else:
+                log.info(f"✓ No orphaned process records for {ip} (GOOD)")
+            
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking processes: {e}")
+            issues_found.append(f"Error checking processes: {e}")
+        
+        # 5. Check ProcessOutput Table
+        try:
+            session = repositoryContainer.processRepository.dbAdapter.session
+            
+            result = session.execute(
+                text("SELECT COUNT(*) as cnt FROM process_output WHERE id IN (SELECT id FROM process WHERE hostIp = :ip)"),
+                {"ip": str(ip)}
+            ).first()
+            
+            count = result[0] if result else 0
+            
+            if count > 0:
+                issues_found.append(f"❌ FAILED: {count} orphaned processoutput records")
+                log.error(f"❌ Found {count} orphaned processoutput records for {ip}")
+            else:
+                log.info(f"✓ No orphaned processoutput records for {ip} (GOOD)")
+            
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking processoutput: {e}")
+            issues_found.append(f"Error checking processoutput: {e}")
+        
+        # 6. Check CVE Table
+        try:
+            from db.entities.cve import cve
+            session = repositoryContainer.cveRepository.dbAdapter.session
+            
+            result = session.execute(
+                text("SELECT COUNT(*) as cnt FROM cve WHERE hostId IN (SELECT id FROM hostObj WHERE ip = :ip)"),
+                {"ip": str(ip)}
+            ).first()
+            
+            count = result[0] if result else 0
+            
+            if count > 0:
+                issues_found.append(f"❌ FAILED: {count} orphaned CVE records")
+                log.error(f"❌ Found {count} orphaned CVE records for {ip}")
+            else:
+                log.info(f"✓ No orphaned CVE records for {ip} (GOOD)")
+            
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking CVEs: {e}")
+            issues_found.append(f"Error checking CVEs: {e}")
+        
+        # 7. Check Note Table (check both numeric ID and IP string)
+        try:
+            from db.entities.note import note
+            session = repositoryContainer.noteRepository.dbAdapter.session
+            
+            # Check for notes with numeric hostId
+            result = session.execute(
+                text("SELECT COUNT(*) as cnt FROM note WHERE hostId IN (SELECT id FROM hostObj WHERE ip = :ip)"),
+                {"ip": str(ip)}
+            ).first()
+            
+            count_numeric = result[0] if result else 0
+            
+            # Check for notes with IP string in hostId field
+            result2 = session.execute(
+                text("SELECT COUNT(*) as cnt FROM note WHERE hostId = :ip"),
+                {"ip": str(ip)}
+            ).first()
+            
+            count_string = result2[0] if result2 else 0
+            count_total = count_numeric + count_string
+            
+            if count_total > 0:
+                issues_found.append(f"❌ FAILED: {count_total} orphaned note records (numeric: {count_numeric}, string: {count_string})")
+                log.error(f"❌ Found {count_total} orphaned note records for {ip}")
+            else:
+                log.info(f"✓ No orphaned note records for {ip} (GOOD)")
+            
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking notes: {e}")
+            issues_found.append(f"Error checking notes: {e}")
+        
+        # 8. Check In-Memory Processes List
+        try:
+            running_processes = [p for p in self.processes if hasattr(p, 'hostIp') and p.hostIp == ip]
+            
+            if running_processes:
+                issues_found.append(f"❌ FAILED: {len(running_processes)} processes still in self.processes")
+                log.error(f"❌ Found {len(running_processes)} processes still in memory for {ip}")
+                for proc in running_processes:
+                    procid = getattr(proc, 'id', 'unknown')
+                    log.error(f"  - Process ID: {procid}")
+            else:
+                log.info(f"✓ No processes in self.processes for {ip} (GOOD)")
+        except Exception as e:
+            log.error(f"❌ Error checking in-memory processes: {e}")
+            issues_found.append(f"Error checking in-memory processes: {e}")
+        
+        # 9. Check Process Queue
+        try:
+            import queue
+            temp_queue = queue.Queue()
+            queued_count = 0
+            
+            while not self.fastProcessQueue.empty():
+                try:
+                    proc = self.fastProcessQueue.get_nowait()
+                    if hasattr(proc, 'hostIp') and proc.hostIp == ip:
+                        queued_count += 1
+                    else:
+                        temp_queue.put(proc)
+                except:
+                    break
+            
+            # Restore queue
+            while not temp_queue.empty():
+                try:
+                    self.fastProcessQueue.put(temp_queue.get_nowait())
+                except:
+                    break
+            
+            if queued_count > 0:
+                issues_found.append(f"❌ FAILED: {queued_count} processes still queued")
+                log.error(f"❌ Found {queued_count} queued processes for {ip}")
+            else:
+                log.info(f"✓ No queued processes for {ip} (GOOD)")
+        except Exception as e:
+            log.error(f"❌ Error checking process queue: {e}")
+            issues_found.append(f"Error checking process queue: {e}")
+        
+        # 10. Check Screenshooter Blacklist (FIXED attribute name)
+        try:
+            if hasattr(self, 'screenshooter') and self.screenshooter:
+                # Check correct attribute name - it's blacklisted_ips, not blacklistedips
+                if hasattr(self.screenshooter, 'blacklisted_ips'):
+                    if ip in self.screenshooter.blacklisted_ips:
+                        issues_found.append(f"❌ FAILED: IP still in screenshooter blacklist")
+                        log.error(f"❌ IP {ip} still in screenshooter blacklist")
+                    else:
+                        log.info(f"✓ IP {ip} not in screenshooter blacklist (GOOD)")
+                else:
+                    log.info(f"✓ Screenshooter blacklist attribute not found (GOOD)")
+            else:
+                log.info(f"✓ No screenshooter to check (GOOD)")
+        except Exception as e:
+            log.error(f"❌ Error checking screenshooter: {e}")
+            issues_found.append(f"Error checking screenshooter: {e}")
+        
+        # Final Summary
+        log.info("=" * 80)
+        if issues_found:
+            log.error(f"❌❌❌ VERIFICATION FAILED - {len(issues_found)} issues found:")
+            for issue in issues_found:
+                log.error(f"  {issue}")
+            log.error(f"❌❌❌ Host {ip} was NOT completely deleted!")
+        else:
+            log.info(f"✓✓✓ VERIFICATION PASSED - Host {ip} is completely deleted!")
+            log.info("✓✓✓ All database tables and in-memory structures are clean!")
+        log.info("=" * 80)
+        
+        return len(issues_found) == 0
 
 
+
+    def dumpDatabaseAfterDelete(self, deleted_ip):
+        """
+        Print ALL database records after a host deletion.
+        This provides complete visibility into what remains in the database.
+        """
+        from sqlalchemy import text
+        log.info("\n" + "=" * 100)
+        log.info(f"DATABASE DUMP AFTER DELETING HOST: {deleted_ip}")
+        log.info("=" * 100 + "\n")
+        
+        repositoryContainer = self.logic.activeProject.repositoryContainer
+        session = repositoryContainer.hostRepository.dbAdapter.session
+        
+        try:
+            # 1. DUMP HOSTS TABLE
+            log.info("─" * 100)
+            log.info("TABLE: hostObj")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT * FROM hostObj"))
+            hosts = result.fetchall()
+            keys = result.keys()
+            
+            if hosts:
+                log.info(f"Total hosts: {len(hosts)}")
+                log.info("")
+                for idx, host in enumerate(hosts, 1):
+                    log.info(f"Host #{idx}:")
+                    for key, value in zip(keys, host):
+                        log.info(f"  {key}: {value}")
+                    log.info("")
+                    # HIGHLIGHT if deleted IP still exists
+                    host_dict = dict(zip(keys, host))
+                    if str(host_dict.get('ip', '')) == str(deleted_ip):
+                        log.error(f"  ⚠️  WARNING: DELETED HOST {deleted_ip} STILL EXISTS!")
+                        log.error(f"  ⚠️  Host ID: {host_dict.get('id')}")
+                        log.error("")
+            else:
+                log.info("✓ No hosts in database")
+            log.info("")
+            
+            # 2. DUMP PORTS TABLE
+            log.info("─" * 100)
+            log.info("TABLE: portObj")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT * FROM portObj"))
+            ports = result.fetchall()
+            keys = result.keys()
+            
+            if ports:
+                log.info(f"Total ports: {len(ports)}")
+                log.info("")
+                
+                # Check for orphaned ports
+                orphaned_ports = []
+                for idx, port in enumerate(ports, 1):
+                    port_dict = dict(zip(keys, port))
+                    hostId = port_dict.get('hostId')
+                    
+                    # Check if this port's host still exists
+                    host_check = session.execute(
+                        text("SELECT ip FROM hostObj WHERE id = :hostid"),
+                        {"hostid": hostId}
+                    ).first()
+                    
+                    log.info(f"Port #{idx}:")
+                    for key, value in zip(keys, port):
+                        log.info(f"  {key}: {value}")
+                    
+                    if host_check:
+                        log.info(f"  → Belongs to host: {host_check[0]}")
+                        if str(host_check[0]) == str(deleted_ip):
+                            log.error(f"  ⚠️  WARNING: Port belongs to DELETED host {deleted_ip}!")
+                            orphaned_ports.append(port_dict.get('id'))
+                    else:
+                        log.error(f"  ⚠️  WARNING: ORPHANED PORT - No matching host found!")
+                        orphaned_ports.append(port_dict.get('id'))
+                    log.info("")
+                
+                if orphaned_ports:
+                    log.error(f"⚠️  FOUND {len(orphaned_ports)} ORPHANED PORTS: {orphaned_ports}")
+                    log.error("")
+            else:
+                log.info("✓ No ports in database")
+            log.info("")
+            
+            # 3. DUMP SCRIPTS TABLE
+            log.info("─" * 100)
+            log.info("TABLE: l1ScriptObj")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT * FROM l1ScriptObj"))
+            scripts = result.fetchall()
+            keys = result.keys()
+            
+            if scripts:
+                log.info(f"Total scripts: {len(scripts)}")
+                log.info("")
+                
+                orphaned_scripts = []
+                for idx, script in enumerate(scripts, 1):
+                    script_dict = dict(zip(keys, script))
+                    hostId = script_dict.get('hostId')
+                    
+                    log.info(f"Script #{idx}:")
+                    for key, value in zip(keys, script):
+                        # Truncate long script output
+                        if key == 'scriptOutput' and value and len(str(value)) > 100:
+                            log.info(f"  {key}: {str(value)[:100]}... (truncated)")
+                        else:
+                            log.info(f"  {key}: {value}")
+                    
+                    # Check if host exists
+                    if hostId:
+                        host_check = session.execute(
+                            text("SELECT ip FROM hostObj WHERE id = :hostid"),
+                            {"hostid": hostId}
+                        ).first()
+                        
+                        if host_check:
+                            log.info(f"  → Belongs to host: {host_check[0]}")
+                            if str(host_check[0]) == str(deleted_ip):
+                                log.error(f"  ⚠️  WARNING: Script belongs to DELETED host {deleted_ip}!")
+                                orphaned_scripts.append(script_dict.get('id'))
+                        else:
+                            log.error(f"  ⚠️  WARNING: ORPHANED SCRIPT - No matching host found!")
+                            orphaned_scripts.append(script_dict.get('id'))
+                    log.info("")
+                
+                if orphaned_scripts:
+                    log.error(f"⚠️  FOUND {len(orphaned_scripts)} ORPHANED SCRIPTS: {orphaned_scripts}")
+                    log.error("")
+            else:
+                log.info("✓ No scripts in database")
+            log.info("")
+            
+            # 4. DUMP PROCESS TABLE
+            log.info("─" * 100)
+            log.info("TABLE: process")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT * FROM process"))
+            processes = result.fetchall()
+            keys = result.keys()
+            
+            if processes:
+                log.info(f"Total processes: {len(processes)}")
+                log.info("")
+                
+                orphaned_procs = []
+                for idx, proc in enumerate(processes, 1):
+                    proc_dict = dict(zip(keys, proc))
+                    hostIp = proc_dict.get('hostIp')
+                    
+                    log.info(f"Process #{idx}:")
+                    for key, value in zip(keys, proc):
+                        log.info(f"  {key}: {value}")
+                    
+                    if str(hostIp) == str(deleted_ip):
+                        log.error(f"  ⚠️  WARNING: Process belongs to DELETED host {deleted_ip}!")
+                        orphaned_procs.append(proc_dict.get('id'))
+                    log.info("")
+                
+                if orphaned_procs:
+                    log.error(f"⚠️  FOUND {len(orphaned_procs)} ORPHANED PROCESSES: {orphaned_procs}")
+                    log.error("")
+            else:
+                log.info("✓ No processes in database")
+            log.info("")
+            
+            # 5. DUMP PROCESS_OUTPUT TABLE
+            log.info("─" * 100)
+            log.info("TABLE: process_output")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT id, LENGTH(output) as output_length FROM process_output"))
+            outputs = result.fetchall()
+            
+            if outputs:
+                log.info(f"Total process outputs: {len(outputs)}")
+                log.info("")
+                
+                orphaned_outputs = []
+                for idx, output in enumerate(outputs, 1):
+                    output_id = output[0]
+                    output_len = output[1]
+                    
+                    log.info(f"ProcessOutput #{idx}:")
+                    log.info(f"  id: {output_id}")
+                    log.info(f"  output_length: {output_len} bytes")
+                    
+                    # Check if process exists
+                    proc_check = session.execute(
+                        text("SELECT hostIp FROM process WHERE id = :id"),
+                        {"id": output_id}
+                    ).first()
+                    
+                    if proc_check:
+                        log.info(f"  → Process hostIp: {proc_check[0]}")
+                        if str(proc_check[0]) == str(deleted_ip):
+                            log.error(f"  ⚠️  WARNING: Output belongs to process for DELETED host {deleted_ip}!")
+                            orphaned_outputs.append(output_id)
+                    else:
+                        log.error(f"  ⚠️  WARNING: ORPHANED OUTPUT - No matching process found!")
+                        orphaned_outputs.append(output_id)
+                    log.info("")
+                
+                if orphaned_outputs:
+                    log.error(f"⚠️  FOUND {len(orphaned_outputs)} ORPHANED OUTPUTS: {orphaned_outputs}")
+                    log.error("")
+            else:
+                log.info("✓ No process outputs in database")
+            log.info("")
+            
+            # 6. DUMP CVE TABLE
+            log.info("─" * 100)
+            log.info("TABLE: cve")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT * FROM cve"))
+            cves = result.fetchall()
+            keys = result.keys()
+            
+            if cves:
+                log.info(f"Total CVEs: {len(cves)}")
+                log.info("")
+                
+                orphaned_cves = []
+                for idx, cve in enumerate(cves, 1):
+                    cve_dict = dict(zip(keys, cve))
+                    hostId = cve_dict.get('hostId')
+                    
+                    log.info(f"CVE #{idx}:")
+                    for key, value in zip(keys, cve):
+                        log.info(f"  {key}: {value}")
+                    
+                    # Check if host exists
+                    if hostId:
+                        host_check = session.execute(
+                            text("SELECT ip FROM hostObj WHERE id = :hostid"),
+                            {"hostid": hostId}
+                        ).first()
+                        
+                        if host_check:
+                            log.info(f"  → Belongs to host: {host_check[0]}")
+                            if str(host_check[0]) == str(deleted_ip):
+                                log.error(f"  ⚠️  WARNING: CVE belongs to DELETED host {deleted_ip}!")
+                                orphaned_cves.append(cve_dict.get('id'))
+                        else:
+                            log.error(f"  ⚠️  WARNING: ORPHANED CVE - No matching host found!")
+                            orphaned_cves.append(cve_dict.get('id'))
+                    log.info("")
+                
+                if orphaned_cves:
+                    log.error(f"⚠️  FOUND {len(orphaned_cves)} ORPHANED CVES: {orphaned_cves}")
+                    log.error("")
+            else:
+                log.info("✓ No CVEs in database")
+            log.info("")
+            
+            # 7. DUMP NOTE TABLE
+            log.info("─" * 100)
+            log.info("TABLE: note")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT * FROM note"))
+            notes = result.fetchall()
+            keys = result.keys()
+            
+            if notes:
+                log.info(f"Total notes: {len(notes)}")
+                log.info("")
+                
+                orphaned_notes = []
+                for idx, note in enumerate(notes, 1):
+                    note_dict = dict(zip(keys, note))
+                    hostId = note_dict.get('hostId')
+                    
+                    log.info(f"Note #{idx}:")
+                    for key, value in zip(keys, note):
+                        log.info(f"  {key}: {value}")
+                    
+                    # Check if host exists
+                    if hostId:
+                        host_check = session.execute(
+                            text("SELECT ip FROM hostObj WHERE id = :hostid"),
+                            {"hostid": hostId}
+                        ).first()
+                        
+                        if host_check:
+                            log.info(f"  → Belongs to host: {host_check[0]}")
+                            if str(host_check[0]) == str(deleted_ip):
+                                log.error(f"  ⚠️  WARNING: Note belongs to DELETED host {deleted_ip}!")
+                                orphaned_notes.append(note_dict.get('id'))
+                        else:
+                            log.error(f"  ⚠️  WARNING: ORPHANED NOTE - No matching host found!")
+                            orphaned_notes.append(note_dict.get('id'))
+                    log.info("")
+                
+                if orphaned_notes:
+                    log.error(f"⚠️  FOUND {len(orphaned_notes)} ORPHANED NOTES: {orphaned_notes}")
+                    log.error("")
+            else:
+                log.info("✓ No notes in database")
+            log.info("")
+            
+            # 8. DUMP SERVICE TABLE (for completeness)
+            log.info("─" * 100)
+            log.info("TABLE: serviceObj")
+            log.info("─" * 100)
+            result = session.execute(text("SELECT * FROM serviceObj"))
+            services = result.fetchall()
+            keys = result.keys()
+            
+            if services:
+                log.info(f"Total services: {len(services)}")
+                log.info("")
+                for idx, service in enumerate(services, 1):
+                    log.info(f"Service #{idx}:")
+                    for key, value in zip(keys, service):
+                        log.info(f"  {key}: {value}")
+                    log.info("")
+            else:
+                log.info("✓ No services in database")
+            log.info("")
+            
+        except Exception as e:
+            log.error(f"Error dumping database: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+        finally:
+            session.close()
+        
+        log.info("=" * 100)
+        log.info(f"END DATABASE DUMP FOR DELETED HOST: {deleted_ip}")
+        log.info("=" * 100 + "\n")
 
 
 
