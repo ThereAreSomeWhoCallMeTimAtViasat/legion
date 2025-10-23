@@ -82,6 +82,7 @@ class HostRepository:
         try:
             # Get the host first to retrieve its ID
             host = session.query(hostObj).filter_by(ip=str(hostIP)).first()
+            
             if not host:
                 log.warning(f"Host {hostIP} not found in database")
                 session.close()
@@ -95,13 +96,13 @@ class HostRepository:
                 text("DELETE FROM process_output WHERE id IN (SELECT id FROM process WHERE hostIp = :hostip)"),
                 {"hostip": str(hostIP)}
             )
+            
             session.execute(
                 text("DELETE FROM process WHERE hostIp = :hostip"),
                 {"hostip": str(hostIP)}
             )
             
             # 2. Delete all scripts for this host (both host-level and port-level)
-            # Note: l1ScriptObj stores output inline, no separate output table
             session.execute(
                 text("DELETE FROM l1ScriptObj WHERE hostId = :hostid OR portId IN (SELECT id FROM portObj WHERE hostId = :hostid)"),
                 {"hostid": str(hostId)}
@@ -119,23 +120,32 @@ class HostRepository:
                 {"hostid": str(hostId)}
             )
             
-            # 5. Delete all notes for this host
+            # 5. Delete all notes for this host (handle BOTH numeric ID and IP string)
             session.execute(
-                text("DELETE FROM note WHERE hostId = :hostid"),
+                text("DELETE FROM note WHERE hostId = :hostid OR hostId = :hostip"),
+                {"hostid": hostId, "hostip": str(hostIP)}
+            )
+            
+            # 6. Delete all services for this host
+            session.execute(
+                text("DELETE FROM serviceObj WHERE hostId = :hostid"),
                 {"hostid": str(hostId)}
             )
             
-            # 6. Finally, delete the host itself
+            # 7. Finally, delete the host itself
             session.delete(host)
             
             session.commit()
             log.info(f"Successfully deleted host {hostIP} and all related records")
+            
         except Exception as e:
             session.rollback()
             log.error(f"Failed to delete host {hostIP}: {e}")
             raise
         finally:
             session.close()
+
+
 
 
 

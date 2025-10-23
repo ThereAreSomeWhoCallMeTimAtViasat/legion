@@ -729,65 +729,132 @@ class View(QtCore.QObject):
         self.ui.actionSave.triggered.connect(self.saveProject)
     
     def saveProject(self):
-        self.ui.statusbar.showMessage('Saving..')
+        """Save project with notes for currently selected host"""
+        self.ui.statusbar.showMessage("Saving..")
+        
         if self.viewState.firstSave:
             self.saveProjectAs()
         else:
-            log.info('Saving project..')
-            self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toPlainText())
-
+            log.info("Saving project..")
+            
+            # Get notes content
+            notes = self.ui.NotesTextEdit.toPlainText()
+            
+            # Convert IP to host ID if needed
+            if self.viewState.lastHostIdClicked:
+                try:
+                    # If lastHostIdClicked is an IP address, resolve it to host ID
+                    if isinstance(self.viewState.lastHostIdClicked, str) and '.' in self.viewState.lastHostIdClicked:
+                        host = self.controller.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(self.viewState.lastHostIdClicked)
+                        if host:
+                            hostId = host.id
+                            log.debug(f"Resolved IP {self.viewState.lastHostIdClicked} to host ID {hostId}")
+                        else:
+                            log.warning(f"Cannot save notes: host {self.viewState.lastHostIdClicked} not found")
+                            hostId = None
+                    else:
+                        # Already a numeric ID
+                        hostId = int(self.viewState.lastHostIdClicked)
+                    
+                    # Save with numeric host ID
+                    if hostId:
+                        self.controller.saveProject(hostId, notes)
+                except Exception as e:
+                    log.error(f"Error saving notes for {self.viewState.lastHostIdClicked}: {e}")
+            else:
+                # No host selected, just save project state
+                self.controller.saveProject(None, notes)
+            
             self.setDirty(False)
-            self.ui.statusbar.showMessage('Saved!', msecs=1000)
-            log.info('Saved!')
+            self.ui.statusbar.showMessage("Saved!", msecs=1000)
+            log.info("Saved!")
+
 
     def connectSaveProjectAs(self):
         self.ui.actionSaveAs.triggered.connect(self.saveProjectAs)
 
     def saveProjectAs(self):
-        self.ui.statusbar.showMessage('Saving..')
-        log.info('Saving project..')
-
-        self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toPlainText())
-
-        filename = QtWidgets.QFileDialog.getSaveFileName(self.ui.centralwidget, 'Save project as',
-                                                         self.controller.getCWD(), filter='Legion session (*.legion)',
-                                                         options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite)[0]
-            
-        while not filename =='':
-            if not os.access(ntpath.dirname(str(filename)), os.R_OK) or not os.access(
-                    ntpath.dirname(str(filename)), os.W_OK):
-                log.info('Insufficient permissions on this folder.')
-                reply = QtWidgets.QMessageBox.warning(self.ui.centralwidget, 'Warning',
-                                                      "You don't have the necessary permissions on this folder.")
-                
+        """Save project as new file"""
+        self.ui.statusbar.showMessage("Saving..")
+        log.info("Saving project..")
+        
+        # Get notes content
+        notes = self.ui.NotesTextEdit.toPlainText()
+        
+        # Convert IP to host ID if needed
+        hostId = None
+        if self.viewState.lastHostIdClicked:
+            try:
+                # If lastHostIdClicked is an IP address, resolve it to host ID
+                if isinstance(self.viewState.lastHostIdClicked, str) and '.' in self.viewState.lastHostIdClicked:
+                    host = self.controller.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(self.viewState.lastHostIdClicked)
+                    if host:
+                        hostId = host.id
+                        log.debug(f"Resolved IP {self.viewState.lastHostIdClicked} to host ID {hostId}")
+                    else:
+                        log.warning(f"Cannot save notes: host {self.viewState.lastHostIdClicked} not found")
+                else:
+                    # Already a numeric ID
+                    hostId = int(self.viewState.lastHostIdClicked)
+            except Exception as e:
+                log.error(f"Error resolving host ID for {self.viewState.lastHostIdClicked}: {e}")
+        
+        # Save notes first with numeric host ID
+        self.controller.saveProject(hostId, notes)
+        
+        # Get filename from user
+        filename = QtWidgets.QFileDialog.getSaveFileName(
+            self.ui.centralwidget, 
+            "Save project as", 
+            self.controller.getCWD(), 
+            filter="Legion session (*.legion)", 
+            options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite
+        )[0]
+        
+        while filename:
+            if not os.access(ntpath.dirname(str(filename)), os.R_OK) or not os.access(ntpath.dirname(str(filename)), os.W_OK):
+                log.info("Insufficient permissions on this folder.")
+                reply = QtWidgets.QMessageBox.warning(
+                    self.ui.centralwidget, 
+                    "Warning", 
+                    "You don't have the necessary permissions on this folder."
+                )
             else:
                 if self.controller.saveProjectAs(filename):
                     break
                     
-                if not str(filename).endswith('.legion'):
-                    filename = str(filename) + '.legion'
-                msgBox = QtWidgets.QMessageBox()
-                reply = msgBox.question(self.ui.centralwidget, 'Confirm',
-                                        "A file named \""+ntpath.basename(str(filename))+"\" already exists.  " +
-                                        "Do you want to replace it?",
-                                        QtWidgets.QMessageBox.StandardButton.Abort | QtWidgets.QMessageBox.StandardButton.Save)
+            if not str(filename).endswith('.legion'):
+                filename = str(filename) + '.legion'
             
-                if reply == QtWidgets.QMessageBox.StandardButton.Save:
-                    self.controller.saveProjectAs(filename, 1)          # replace
-                    break
-
-            filename = QtWidgets.QFileDialog.getSaveFileName(self.ui.centralwidget, 'Save project as', '.',
-                                                             filter='Legion session (*.legion)',
-                                                             options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite)[0]
-
-        if not filename == '':
+            msgBox = QtWidgets.QMessageBox()
+            reply = msgBox.question(
+                self.ui.centralwidget, 
+                "Confirm", 
+                f"A file named {ntpath.basename(str(filename))} already exists. Do you want to replace it?", 
+                QtWidgets.QMessageBox.StandardButton.Abort | QtWidgets.QMessageBox.StandardButton.Save
+            )
+            
+            if reply == QtWidgets.QMessageBox.StandardButton.Save:
+                self.controller.saveProjectAs(filename, 1)  # replace
+                break
+            
+            filename = QtWidgets.QFileDialog.getSaveFileName(
+                self.ui.centralwidget, 
+                "Save project as", 
+                ".", 
+                filter="Legion session (*.legion)", 
+                options=QtWidgets.QFileDialog.Option.DontConfirmOverwrite
+            )[0]
+        
+        if filename:
             self.setDirty(False)
             self.viewState.firstSave = False
-            self.ui.statusbar.showMessage('Saved!', msecs=1000)
+            self.ui.statusbar.showMessage("Saved!", msecs=1000)
             self.controller.updateOutputFolder()
-            log.info('Saved!')
+            log.info("Saved!")
         else:
-            log.info('No file chosen..')
+            log.info("No file chosen..")
+
 
     def saveOrDiscard(self):
         reply = QtWidgets.QMessageBox.question(
@@ -2254,22 +2321,33 @@ class View(QtCore.QObject):
             self.toolHostsClick()
 
     def updateRightPanel(self, hostIP):
+        """Update right panel with host information"""
         self.updateServiceTableView(hostIP)
         self.updateScriptsView(hostIP)
         self.updateCvesByHostView(hostIP)
         self.updateInformationView(hostIP)
-        self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toHtml())
-
+        
+        # Save notes with proper host ID
         if hostIP:
-            self.updateNotesView(self.HostsTableModel.getHostIdForRow(self.HostsTableModel.getRowForIp(hostIP)))
+            try:
+                host = self.controller.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(hostIP)
+                if host:
+                    hostId = host.id
+                    notes = self.ui.NotesTextEdit.toHtml()
+                    self.controller.saveProject(hostId, notes)
+                else:
+                    log.warning(f"Cannot save notes: host {hostIP} not found")
+            except Exception as e:
+                log.error(f"Error saving notes in updateRightPanel for {hostIP}: {e}")
+            
+            # Update notes view
+            hostRow = self.HostsTableModel.getRowForIp(hostIP)
+            if hostRow is not None:
+                hostId = self.HostsTableModel.getHostIdForRow(hostRow)
+                self.updateNotesView(hostId)
         else:
-            self.updateNotesView('')
+            self.updateNotesView(None)
 
-
-        if hostIP:
-            self.updateNotesView(self.HostsTableModel.getHostIdForRow(self.HostsTableModel.getRowForIp(hostIP)))
-        else:
-            self.updateNotesView('')
             
     def displayToolPanel(self, display=False):
         log.debug("========== displayToolPanel START ==========")
@@ -3429,6 +3507,71 @@ class View(QtCore.QObject):
         
         log.info(f"unread_tabs AFTER: {self.unread_tabs}")
         log.info("=== clearAllTabHighlights END ===")
+
+    def closeAllTabsForHost(self, hostIP):
+        """Close all tool tabs associated with a specific host IP"""
+        log.info(f"=== closeAllTabsForHost START for {hostIP} ===")
+        closed_count = 0
+        
+        try:
+            # Tool tabs are stored in viewState.hostTabs dictionary
+            if hasattr(self.viewState, 'hostTabs') and hostIP in self.viewState.hostTabs:
+                tabs_to_remove = self.viewState.hostTabs[hostIP].copy()  # Make a copy to avoid modification during iteration
+                log.info(f"  - Found {len(tabs_to_remove)} tabs in viewState.hostTabs for {hostIP}")
+                
+                for tab_widget in tabs_to_remove:
+                    try:
+                        tab_name = tab_widget.objectName()
+                        log.info(f"  - Processing tab: '{tab_name}'")
+                        
+                        # Find the tab index in ServicesTabWidget
+                        tab_index = self.ui.ServicesTabWidget.indexOf(tab_widget)
+                        
+                        if tab_index >= 0:
+                            log.info(f"  - Removing tab '{tab_name}' at index {tab_index}")
+                            self.ui.ServicesTabWidget.removeTab(tab_index)
+                            closed_count += 1
+                        else:
+                            log.warning(f"  - Tab '{tab_name}' not found in ServicesTabWidget")
+                        
+                        # Remove from viewState.hostTabs
+                        if tab_widget in self.viewState.hostTabs[hostIP]:
+                            self.viewState.hostTabs[hostIP].remove(tab_widget)
+                            log.info(f"  - Removed tab '{tab_name}' from viewState.hostTabs")
+                        
+                    except Exception as tab_error:
+                        log.error(f"  - Error processing tab: {tab_error}")
+                        continue
+                
+                # Clean up empty list for this host
+                if not self.viewState.hostTabs[hostIP]:
+                    del self.viewState.hostTabs[hostIP]
+                    log.info(f"  - Removed empty hostTabs entry for {hostIP}")
+            else:
+                log.info(f"  - No tabs found in viewState.hostTabs for {hostIP}")
+            
+            # Also check the BruteTabWidget for any brute tabs
+            if hasattr(self.ui, 'BruteTabWidget'):
+                brute_count = self.ui.BruteTabWidget.count()
+                for i in range(brute_count - 1, -1, -1):
+                    try:
+                        brute_widget = self.ui.BruteTabWidget.widget(i)
+                        if hasattr(brute_widget, 'ip') and str(brute_widget.ip) == str(hostIP):
+                            log.info(f"  - Closing brute tab at index {i} for {hostIP}")
+                            self.ui.BruteTabWidget.removeTab(i)
+                            closed_count += 1
+                    except Exception as brute_error:
+                        log.error(f"  - Error closing brute tab: {brute_error}")
+                        continue
+            
+            log.info(f"=== closeAllTabsForHost END - Closed {closed_count} tabs ===")
+            return closed_count
+            
+        except Exception as e:
+            log.error(f"Error in closeAllTabsForHost for {hostIP}: {e}")
+            import traceback
+            log.error(traceback.format_exc())
+            return closed_count
 
 
 
