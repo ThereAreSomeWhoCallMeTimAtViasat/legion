@@ -567,12 +567,234 @@ class Controller:
             return
 
         if action.text() == 'Purge Results':
-            log.info(f'Purging previous portscan data for host {str(ip)}')
-            if repositoryContainer.portRepository.getPortsByIPAndProtocol(ip, 'tcp'):
-                repositoryContainer.portRepository.deleteAllPortsAndScriptsByHostId(hostid, 'tcp')
-            if repositoryContainer.portRepository.getPortsByIPAndProtocol(ip, 'udp'):
-                repositoryContainer.portRepository.deleteAllPortsAndScriptsByHostId(hostid, 'udp')
+            log.info("=" * 80)
+            log.info(f"PURGE RESULTS START: {ip}")
+            log.info("=" * 80)
+
+            # STEP 1: Cancel screenshots
+            log.info("STEP 1: Cancelling screenshots...")
+            try:
+                if hasattr(self, 'screenshooter') and self.screenshooter:
+                    log.info(f"  - Screenshooter exists, calling cancelScreenshotsForIp({ip})")
+                    removed = self.screenshooter.cancelScreenshotsForIp(ip)
+                    log.info(f"  - Cancelled {removed} queued screenshots and blacklisted {ip}")
+                else:
+                    log.info("  - No screenshooter found, skipping")
+            except Exception as e:
+                log.error(f"  - ERROR cancelling screenshots: {e}")
+
+            # STEP 2: Mark processes as killed
+            log.info("STEP 2: Marking processes as killed...")
+            try:
+                processRepo = repositoryContainer.processRepository
+                running_processes = [p for p in self.processes if hasattr(p, 'hostIp') and p.hostIp == ip]
+                log.info(f"  - Found {len(running_processes)} running processes")
+                for proc in running_processes:
+                    procid = getattr(proc, 'id', None)
+                    if procid:
+                        processRepo.storeProcessKillStatus(str(procid))
+                        log.info(f"  - Marked process {procid} as killed")
+            except Exception as e:
+                log.error(f"  - ERROR marking processes as killed: {e}")
+
+            # STEP 3: Kill running processes
+            log.info("STEP 3: Killing running processes...")
+            try:
+                running_processes = [p for p in self.processes if hasattr(p, 'hostIp') and p.hostIp == ip]
+                log.info(f"  - Processing {len(running_processes)} processes")
+                for proc in running_processes:
+                    procid = getattr(proc, 'id', None)
+                    pid = getPid(proc)
+                    log.info(f"  - Processing procid={procid}, pid={pid}")
+
+                    # Stop timer
+                    if procid and procid in self.processTimers:
+                        timer = self.processTimers[procid]
+                        if timer and timer.isActive():
+                            timer.stop()
+                        del self.processTimers[procid]
+                        log.info(f"    Stopped and removed timer")
+
+                    # Disconnect ALL signals
+                    for signalname in ['finished', 'errorOccurred', 'readyReadStandardOutput', 'readyReadStandardError']:
+                        try:
+                            getattr(proc, signalname).disconnect()
+                            log.info(f"    Disconnected {signalname}")
+                        except:
+                            pass
+
+                    # Kill process
+                    if pid:
+                        try:
+                            os.kill(int(pid), signal.SIGKILL)
+                            log.info(f"    Sent SIGKILL to pid {pid}")
+                        except:
+                            pass
+
+                    # Remove from list
+                    if proc in self.processes:
+                        self.processes.remove(proc)
+                        log.info(f"    Removed from self.processes")
+
+                log.info(f"  - Completed killing {len(running_processes)} processes")
+            except Exception as e:
+                log.error(f"  - ERROR killing processes: {e}")
+
+            # STEP 4: Clear process queue
+            log.info("STEP 4: Clearing process queue...")
+            try:
+                tempqueue = queue.Queue()
+                removed_count = 0
+                original_size = self.fastProcessQueue.qsize()
+                log.info(f"  - Original queue size: {original_size}")
+
+                while not self.fastProcessQueue.empty():
+                    try:
+                        proc = self.fastProcessQueue.get_nowait()
+                        prochost = getattr(proc, 'hostIp', 'unknown')
+                        if hasattr(proc, 'hostIp') and proc.hostIp == ip:
+                            removed_count += 1
+                            log.info(f"  - Removed queued process for {prochost}")
+                        else:
+                            tempqueue.put(proc)
+                    except:
+                        break
+
+                while not tempqueue.empty():
+                    try:
+                        self.fastProcessQueue.put(tempqueue.get_nowait())
+                    except:
+                        break
+
+                log.info(f"  - Removed {removed_count} queued processes")
+            except Exception as e:
+                log.error(f"  - ERROR clearing queue: {e}")
+
+            # STEP 4.5: Close all tool tabs for this host
+            log.info("STEP 4.5: Closing tool tabs...")
+            try:
+                closed_count = self.view.closeAllTabsForHost(ip)
+                log.info(f"  - Closed {closed_count} tool tabs for {ip}")
+            except Exception as e:
+                log.error(f"  - ERROR closing tool tabs: {e}")
+
+            # STEP 5: Delete ports, scripts, and CVEs from database (but keep host and notes)
+            log.info("STEP 5: Purging scan results from database...")
+            try:
+                # Get host object for deletions
+                from db.entities.host import hostObj
+                session = repositoryContainer.hostRepository.dbAdapter.session()
+                host = session.query(hostObj).filter_by(ip=str(ip)).first()
+                session.close()
+
+                if not host:
+                    log.error(f"  ❌ ERROR: Host {ip} not found in database!")
+                    raise Exception(f"Host {ip} not found")
+
+                # Delete process records FIRST (before updateProcessesTableView is called)
+                try:
+                    from sqlalchemy import text
+                    session = repositoryContainer.processRepository.dbAdapter.session()
+                    
+                    # Delete process output first (foreign key)
+                    result1 = session.execute(
+                        text("DELETE FROM process_output WHERE id IN (SELECT id FROM process WHERE hostIp = :ip)"),
+                        {"ip": str(ip)}
+                    )
+                    deleted_output = result1.rowcount
+                    
+                    # Delete process records
+                    result2 = session.execute(
+                        text("DELETE FROM process WHERE hostIp = :ip"),
+                        {"ip": str(ip)}
+                    )
+                    deleted_processes = result2.rowcount
+                    
+                    session.commit()
+                    session.close()
+                    
+                    if deleted_processes > 0:
+                        log.info(f"  - Deleted {deleted_processes} process records (and {deleted_output} output records)")
+                    else:
+                        log.info("  - No process records to delete")
+                except Exception as e:
+                    log.error(f"  ❌ ERROR deleting processes: {e}")
+
+
+                # Delete TCP ports and scripts
+                if repositoryContainer.portRepository.getPortsByIPAndProtocol(ip, 'tcp'):
+                    repositoryContainer.portRepository.deleteAllPortsAndScriptsByHostId(hostid, 'tcp')
+                    log.info("  - Deleted TCP ports and scripts")
+
+                # Delete UDP ports and scripts
+                if repositoryContainer.portRepository.getPortsByIPAndProtocol(ip, 'udp'):
+                    repositoryContainer.portRepository.deleteAllPortsAndScriptsByHostId(hostid, 'udp')
+                    log.info("  - Deleted UDP ports and scripts")
+
+                # Delete CVEs
+                try:
+                    from db.entities.cve import cve
+                    from sqlalchemy import text
+                    session = repositoryContainer.cveRepository.dbAdapter.session()
+                    result = session.execute(
+                        text("DELETE FROM cve WHERE hostId = :hostId"),
+                        {"hostId": host.id}
+                    )
+                    session.commit()
+                    deleted_cves = result.rowcount
+                    session.close()
+                    if deleted_cves > 0:
+                        log.info(f"  - Deleted {deleted_cves} CVE records")
+                    else:
+                        log.info("  - No CVEs to delete")
+                except Exception as e:
+                    log.error(f"  ❌ ERROR deleting CVEs: {e}")
+
+                # NOTES ARE PRESERVED - user notes remain intact
+                log.info("  - User notes preserved")
+
+                log.info("  ✓ Scan results purged from database (host and notes preserved)")
+            except Exception as e:
+                log.error(f"  - ERROR purging from database: {e}")
+
+            # STEP 6: Clear tab highlights
+            log.info("STEP 6: Clearing tab highlights...")
+            try:
+                self.view.clearAllTabHighlights()
+                log.info("  - Tab highlights cleared")
+            except Exception as e:
+                log.error(f"  - ERROR clearing highlights: {e}")
+
+            # STEP 7: Update interface
+            log.info("STEP 7: Updating interface...")
             self.view.updateInterface()
+            log.info("  - Interface updated")
+
+            # STEP 7.5: Clear views for the purged host
+            log.info("STEP 7.5 Clearing views for purged host...")
+            try:
+                self.view.clearViewsForHost(ip)
+                log.info(" - Views cleared for purged host")
+            except Exception as e:
+                log.error(f"  - ERROR clearing views: {e}")
+
+
+            log.info("=" * 80)
+            log.info(f"PURGE RESULTS END: {ip}")
+            log.info("=" * 80)
+
+            # STEP 8: Schedule cleanup validation (2 seconds)
+            log.info("STEP 8: Scheduling cleanup validation in 2 seconds...")
+            QTimer.singleShot(2000, lambda: self.cleanupPurgedHost(ip))
+
+            # STEP 9: Schedule verification check (3 seconds)
+            log.info("STEP 9: Scheduling verification in 3 seconds...")
+            QTimer.singleShot(3000, lambda: self.verifyHostPurged(ip, hostid))
+
+            # STEP 10: Schedule complete database dump (4 seconds)
+            log.info("STEP 10: Scheduling database dump in 4 seconds...")
+            QTimer.singleShot(4000, lambda: self.dumpDatabaseAfterPurge(ip))
+
             return
 
         if action.text() == "Delete":
@@ -706,13 +928,14 @@ class Controller:
             log.info("  - Interface updated")
             
             # STEP 7.5: Clear the Information tab for the deleted host
-            log.debug("STEP 7.5 Clearing right panel...")
+            log.info("STEP 7.5 Clearing right panel...")
             if hasattr(self.view.viewState, 'ip_clicked') and self.view.viewState.ip_clicked == ip:
-                log.debug(f" - Deleted host {ip} was currently selected, clearing ALL right panel views")
-                self.view.updateRightPanel('')  # ← When '' is passed, it Clears ALL views, not just Information
-                log.debug(" - Right panel cleared")
+                log.info(f" - Deleted host {ip} was currently selected, clearing ALL right panel views")
+                #self.view.updateRightPanel('')  # ← When '' is passed, it Clears ALL views, not just Information
+                self.view.clearViewsForHost(ip)
+                log.info(" - Right panel cleared")
             else:
-                log.debug(f" - Deleted host {ip} was not currently selected, no clear needed")
+                log.info(f" - Deleted host {ip} was not currently selected, no clear needed")
 
             
             log.info("=" * 80)
@@ -2100,6 +2323,103 @@ class Controller:
         log.info(f"=== CLEANUP VALIDATION END for {ip} ===")
         log.info("=" * 80)
 
+
+    def cleanupPurgedHost(self, ip):
+        """
+        Delayed cleanup to catch any processes or orphaned data after host purge.
+        Unlike cleanupDeletedHost, this keeps the host record intact.
+        """
+        from sqlalchemy import text
+
+        log.info("=" * 80)
+        log.info(f"=== CLEANUP VALIDATION START for purged host {ip} ===")
+        log.info("=" * 80)
+
+        repositoryContainer = self.logic.activeProject.repositoryContainer
+
+        # STEP 1: Verify host still exists (it should!)
+        try:
+            from db.entities.host import hostObj
+            session = repositoryContainer.hostRepository.dbAdapter.session()
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            session.close()
+
+            if host:
+                log.info(f"  ✓ Host {ip} still exists in database (GOOD - host should be preserved)")
+            else:
+                log.error(f"  ❌ ERROR: Host {ip} was deleted! Should have been preserved!")
+        except Exception as e:
+            log.error(f"  - Error checking host: {e}")
+
+        # STEP 2: Delete any orphaned processes
+        try:
+            all_processes = repositoryContainer.processRepository.getProcesses(filters='', showProcesses='', sort='desc', ncol='id')
+            orphaned = [p for p in all_processes if getattr(p, 'hostIp', None) == ip]
+
+            if orphaned:
+                log.warning(f"  - Found {len(orphaned)} orphaned process records for purged host {ip}")
+                for proc in orphaned:
+                    proc_id = getattr(proc, 'id', None)
+                    if proc_id:
+                        try:
+                            session = repositoryContainer.processRepository.dbAdapter.session()
+                            session.execute(text("DELETE FROM process_output WHERE id = :id"), {"id": str(proc_id)})
+                            session.execute(text("DELETE FROM process WHERE id = :id"), {"id": str(proc_id)})
+                            session.commit()
+                            session.close()
+                            log.info(f"    * Deleted orphaned process {proc_id}")
+                        except Exception as e:
+                            log.error(f"    * Failed to delete process {proc_id}: {e}")
+            else:
+                log.info(f"  ✓ No orphaned processes found for {ip}")
+        except Exception as e:
+            log.error(f"  - Error cleaning orphaned processes: {e}")
+
+        # STEP 3: Verify all ports are deleted
+        try:
+            from db.entities.port import portObj
+            session = repositoryContainer.portRepository.dbAdapter.session()
+            remaining_ports = session.query(portObj).join(hostObj).filter(hostObj.ip == str(ip)).all()
+            if remaining_ports:
+                log.warning(f"  ❌ Found {len(remaining_ports)} orphaned ports after purge")
+                for port in remaining_ports:
+                    log.warning(f"    - Port {port.portId}/{port.protocol} (ID: {port.id})")
+                    session.delete(port)
+                session.commit()
+                log.info(f"  - Deleted {len(remaining_ports)} orphaned ports")
+            else:
+                log.info(f"  ✓ No orphaned ports found")
+            session.close()
+        except Exception as e:
+            log.error(f"  - Error cleaning orphaned ports: {e}")
+
+        # STEP 4: Remove IP from screenshooter blacklist
+        try:
+            if hasattr(self, 'screenshooter') and self.screenshooter:
+                removed = self.screenshooter.removeFromBlacklist(ip)
+                if removed:
+                    log.info(f"  - Removed {ip} from screenshooter blacklist")
+                else:
+                    log.info(f"  - {ip} was not in screenshooter blacklist")
+        except Exception as e:
+            log.error(f"  - Error removing from blacklist: {e}")
+
+        # STEP 5: Force UI refresh
+        log.info("  - Forcing UI refresh...")
+        self.view.updateInterface()
+
+        # STEP 6: Clear tab highlights AGAIN after UI refresh
+        log.info("  - Clearing tab highlights after refresh...")
+        try:
+            self.view.clearAllTabHighlights()
+            log.info("  - Tab highlights cleared after refresh")
+        except Exception as e:
+            log.error(f"  - Error clearing tab highlights: {e}")
+
+        log.info("=" * 80)
+        log.info(f"=== CLEANUP VALIDATION END for purged host {ip} ===")
+        log.info("=" * 80)
+
     def verifyHostDeleted(self, ip):
         """
         Comprehensive verification that host and ALL related data is deleted.
@@ -2359,6 +2679,157 @@ class Controller:
         return len(issues_found) == 0
 
 
+
+
+    def verifyHostPurged(self, ip, hostid):
+        """
+        Comprehensive verification that all results are purged but host remains.
+        """
+        from sqlalchemy import text
+        log.info("=" * 80)
+        log.info(f"VERIFICATION START - Checking if {ip} results are completely purged")
+        log.info("=" * 80)
+
+        repositoryContainer = self.logic.activeProject.repositoryContainer
+        issues_found = []
+
+        # 1. Check Host Table (should EXIST)
+        try:
+            from db.entities.host import hostObj
+            session = repositoryContainer.hostRepository.dbAdapter.session()
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            session.close()
+
+            if host:
+                log.info(f"✓ Host {ip} still exists in host table (GOOD - host preserved)")
+            else:
+                issues_found.append(f"❌ FAILED: Host {ip} was deleted! Should have been preserved")
+                log.error(f"❌ Host {ip} was deleted when it should have been kept!")
+        except Exception as e:
+            log.error(f"❌ Error checking host table: {e}")
+            issues_found.append(f"Error checking host: {e}")
+
+        # 2. Check Ports Table (should be EMPTY for this host)
+        try:
+            from db.entities.port import portObj
+            session = repositoryContainer.portRepository.dbAdapter.session()
+
+            # Get host ID first
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            if host:
+                ports = session.query(portObj).filter_by(hostId=host.id).all()
+
+                if len(ports) > 0:
+                    issues_found.append(f"❌ FAILED: {len(ports)} ports still exist after purge")
+                    log.error(f"❌ Found {len(ports)} remaining ports for {ip}")
+                    for port in ports:
+                        log.error(f"    - Port {port.portId}/{port.protocol} (ID: {port.id})")
+                else:
+                    log.info(f"✓ No ports found for {ip} (GOOD - all purged)")
+
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking ports: {e}")
+            issues_found.append(f"Error checking ports: {e}")
+
+        # 3. Check Scripts Table (should be EMPTY for this host)
+        try:
+            from db.entities.l1script import l1ScriptObj
+            session = repositoryContainer.scriptRepository.dbAdapter.session()
+
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            if host:
+                scripts = session.query(l1ScriptObj).filter_by(hostId=host.id).all()
+
+                if len(scripts) > 0:
+                    issues_found.append(f"❌ FAILED: {len(scripts)} scripts still exist after purge")
+                    log.error(f"❌ Found {len(scripts)} remaining scripts for {ip}")
+                else:
+                    log.info(f"✓ No scripts found for {ip} (GOOD - all purged)")
+
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking scripts: {e}")
+            issues_found.append(f"Error checking scripts: {e}")
+
+        # 4. Check Process Table (should be EMPTY for this host)
+        try:
+            all_processes = repositoryContainer.processRepository.getProcesses(filters='', showProcesses='', sort='desc', ncol='id')
+            remaining = [p for p in all_processes if getattr(p, 'hostIp', None) == ip]
+
+            if len(remaining) > 0:
+                issues_found.append(f"❌ FAILED: {len(remaining)} processes still exist after purge")
+                log.error(f"❌ Found {len(remaining)} remaining processes for {ip}")
+                for proc in remaining:
+                    log.error(f"    - Process ID: {getattr(proc, 'id', 'unknown')}")
+            else:
+                log.info(f"✓ No processes found for {ip} (GOOD - all purged)")
+        except Exception as e:
+            log.error(f"❌ Error checking processes: {e}")
+            issues_found.append(f"Error checking processes: {e}")
+
+        # 5. Check Notes Table (should STILL EXIST - notes are preserved)
+        try:
+            from db.entities.note import note
+            session = repositoryContainer.noteRepository.dbAdapter.session()
+
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            if host:
+                # Check for notes with numeric hostId
+                notes_numeric = session.query(note).filter_by(hostId=host.id).all()
+
+                # Check for notes with IP string in hostId field (legacy format)
+                result = session.execute(
+                    text("SELECT COUNT(*) as cnt FROM note WHERE hostId = :ip"),
+                    {"ip": str(ip)}
+                ).first()
+                notes_string_count = result[0] if result else 0
+
+                total_notes = len(notes_numeric) + notes_string_count
+
+                if total_notes > 0:
+                    log.info(f"✓ Found {total_notes} notes for {ip} (GOOD - notes preserved)")
+                else:
+                    log.info(f"✓ No notes found for {ip} (acceptable)")
+
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking notes: {e}")
+            issues_found.append(f"Error checking notes: {e}")
+
+        # 6. Check CVE Table (should be EMPTY for this host)
+        try:
+            from db.entities.cve import cve
+            session = repositoryContainer.cveRepository.dbAdapter.session()
+
+            host = session.query(hostObj).filter_by(ip=str(ip)).first()
+            if host:
+                cves = session.query(cve).filter_by(hostId=host.id).all()
+
+                if len(cves) > 0:
+                    issues_found.append(f"❌ FAILED: {len(cves)} CVEs still exist after purge")
+                    log.error(f"❌ Found {len(cves)} remaining CVEs for {ip}")
+                    for cve_obj in cves:
+                        log.error(f"    - CVE: {getattr(cve_obj, 'name', 'unknown')}")
+                else:
+                    log.info(f"✓ No CVEs found for {ip} (GOOD - all purged)")
+
+            session.close()
+        except Exception as e:
+            log.error(f"❌ Error checking CVEs: {e}")
+            issues_found.append(f"Error checking CVEs: {e}")
+
+        # Summary
+        log.info("=" * 80)
+        if issues_found:
+            log.error("❌ PURGE VERIFICATION FAILED!")
+            log.error(f"Found {len(issues_found)} issues:")
+            for issue in issues_found:
+                log.error(f"  - {issue}")
+        else:
+            log.info("✓✓✓ PURGE VERIFICATION PASSED!")
+            log.info(f"Host {ip} preserved, all results successfully purged")
+        log.info("=" * 80)
 
     def dumpDatabaseAfterDelete(self, deleted_ip):
         """
@@ -2691,6 +3162,127 @@ class Controller:
         log.info(f"END DATABASE DUMP FOR DELETED HOST: {deleted_ip}")
         log.info("=" * 100 + "\n")
 
+    def dumpDatabaseAfterPurge(self, purged_ip):
+        """
+        Print relevant database records after a host purge.
+        Focus on the purged host to verify it still exists with no associated data.
+        """
+        from sqlalchemy import text
+        log.info("\n" + "=" * 100)
+        log.info(f"DATABASE DUMP AFTER PURGING HOST: {purged_ip}")
+        log.info("=" * 100 + "\n")
 
+        repositoryContainer = self.logic.activeProject.repositoryContainer
+        session = repositoryContainer.hostRepository.dbAdapter.session()
 
+        try:
+            # 1. Check the purged host
+            log.info("─" * 100)
+            log.info(f"PURGED HOST: {purged_ip}")
+            log.info("─" * 100)
 
+            from db.entities.host import hostObj
+            host = session.query(hostObj).filter_by(ip=str(purged_ip)).first()
+
+            if host:
+                log.info(f"✓ Host {purged_ip} exists (GOOD)")
+                log.info(f"  Host ID: {host.id}")
+                log.info(f"  Hostname: {getattr(host, 'hostname', 'N/A')}")
+                log.info(f"  OS: {getattr(host, 'os', 'N/A')}")
+                log.info(f"  Checked: {getattr(host, 'checked', 'N/A')}")
+            else:
+                log.error(f"❌ Host {purged_ip} does NOT exist (BAD - should be preserved!)")
+            log.info("")
+
+            # 2. Check ports for this host
+            log.info("─" * 100)
+            log.info(f"PORTS for {purged_ip}")
+            log.info("─" * 100)
+
+            if host:
+                from db.entities.port import portObj
+                ports = session.query(portObj).filter_by(hostId=host.id).all()
+
+                if ports:
+                    log.error(f"❌ Found {len(ports)} ports (BAD - should be purged)")
+                    for port in ports:
+                        log.error(f"  - Port {port.portId}/{port.protocol} - {port.state}")
+                else:
+                    log.info(f"✓ No ports found (GOOD - all purged)")
+            log.info("")
+
+            # 3. Check scripts for this host
+            log.info("─" * 100)
+            log.info(f"SCRIPTS for {purged_ip}")
+            log.info("─" * 100)
+
+            if host:
+                from db.entities.l1script import l1ScriptObj
+                scripts = session.query(l1ScriptObj).filter_by(hostId=host.id).all()
+
+                if scripts:
+                    log.error(f"❌ Found {len(scripts)} scripts (BAD - should be purged)")
+                else:
+                    log.info(f"✓ No scripts found (GOOD - all purged)")
+            log.info("")
+
+            # 4. Check processes for this host
+            log.info("─" * 100)
+            log.info(f"PROCESSES for {purged_ip}")
+            log.info("─" * 100)
+
+            all_processes = repositoryContainer.processRepository.getProcesses(filters='', showProcesses='', sort='desc', ncol='id')
+            host_processes = [p for p in all_processes if getattr(p, 'hostIp', None) == purged_ip]
+
+            if host_processes:
+                log.error(f"❌ Found {len(host_processes)} processes (BAD - should be purged)")
+                for proc in host_processes:
+                    log.error(f"  - Process ID: {getattr(proc, 'id', 'unknown')}")
+            else:
+                log.info(f"✓ No processes found (GOOD - all purged)")
+            log.info("")
+
+            # 5. Check CVEs for this host
+            log.info("─" * 100)
+            log.info(f"CVEs for {purged_ip}")
+            log.info("─" * 100)
+
+            if host:
+                from db.entities.cve import cve
+                cves = session.query(cve).filter_by(hostId=host.id).all()
+
+                if cves:
+                    log.error(f"❌ Found {len(cves)} CVEs (BAD - should be purged)")
+                    for cve_obj in cves:
+                        log.error(f"  - CVE: {getattr(cve_obj, 'name', 'unknown')}")
+                else:
+                    log.info(f"✓ No CVEs found (GOOD - all purged)")
+            log.info("")
+
+            # 6. Check notes for this host (should still exist)
+            log.info("─" * 100)
+            log.info(f"NOTES for {purged_ip} (PRESERVED)")
+            log.info("─" * 100)
+
+            if host:
+                from db.entities.note import note
+                notes = session.query(note).filter_by(hostId=host.id).all()
+
+                if notes:
+                    log.info(f"✓ Found {len(notes)} notes (GOOD - notes preserved)")
+                    for note_obj in notes:
+                        note_text = getattr(note_obj, 'text', 'unknown')
+                        log.info(f"  - Note: {note_text[:80]}...")
+                else:
+                    log.info(f"✓ No notes found (acceptable)")
+            log.info("")
+
+            session.close()
+
+        except Exception as e:
+            log.error(f"Error during database dump: {e}")
+            session.close()
+
+        log.info("=" * 100)
+        log.info(f"DATABASE DUMP COMPLETE")
+        log.info("=" * 100 + "\n")

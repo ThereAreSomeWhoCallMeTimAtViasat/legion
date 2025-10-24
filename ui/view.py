@@ -3652,6 +3652,24 @@ class View(QtCore.QObject):
             log.error(traceback.format_exc())
             return closed_count
 
+    def clearViewsForHost(self, ip):
+        """
+        Clear all views associated with a specific host after deletion or purge.
+        This includes right panel (services, scripts, CVEs, information) and processes table.
+        """
+        log.info(f"clearViewsForHost called for {ip}")
+        
+        # Clear right panel if this host is currently selected
+        if hasattr(self.viewState, 'ip_clicked') and self.viewState.ip_clicked == ip:
+            log.info(f"  - Clearing right panel for currently selected host {ip}")
+            self.updateRightPanel('')  # Clear all right panel views
+        
+        # Update processes table to remove entries for this host
+        log.info("  - Updating processes table to remove host entries")
+        self.updateProcessesTableView()
+        
+        log.info(f"clearViewsForHost completed for {ip}")
+
 
 
 
