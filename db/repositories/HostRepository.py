@@ -32,14 +32,14 @@ class HostRepository:
 
 
     def exists(self, host: str):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         query = text('SELECT host.ip FROM hostObj AS host WHERE host.ip == :host OR host.hostname == :host')
         result = session.execute(query, {'host': str(host)}).fetchall()
         session.close()
         return True if result else False
 
     def getHosts(self, filters):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         query = 'SELECT * FROM hostObj AS hosts WHERE 1=1'
         query += applyHostsFilters(filters)
         query = text(query)
@@ -53,7 +53,7 @@ class HostRepository:
         return hosts
 
     def getHostsAndPortsByServiceName(self, service_name, filters: Filters):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         query = ("SELECT hosts.ip,ports.portId,ports.protocol,ports.state,ports.hostId,ports.serviceId,"
                  "services.name,services.product,services.version,services.extrainfo,services.fingerprint "
                  "FROM portObj AS ports "
@@ -70,7 +70,7 @@ class HostRepository:
         return services
 
     def getHostInformation(self, host_ip_address: str):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         result = session.query(hostObj).filter_by(ip=str(host_ip_address)).first()
         session.close()
         return result
@@ -78,7 +78,7 @@ class HostRepository:
     def deleteHost(self, hostIP):
         """Delete a host and ALL related records from the database."""
         log = getDbLogger()
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         try:
             # Get the host first to retrieve its ID
             host = session.query(hostObj).filter_by(ip=str(hostIP)).first()
@@ -152,7 +152,7 @@ class HostRepository:
 
 
     def toggleHostCheckStatus(self, ipAddress):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         host = session.query(hostObj).filter_by(ip=ipAddress).first()
         if host:
             if host.checked == 'False':
@@ -167,7 +167,7 @@ class HostRepository:
         """
         Return the hostObj for a given IP address, or None if not found.
         """
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         host = session.query(hostObj).filter_by(ip=str(ip)).first()
         session.close()
         return host
@@ -176,7 +176,7 @@ class HostRepository:
         """
         Return the hostObj for a given hostname, or None if not found.
         """
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         try:
             host = session.query(hostObj).filter_by(hostname=str(hostname)).first()
         finally:
@@ -187,7 +187,7 @@ class HostRepository:
         """
         Return all hostObj ORM objects in the database.
         """
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         hosts = session.query(hostObj).all()
         session.close()
         return hosts

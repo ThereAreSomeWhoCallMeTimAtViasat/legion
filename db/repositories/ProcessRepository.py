@@ -37,6 +37,56 @@ class ProcessRepository:
     # to speed up the queries we replace the columns we don't need by zeros (the reason we need all the columns is
     # we are using the same model to display process information everywhere)
 
+    def updateProcessState(self, processId: str, **kwargs):
+        """
+        Update multiple process fields atomically in a single transaction.
+
+        PHASE 2 FIX: Prevents race conditions by consolidating updates.
+
+        Args:
+            processId: The process ID to update
+            **kwargs: Field names and values (status, pid, elapsed, percent, endTime, closed, display)
+
+        Returns:
+            bool: True if successful, False if process not found
+        """
+        if not processId:
+            self.log.warning("updateProcessState called with empty processId")
+            return False
+
+        session = self.dbAdapter.session  # CRITICAL: Use scoped session (not session()!)
+
+        try:
+            proc = session.query(process).filter_by(id=processId).first()
+
+            if not proc:
+                self.log.warning(f"Process {processId} not found for update")
+                return False
+
+            # Apply all updates atomically
+            updated_fields = []
+            for field, value in kwargs.items():
+                if hasattr(proc, field):
+                    old_value = getattr(proc, field)
+                    setattr(proc, field, value)
+                    updated_fields.append(f"{field}: {old_value} → {value}")
+                else:
+                    self.log.warning(f"Invalid field '{field}' for process update")
+
+            if updated_fields:
+                session.commit()
+                self.log.debug(f"Process {processId} updated: {', '.join(updated_fields)}")
+                return True
+            else:
+                self.log.debug(f"No valid fields to update for process {processId}")
+                return False
+
+        except Exception as e:
+            self.log.error(f"Error updating process {processId}: {e}")
+            session.rollback()
+            raise
+
+
     def getProcesses(self, filters, showProcesses: Union[str, bool] = 'noNmap', sort: str = 'desc', ncol: str = 'id',
                      status_filter=None):
         # Modified: return consistent column aliases across all query paths so UI models can rely on keys.
@@ -344,14 +394,8 @@ class ProcessRepository:
         session.close()
 
     def storeProcessCancelStatus(self, processId: str):
-        session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc:
-            proc.status = 'Cancelled'
-            proc.endTime = getTimestamp(True)
-            session.add(proc)
-            session.commit()
-        session.close()
+        """Mark process as cancelled. REFACTORED for Phase 2."""
+        return self.updateProcessState(processId, status='Cancelled', endTime=getTimestamp(True))
 
     def storeProcessKillStatus(self, processId: str):
         session = self.dbAdapter.session()
@@ -364,41 +408,20 @@ class ProcessRepository:
         session.close()
 
     def storeProcessRunningStatus(self, processId: str, pid):
-        session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc:
-            proc.status = 'Running'
-            proc.pid = str(pid)
-            session.add(proc)
-            session.commit()
-        session.close()
+        """Set process status to Running with PID. REFACTORED for Phase 2."""
+        return self.updateProcessState(processId, status='Running', pid=str(pid))
 
     def storeProcessRunningElapsedTime(self, processId: str, elapsed):
-        session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc:
-            proc.elapsed = elapsed
-            session.add(proc)
-            session.commit()
+        """Update process elapsed time. REFACTORED for Phase 2."""
+        return self.updateProcessState(processId, elapsed=elapsed)
 
     def storeProcessPercent(self, processId: str, percent):
-        """Update the percent field for a process."""
-        session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc:
-            proc.percent = percent
-            session.add(proc)
-            session.commit()
-        session.close()
+        """Update process percent. REFACTORED for Phase 2."""
+        return self.updateProcessState(processId, percent=percent)
 
     def storeCloseStatus(self, processId):
-        session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc:
-            proc.closed = 'True'
-            session.add(proc)
-            session.commit()
-        session.close()
+        """Mark process as closed. REFACTORED for Phase 2."""
+        return self.updateProcessState(processId, closed='True')
 
     def storeScreenshot(self, ip: str, port: str, filename: str):
         session = self.dbAdapter.session()

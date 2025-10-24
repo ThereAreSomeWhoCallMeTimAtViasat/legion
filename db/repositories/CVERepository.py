@@ -27,7 +27,7 @@ class CVERepository:
         self.dbAdapter = dbAdapter
 
     def getCVEsByHostIP(self, hostIP):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         # Cast severity to REAL (float) and order by it descending (highest CVSS first)
         query = text('SELECT cves.name, CAST(cves.severity AS REAL) as severity, cves.product, cves.version, cves.url, cves.source, '
                      'cves.exploitId, cves.exploit, cves.exploitUrl FROM cve AS cves '
