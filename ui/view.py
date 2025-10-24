@@ -1373,6 +1373,14 @@ class View(QtCore.QObject):
             log.debug(f"switchTabClick - selectedTab = '{selectedTab}'")
             log.debug(f"switchTabClick - BEFORE: unread_tabs = {self.unread_tabs}")
             
+            # Save notes when LEAVING the Hosts tab
+            if selectedTab != 'Hosts' and self.viewState.lastHostIdClicked:
+                log.info("========== switchTabClick - SAVING NOTES (leaving Hosts tab) ==========")
+                notes_html = self.ui.NotesTextEdit.toHtml()
+                log.info(f"Saving notes for host {self.viewState.lastHostIdClicked}, HTML length: {len(notes_html)}")
+                self.controller.saveProject(self.viewState.lastHostIdClicked, notes_html)
+                log.info("Notes saved successfully")
+            
             if selectedTab == 'Hosts':
                 log.debug("switchTabClick - Entering Hosts tab logic")
                 log.debug("switchTabClick - About to insert fixed tabs back")
@@ -1513,6 +1521,7 @@ class View(QtCore.QObject):
 
 
 
+
     
     def _clearSuppressFlag(self):
         """Helper to clear the suppress_reset_highlight flag after queued events process"""
@@ -1633,10 +1642,22 @@ class View(QtCore.QObject):
 
                 if tool:
                     # fetch the hosts that we already ran the tool on
-                    hosts=self.controller.getHostsForTool(tool, 'FetchAll')
+                    hosts = self.controller.getHostsForTool(tool, 'FetchAll')
                     oldTargets = []
-                    for i in range(0,len(hosts)):
-                        oldTargets.append([hosts[i][5], hosts[i][6], hosts[i][7]])
+                    
+                    # FIX: getHostsForTool returns list of dicts, not tuples with numeric indices  #for right click on services menu crash
+                    for host_dict in hosts:
+                        try:
+                            # Extract fields from dictionary returned by getHostsByToolName
+                            oldTargets.append([
+                                host_dict.get('hostIp', ''),
+                                host_dict.get('port', ''),
+                                host_dict.get('protocol', '')
+                            ])
+                        except (KeyError, AttributeError, TypeError) as e:
+                            log.error(f"Error processing host data for tool {tool}: {e}")
+                            log.debug(f"Host data structure: {type(host_dict)}, content: {host_dict}")
+                            continue
 
                     # remove from the targets the hosts:ports we have already run the tool on
                     for host in oldTargets:
@@ -2266,31 +2287,75 @@ class View(QtCore.QObject):
 
     # TODO: check if this hack can be improved because we are calling setDirty more than we need
     def updateNotesView(self, hostid):
+        """
+        Load and display notes for a given host.
+
+        ENHANCED: Added comprehensive logging to debug the save/load cycle.
+        """
+        log.info("="*80)
+        log.info(f"updateNotesView START - hostid: {hostid} (type: {type(hostid)})")
+        log.info("="*80)
+
         self.viewState.lastHostIdClicked = str(hostid)
+        log.info(f"Set lastHostIdClicked = '{self.viewState.lastHostIdClicked}'")
+
+        # Fetch note from database
+        log.info(f"Calling controller.getNoteFromDB({hostid})...")
         note = self.controller.getNoteFromDB(hostid)
+
+        if note:
+            log.info(f"✓ getNoteFromDB returned note object")
+            log.info(f"  - Note text length: {len(note.text)} chars")
+            log.info(f"  - First 100 chars: {repr(note.text[:100])}")
+            log.info(f"  - Contains HTML tags: {'<' in note.text and '>' in note.text}")
+        else:
+            log.info(f"✗ getNoteFromDB returned None - no note in database for hostid {hostid}")
+
         saveddirty = self.viewState.dirty
-        
+        log.info(f"Current dirty state: {saveddirty}")
+
         # Store current content before clearing
         old_content = self.ui.NotesTextEdit.toPlainText()
-        
+        log.info(f"Current UI content length before clear: {len(old_content)} chars")
+
+        # Clear the text edit
+        log.info("Calling NotesTextEdit.clear()...")
         self.ui.NotesTextEdit.clear()
-        
+        log.info(f"After clear, UI content length: {len(self.ui.NotesTextEdit.toPlainText())} chars")
+
         new_content = ""
         if note:
             if '<' in note.text and '>' in note.text:
+                log.info("Note contains HTML tags, using setHtml()")
                 self.ui.NotesTextEdit.setHtml(note.text)
                 new_content = self.ui.NotesTextEdit.toPlainText()
+                log.info(f"After setHtml(), plain text length: {len(new_content)} chars")
             else:
+                log.info("Note is plain text, using insertPlainText()")
                 self.ui.NotesTextEdit.insertPlainText(note.text)
                 new_content = note.text
-        
+                log.info(f"After insertPlainText(), length: {len(new_content)} chars")
+        else:
+            log.info("No note to display - UI remains empty")
+
         if saveddirty == False:
+            log.info("Restoring dirty=False state")
             self.setDirty(False)
-        
+
         # Only highlight if content actually changed (new content added)
         # Don't highlight when just switching between hosts
         if new_content and new_content.strip() != old_content.strip():
+            log.info(f"Content changed (old={len(old_content.strip())}, new={len(new_content.strip())}), highlighting Notes tab")
             self.highlightTab('Notes')
+        else:
+            log.info("Content unchanged or empty, NOT highlighting Notes tab")
+
+        final_ui_length = len(self.ui.NotesTextEdit.toPlainText())
+        log.info("="*80)
+        log.info(f"updateNotesView END - Final UI content length: {final_ui_length} chars")
+        log.info("="*80)
+
+
 
 
 
@@ -2347,6 +2412,9 @@ class View(QtCore.QObject):
                 self.updateNotesView(hostId)
         else:
             self.updateNotesView(None)
+
+
+
 
             
     def displayToolPanel(self, display=False):
@@ -3482,6 +3550,17 @@ class View(QtCore.QObject):
         
         self.ui.NotesTextEdit.setTextCursor(notesCursor)
         self.highlightTab('Notes')
+        
+        # Save notes immediately after adding content
+        log.info("========== sendSelectionToNotes - SAVING NOTES ==========")
+        if self.viewState.lastHostIdClicked:
+            notes_html = self.ui.NotesTextEdit.toHtml()
+            log.info(f"Saving notes for host {self.viewState.lastHostIdClicked}, HTML length: {len(notes_html)}")
+            self.controller.saveProject(self.viewState.lastHostIdClicked, notes_html)
+            log.info("Notes saved successfully")
+        else:
+            log.warning("Cannot save notes: lastHostIdClicked is None")
+
 
     def clearAllTabHighlights(self):
         """Clear all orange tab highlights (reset all tabs to default color)."""

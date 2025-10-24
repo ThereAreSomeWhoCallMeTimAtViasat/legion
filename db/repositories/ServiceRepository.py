@@ -27,7 +27,7 @@ class ServiceRepository:
         self.dbAdapter = db_adapter
 
     def getServiceNames(self, filters: Filters):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         query = ("SELECT DISTINCT service.name FROM serviceObj as service "
                  "INNER JOIN portObj as ports "
                  "INNER JOIN hostObj AS hosts "
@@ -43,7 +43,7 @@ class ServiceRepository:
         return services
 
     def getServiceNamesByHostIPAndPort(self, host_ip, port):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         query = text("SELECT services.name FROM serviceObj AS services "
                      "INNER JOIN hostObj AS hosts ON hosts.id = ports.hostId "
                      "INNER JOIN portObj AS ports ON services.id=ports.serviceId "
@@ -53,7 +53,7 @@ class ServiceRepository:
         return result
 
     def getServiceById(self, service_id):
-        session = self.dbAdapter.session()
+        session = self.dbAdapter.session
         service = session.query(serviceObj).filter_by(id=service_id).first()
         session.close()
         return service

@@ -321,24 +321,45 @@ class Controller:
             log.exception("Failed to reset process display status when opening project")
 
     def saveProject(self, lastHostIdClicked, notes):
-        """Save project with notes for the specified host ID"""
-        if lastHostIdClicked:
+        """
+        Save project with notes for the specified host ID
+        
+        FIXED: Added validation to handle None/"None"/empty values after host deletion
+        """
+        # Early validation: Skip if lastHostIdClicked is invalid
+        if not lastHostIdClicked or lastHostIdClicked in ['None', '']:
+            log.debug(f"Skipping saveProject: lastHostIdClicked is invalid ({lastHostIdClicked})")
+            return
+        
+        try:
             # Ensure we're passing the numeric host ID, not an IP address
-            try:
+            if isinstance(lastHostIdClicked, str) and '.' in lastHostIdClicked:
                 # If lastHostIdClicked is an IP address, resolve it to host ID
-                if isinstance(lastHostIdClicked, str) and '.' in lastHostIdClicked:
-                    host = self.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(lastHostIdClicked)
-                    if host:
-                        hostId = host.id
-                    else:
-                        log.warning(f"Cannot save notes: host {lastHostIdClicked} not found")
-                        return
+                host = self.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(lastHostIdClicked)
+                if host:
+                    hostId = host.id
+                    log.debug(f"Resolved IP {lastHostIdClicked} to hostId {hostId}")
                 else:
+                    log.warning(f"Cannot save notes: host {lastHostIdClicked} not found in database")
+                    return
+            else:
+                # Convert to integer - will fail gracefully if invalid
+                try:
                     hostId = int(lastHostIdClicked)
-                
-                self.logic.activeProject.repositoryContainer.noteRepository.storeNotes(hostId, notes)
-            except Exception as e:
-                log.error(f"Error saving notes for {lastHostIdClicked}: {e}")
+                    log.debug(f"Using hostId {hostId} directly")
+                except (ValueError, TypeError) as e:
+                    log.warning(f"Cannot save notes: invalid hostId '{lastHostIdClicked}' - {e}")
+                    return
+            
+            # Save the notes
+            log.debug(f"Calling storeNotes for hostId={hostId}, notes length={len(notes)}")
+            self.logic.activeProject.repositoryContainer.noteRepository.storeNotes(hostId, notes)
+            
+        except Exception as e:
+            log.error(f"Error saving notes for {lastHostIdClicked}: {e}")
+            import traceback
+            log.debug(traceback.format_exc())
+
 
 
     def saveProjectAs(self, filename, replace=0):
@@ -685,13 +706,14 @@ class Controller:
             log.info("  - Interface updated")
             
             # STEP 7.5: Clear the Information tab for the deleted host
-            log.debug("STEP 7.5: Clearing Information tab...")
-            if hasattr(self.view.viewState, 'ipclicked') and self.view.viewState.ipclicked == ip:
-                log.debug(f"  - Deleted host {ip} was currently selected, clearing Information tab")
-                self.view.updateInformationView(None)
-                log.debug("  - Information tab cleared")
+            log.debug("STEP 7.5 Clearing right panel...")
+            if hasattr(self.view.viewState, 'ip_clicked') and self.view.viewState.ip_clicked == ip:
+                log.debug(f" - Deleted host {ip} was currently selected, clearing ALL right panel views")
+                self.view.updateRightPanel('')  # ← When '' is passed, it Clears ALL views, not just Information
+                log.debug(" - Right panel cleared")
             else:
-                log.debug(f"  - Deleted host {ip} was not currently selected, no clear needed")
+                log.debug(f" - Deleted host {ip} was not currently selected, no clear needed")
+
             
             log.info("=" * 80)
             log.info(f"DELETE HOST END: {ip}")
