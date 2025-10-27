@@ -1475,68 +1475,112 @@ class Controller:
     #################### PROCESSES ####################
 
     def checkProcessQueue(self):
-        # New: User-configurable max concurrent scans (not just fast processes)
-        max_concurrent_scans = getattr(self.settings, "general_max_concurrent_scans", 3)
+        maxconcurrentscans = getattr(self.settings, 'general_max_concurrent_scans', 3)
         try:
-            max_concurrent_scans = int(max_concurrent_scans)
+            maxconcurrentscans = int(maxconcurrentscans)
         except Exception:
-            max_concurrent_scans = 3
-
-        log.debug(f'Queue maximum concurrent scans: {str(max_concurrent_scans)}')
-        log.debug(f'Queue maximum concurrent processes: {str(self.settings.general_max_fast_processes)}')
-        log.debug(f'Queue processes running: {str(self.fastProcessesRunning)}')
-        log.debug(f'Queue processes waiting: {str(self.fastProcessQueue.qsize())}')
-
-        # Count running nmap (or other scan) processes
-        running_scans = sum(1 for p in self.processes if hasattr(p, "name") and "nmap" in str(p.name).lower())
-
-        if not self.fastProcessQueue.empty():
-            self.processTableUiUpdateTimer.start(1000)
-            # Allow up to max_concurrent_scans nmap (or other scan) processes, and up to max_fast_processes for others
-            while (self.fastProcessesRunning < int(self.settings.general_max_fast_processes) and
-                (running_scans < max_concurrent_scans or self.fastProcessQueue.empty())):
-                if self.fastProcessQueue.empty():
-                    break
-                next_proc = self.fastProcessQueue.get()
-                # If this is a scan, check scan concurrency
-                is_scan = hasattr(next_proc, "name") and "nmap" in str(next_proc.name).lower()
-                if is_scan and running_scans >= max_concurrent_scans:
-                    # Put back and break
-                    self.fastProcessQueue.put(next_proc)
-                    break
-                if not self.logic.activeProject.repositoryContainer.processRepository.isCancelledProcess(
-                        str(next_proc.id)):
-                    log.info('Running: ' + str(next_proc.command))
-                    next_proc.display.clear()
-                    self.processes.append(next_proc)
-                    self.fastProcessesRunning += 1
-                    if is_scan:
-                        running_scans += 1
-                    # Add Timeout
-                    next_proc.waitForFinished(10)
-                    formattedCommand = formatCommandQProcess(next_proc.command)
-                    log.debug(f'Up next: {formattedCommand[0]}, {formattedCommand[1]}')
-                    next_proc.start(formattedCommand[0], formattedCommand[1])
-                    self.logic.activeProject.repositoryContainer.processRepository.storeProcessRunningStatus(
-                        next_proc.id, getPid(next_proc))
-                elif not self.fastProcessQueue.empty():
-                    log.debug('Process was canceled, checking queue again..')
-                    continue
+            maxconcurrentscans = 3
         
-        # FIXED: Check if processes are ACTUALLY running, not just queue status
+        log.info(f"[Queue] maximum concurrent scans: {str(maxconcurrentscans)}")
+        log.info(f"[Queue] maximum concurrent processes: {str(self.settings.general_max_fast_processes)}")
+        log.info(f"[Queue] processes running: {str(self.fastProcessesRunning)}")
+        log.info(f"[Queue] processes waiting: {str(self.fastProcessQueue.qsize())}")
+        
         from PyQt6.QtCore import QProcess
-        actually_running = [p for p in self.processes if p.state() == QProcess.ProcessState.Running]
         
-        if len(actually_running) == 0 and self.fastProcessQueue.empty():
-            # Only stop timer if BOTH queue empty AND no processes actively running
-            if self.processTableUiUpdateTimer.isActive():
-                log.info("Halting process panel update timer as all processes are finished.")
-                self.processTableUiUpdateTimer.stop()
-        elif len(actually_running) > 0:
-            # Ensure timer is running if we have active processes
-            if not self.processTableUiUpdateTimer.isActive():
-                log.info(f"Restarting process panel update timer - {len(actually_running)} processes still running")
-                self.processTableUiUpdateTimer.start(1000)
+        # Count running nmap or other scan processes
+        runningscans = sum(1 for p in self.processes if hasattr(p, 'name') and 'nmap' in str(p.name).lower())
+        
+        # Allow up to maxconcurrentscans nmap processes, and up to max_fast_processes for others
+        while (self.fastProcessesRunning < int(self.settings.general_max_fast_processes) and 
+               runningscans < maxconcurrentscans) or self.fastProcessQueue.empty():
+            
+            if self.fastProcessQueue.empty():
+                log.info("[Queue] Queue is empty, breaking")
+                break
+            
+            nextproc = self.fastProcessQueue.get()
+            log.info(f"[Queue] Got process from queue: {nextproc.name if hasattr(nextproc, 'name') else 'unknown'}")
+            
+            # Check if it's a scan process
+            isscan = hasattr(nextproc, 'name') and 'nmap' in str(nextproc.name).lower()
+            
+            # Check if process was cancelled
+            if self.logic.activeProject.repositoryContainer.processRepository.isCancelledProcess(str(nextproc.id)):
+                log.info("[Queue] Process was canceled, checking queue again..")
+                continue
+            
+            # Check ACTUALLY running processes, not just queue status
+            actuallyrunning = [p for p in self.processes if p.state() == QProcess.ProcessState.Running]
+            log.info(f"[Queue] Actually running processes: {len(actuallyrunning)}")
+            
+            if len(actuallyrunning) == 0 and self.fastProcessQueue.empty():
+                # Only stop timer if BOTH queue empty AND no processes actively running
+                if self.processTableUiUpdateTimer.isActive():
+                    log.info("Halting process panel update timer as all processes are finished.")
+                    self.processTableUiUpdateTimer.stop()
+            elif len(actuallyrunning) > 0:
+                # Ensure timer is running if we have active processes
+                if not self.processTableUiUpdateTimer.isActive():
+                    log.info(f"Restarting process panel update timer - {len(actuallyrunning)} processes still running")
+                    self.processTableUiUpdateTimer.start(1000)
+            
+            # Start the process
+            if not self.logic.activeProject.repositoryContainer.processRepository.isCancelledProcess(str(nextproc.id)):
+                log.info("Running " + str(nextproc.command))
+                
+                # CRITICAL FIX: Don't clear if we're in append mode!
+                log.info(f"[Queue] Checking display for append mode...")
+                log.info(f"[Queue] Display object: {nextproc.display}")
+                log.info(f"[Queue] Display type: {type(nextproc.display)}")
+                
+                is_appending = nextproc.display.property("is_appending")
+                log.info(f"[Queue] is_appending property value: {is_appending} (type: {type(is_appending)})")
+                
+                if is_appending:
+                    # Get current content length before NOT clearing
+                    current_content = nextproc.display.toPlainText()
+                    log.info(f"[Queue] *** APPEND MODE ACTIVE *** - NOT clearing display")
+                    log.info(f"[Queue] Current display content length: {len(current_content)} chars")
+                    log.info(f"[Queue] First 200 chars of content: {current_content[:200]}")
+                else:
+                    log.info(f"[Queue] NORMAL MODE - clearing display")
+                    log.info(f"[Queue] Display content before clear: {len(nextproc.display.toPlainText())} chars")
+                    nextproc.display.clear()
+                    log.info(f"[Queue] Display cleared")
+                
+                self.processes.append(nextproc)
+                self.fastProcessesRunning += 1
+                if isscan:
+                    runningscans += 1
+                
+                log.info(f"[Queue] About to start process...")
+                # Actually start the process
+                nextproc.waitForFinished(10)
+                formattedCommand = formatCommandQProcess(nextproc.command)
+                log.info(f"[Queue] Formatted command: {formattedCommand[0]}, args: {str(formattedCommand[1])[:100]}")
+                
+                nextproc.start(formattedCommand[0], formattedCommand[1])
+                log.info(f"[Queue] Process started with PID: {getPid(nextproc)}")
+                
+                self.logic.activeProject.repositoryContainer.processRepository.storeProcessRunningStatus(
+                    nextproc.id, getPid(nextproc))
+                
+                # Debug: Verify content is still there after process start
+                if is_appending:
+                    after_start_content = nextproc.display.toPlainText()
+                    log.info(f"[Queue] After process start, display has {len(after_start_content)} chars")
+                    if len(after_start_content) == 0:
+                        log.error(f"[Queue] ERROR: Display was cleared despite append mode!")
+                    else:
+                        log.info(f"[Queue] SUCCESS: Display content preserved in append mode")
+            else:
+                # Put back and break
+                log.info("[Queue] Process cancelled, putting back in queue")
+                self.fastProcessQueue.put(nextproc)
+                break
+
+
 
 
     def cancelProcess(self, dbId):
@@ -1652,13 +1696,16 @@ class Controller:
         startTime = args[6]
         outputfile = args[7]
         textbox = args[8]
-
+        
+        log.debug(f"[runCommand] Called with:")
+        log.debug(f"  name={name}, tabTitle={tabTitle}, hostIp={hostIp}, port={port}")
+        log.debug(f"  textbox={textbox}, type={type(textbox)}")
+        
         timer = QElapsedTimer()
         updateElapsed = QTimer()
 
         if 'python-script' in name:
             log.info(f'Running python script {name}')
-            # Determine which script to run and the argument
             import subprocess
             import shlex
             script_path = None
@@ -1699,7 +1746,7 @@ class Controller:
         # FIX FOR BASH SCRIPTS: Check if script exists and wrap with stdbuf
         if 'bash' in str(command).lower() and '.sh' in str(command).lower():
             import re
-            script_match = re.search(r'(\.\/scripts\/[^\s]+\.sh)', str(command))
+            script_match = re.search(r'(\./scripts/[^\s]+\.sh)', str(command))
             if script_match:
                 script_path = script_match.group(1)
                 if not os.path.exists(script_path):
@@ -1708,22 +1755,18 @@ class Controller:
                     if textbox and not sip.isdeleted(textbox):
                         textbox.setPlainText(error_msg)
                     return 0
-            
-            log.info(f"Detected bash script, wrapping with stdbuf for unbuffered output: {command}")
-            command = f"stdbuf -o0 -e0 {command}"
+                log.info(f"Detected bash script, wrapping with stdbuf for unbuffered output: {command}")
+                command = f"stdbuf -o0 -e0 {command}"
 
-        # new MyQProcess for the updated class
+        # Create MyQProcess
         qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox, self.settings)
         qProcess.sigHasMatch.connect(lambda matchStr: self.handleMatch(hostIp, tabTitle, matchStr))
-
         qProcess.started.connect(timer.start)
         qProcess.finished.connect(handleProcStop)
-
         updateElapsed.timeout.connect(handleProcUpdate)
 
         processRepository = self.logic.activeProject.repositoryContainer.processRepository
         dbId = str(processRepository.storeProcess(qProcess))
-
         textbox.setProperty('dbId', dbId)
         if textbox.parentWidget():
             textbox.parentWidget().setProperty('dbId', dbId)
@@ -1733,17 +1776,17 @@ class Controller:
         self.processMeasurements[getPid(qProcess)] = 0
 
         log.info('Queuing: ' + str(command))
-
         self.fastProcessQueue.put(qProcess)
         self.checkProcessQueue()
 
         self.updateUITimer.stop()
         self.updateUITimer.start(900)
 
-        # Set MergedChannels mode - this merges stderr into stdout automatically
+        # Set MergedChannels mode
         qProcess.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
-        
-        # Connect ONLY stdout since MergedChannels already includes stderr
+
+        # KEEP YOUR ORIGINAL HANDLER - it already works correctly!
+        # insertPlainText preserves existing HTML formatting
         qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.insertPlainText(
             str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))))
 
@@ -1752,13 +1795,13 @@ class Controller:
         qProcess.errorOccurred.connect(lambda error, proc=qProcess: self.processCrashed(proc, error))
 
         log.info(f"runCommand called for stage {str(stage)}")
-
+        
         if stage > 0 and stage < 6:
             log.info(f"runCommand connected for stage {str(stage)}")
             nextStage = stage + 1
             qProcess.finished.connect(
                 lambda exitCode, exitStatus, host=str(hostIp).strip(), discovery_flag=discovery,
-                       next_stage=nextStage, enable_ipv6_flag=enable_ipv6, process_id=qProcess.id:
+                next_stage=nextStage, enable_ipv6_flag=enable_ipv6, process_id=qProcess.id:
                 self.runStagedNmap(
                     host,
                     discovery=discovery_flag,
@@ -1769,6 +1812,8 @@ class Controller:
             )
 
         return getPid(qProcess)
+
+
 
 
 
@@ -2107,89 +2152,254 @@ class Controller:
             msg.setStandardButtons(QMessageBox.StandardButton.Ok)
             msg.exec()
 
-    def findDuplicateTab(self, tabWidget, tabName):
-        for i in range(tabWidget.count()):
-            log.debug(f"Tab text for {str(i)}: {str(tabWidget.tabText(i))}")
-            if tabWidget.tabText(i) == tabName:
-                return True
-        return False
+    #def findDuplicateTab(self, tabWidget, tabName):
+    #    for i in range(tabWidget.count()):
+    #        log.debug(f"Tab text for {str(i)}: {str(tabWidget.tabText(i))}")
+    #        if tabWidget.tabText(i) == tabName:
+    #            return True
+    #    return False
 
     def runToolsFor(self, service, hostname, ip, port, protocol='tcp'):
         log.info('Running tools for: ' + service + ' on ' + ip + ':' + port)
-
-        # Import here to avoid circular import issues
         import os
-
-        if service.endswith("?"):  # when nmap is not sure it will append a ?, so we need to remove it
-            service=service[:-1]
-
-        # Get repositories for deduplication checks
+        
+        if service.endswith("?"):
+            service = service[:-1]
+        
         repo_container = self.logic.activeProject.repositoryContainer
         script_repo = getattr(repo_container, "scriptRepository", None)
         port_repo = getattr(repo_container, "portRepository", None)
         host_repo = getattr(repo_container, "hostRepository", None)
-
+        
         for tool in self.settings.automatedAttacks:
-            if service in tool[1].split(",") and protocol==tool[2]:
+            if service in tool[1].split(",") and protocol == tool[2]:
                 if tool[0] == "screenshooter":
                     display_host, resolved_ip = self._resolve_host_and_ip(hostname or ip)
                     url = f"{display_host}:{port}"
-                    # Check if screenshot already exists using deterministic filename
+                    
                     screenshots_dir = os.path.join(self.logic.activeProject.properties.outputFolder, "screenshots")
                     deterministic_screenshot = f"{resolved_ip}-{port}-screenshot.png"
                     screenshot_exists = False
+                    
                     if os.path.isdir(screenshots_dir):
                         if deterministic_screenshot in os.listdir(screenshots_dir):
                             screenshot_exists = True
+                    
                     if screenshot_exists:
                         log.info(f"Skipping screenshot for {resolved_ip}:{port} (already exists)")
                     else:
                         log.info("Screenshooter of URL: %s" % str(url))
                         self.screenshooter.addToQueue(resolved_ip, port, url)
                         self.screenshooter.start()
-
+                
                 else:
                     for a in self.settings.portActions:
                         if tool[0] == a[1]:
                             tabTitle = a[1] + " (" + port + "/" + protocol + ")"
-                            # Deduplication: check if script already ran for this host/port/tool
+                            log.info(f"[runToolsFor] Processing tool '{a[1]}', original tab title: '{tabTitle}'")
+                            textbox = None
+                            
+                            # Check if script already ran
                             skip_script = False
                             if script_repo and port_repo and host_repo:
-                                # Find host and port objects
                                 db_host = host_repo.getHostByIP(ip)
                                 db_port = None
                                 if db_host:
                                     db_port = port_repo.getPortByHostIdAndPort(db_host.id, port, protocol)
+                                
                                 if db_host and db_port:
-                                    # l1ScriptObj: scriptId, portId, hostId
                                     existing_scripts = script_repo.getScriptsByPortId(db_port.id)
                                     for s in existing_scripts:
                                         if hasattr(s, "scriptId") and s.scriptId == a[1]:
                                             skip_script = True
+                                            log.info(f"[runToolsFor] Script '{a[1]}' found in database")
                                             break
+                            
                             if skip_script:
-                                log.info(f"Skipping script {a[1]} for {ip}:{port}/{protocol} (already exists)")
+                                log.info(f"[runToolsFor] Script was run before, checking for existing tab")
+                                existing_tab_index, existing_run_num = self.findExistingTabIndex(
+                                    self.view.ui.ServicesTabWidget,
+                                    tabTitle
+                                )
+                                log.info(f"[runToolsFor] Script check result: index={existing_tab_index}, run={existing_run_num}")
+                                
+                                if existing_tab_index is not None:
+                                    action = self.promptDuplicateToolAction(a[1], tabTitle)
+                                    
+                                    if action == 'cancel' or action == 'skip':
+                                        log.info(f"User cancelled/skipped re-running script '{a[1]}' for {ip}:{port}")
+                                        break
+                                    
+                                    elif action == 'append':
+                                        log.info(f"[APPEND MODE] Appending script output to existing tab at index {existing_tab_index}")
+                                        existing_widget = self.view.ui.ServicesTabWidget.widget(existing_tab_index)
+                                        
+                                        if hasattr(existing_widget, 'display'):
+                                            textbox = existing_widget.display
+                                        else:
+                                            from PyQt6.QtWidgets import QTextEdit
+                                            textbox = existing_widget.findChild(QTextEdit)
+                                        
+                                        if textbox:
+                                            # Get existing content FIRST
+                                            existing_html = textbox.toHtml()
+                                            
+                                            # Create separator as HTML with proper formatting
+                                            separator_html = "<br><br><pre>"
+                                            separator_html += "=" * 80 + "<br>\n"
+                                            separator_html += f"[{getTimestamp()}] Re-running script: {a[1]}<br>\n"
+                                            separator_html += "=" * 80 + "<br>\n"
+                                            separator_html += "</pre><br>"
+                                            
+                                            # Combine existing + separator
+                                            combined_html = existing_html.replace('</body>', f'{separator_html}</body>')
+                                            
+                                            # Set the combined content
+                                            textbox.setHtml(combined_html)
+                                            
+                                            log.info(f"[APPEND MODE] Added separator, content now: {len(textbox.toPlainText())} chars")
+                                            
+                                            # NOW mark it for append mode (so checkProcessQueue won't clear it)
+                                            textbox.setProperty("is_appending", True)
+                                            
+                                            # Switch to tab
+                                            self.view.ui.ServicesTabWidget.setCurrentIndex(existing_tab_index)
+                                            skip_script = False
+                                        else:
+                                            log.error(f"[runToolsFor] Could not find textbox in existing widget!")
+                                            skip_script = False
+                                            textbox = None
+                                    
+                                    else:  # new_tab
+                                        log.info(f"[runToolsFor] Creating new numbered tab for script")
+                                        highest_script_run = self.getHighestRunNumber(
+                                            self.view.ui.ServicesTabWidget, 
+                                            tabTitle
+                                        )
+                                        
+                                        if highest_script_run is None:
+                                            log.error(f"[runToolsFor] ERROR: getHighestRunNumber returned None! Using 0")
+                                            highest_script_run = 0
+                                        
+                                        new_script_run = highest_script_run + 1
+                                        tabTitle = self.formatTabTitleWithRunNumber(tabTitle, new_script_run)
+                                        log.info(f"Creating new script tab '{tabTitle}' (run #{new_script_run})")
+                                        skip_script = False
+                                        textbox = None
+                                else:
+                                    log.warning(f"Script {a[1]} database record exists but no tab found")
+                                    skip_script = False
+                            
+                            if skip_script:
+                                log.info(f"Skipping script {a[1]} for {ip}:{port}/{protocol}")
                                 break
-                            # Cheese
+                            
+                            # Check for duplicate tab if textbox not set
+                            if textbox is None:
+                                log.info(f"[runToolsFor] Textbox is None, checking for duplicate tab")
+                                existing_tab_index, existing_run_num = self.findExistingTabIndex(
+                                    self.view.ui.ServicesTabWidget, 
+                                    tabTitle
+                                )
+                                log.info(f"[runToolsFor] Duplicate check: index={existing_tab_index}, run={existing_run_num}")
+                                
+                                if existing_tab_index is not None:
+                                    action = self.promptDuplicateToolAction(tool[0], tabTitle)
+                                    
+                                    if action == 'cancel' or action == 'skip':
+                                        log.info(f"User cancelled/skipped re-running tool '{tool[0]}' for {ip}:{port}")
+                                        break
+                                    
+                                    elif action == 'append':
+                                        log.info(f"[APPEND MODE] Appending output to existing tab '{tabTitle}'")
+                                        existing_widget = self.view.ui.ServicesTabWidget.widget(existing_tab_index)
+                                        
+                                        if hasattr(existing_widget, 'display'):
+                                            textbox = existing_widget.display
+                                        else:
+                                            from PyQt6.QtWidgets import QTextEdit
+                                            textbox = existing_widget.findChild(QTextEdit)
+                                        
+                                        if textbox:
+                                            # Get existing content FIRST
+                                            existing_html = textbox.toHtml()
+                                            
+                                            # Create separator as HTML with proper formatting
+                                            separator_html = "<br><br><pre>"
+                                            separator_html += "=" * 80 + "<br>\n"
+                                            separator_html += f"[{getTimestamp()}] Re-running: {tool[0]}<br>\n"
+                                            separator_html += "=" * 80 + "<br>\n"
+                                            separator_html += "</pre><br>"
+                                            
+                                            # Combine existing + separator
+                                            combined_html = existing_html.replace('</body>', f'{separator_html}</body>')
+                                            
+                                            # Set the combined content
+                                            textbox.setHtml(combined_html)
+                                            
+                                            log.info(f"[APPEND MODE] Added separator, content now: {len(textbox.toPlainText())} chars")
+                                            
+                                            # NOW mark it for append mode (so checkProcessQueue won't clear it)
+                                            textbox.setProperty("is_appending", True)
+                                            
+                                            # Switch to tab
+                                            self.view.ui.ServicesTabWidget.setCurrentIndex(existing_tab_index)
+                                        else:
+                                            log.error(f"[runToolsFor] Could not find textbox, creating new tab")
+                                            tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
+                                            textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"))
+                                    
+                                    else:  # new_tab
+                                        highest_run = self.getHighestRunNumber(self.view.ui.ServicesTabWidget, tabTitle)
+                                        
+                                        if highest_run is None:
+                                            log.error(f"[runToolsFor] ERROR: getHighestRunNumber returned None! Using 0")
+                                            highest_run = 0
+                                        
+                                        new_run_number = highest_run + 1
+                                        tabTitle = self.formatTabTitleWithRunNumber(tabTitle, new_run_number)
+                                        log.info(f"Creating new tab '{tabTitle}' (run #{new_run_number})")
+                                        tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
+                                        textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"))
+                                        
+                                        if textbox and hasattr(textbox, 'append'):
+                                            textbox.append(f"[Run #{new_run_number} - {getTimestamp()}]")
+                                            textbox.append("="*80 + "\n")
+                                else:
+                                    log.info(f"[runToolsFor] No existing tab, creating new")
+                                    tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
+                                    textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"))
+                            
+                            # Prepare command
                             outputfile = os.path.join(
                                 self.logic.activeProject.properties.runningFolder,
                                 f"{getTimestamp()}-{a[1]}-{ip}-{port}"
                             )
+                            
                             outputfile = os.path.normpath(outputfile).replace("\\", "/")
                             command = str(a[2])
-                            command = command.replace('[IP]', ip).replace('[PORT]', port)\
-                                .replace('[OUTPUT]', outputfile)
-                            log.debug(f"Running tool command: {str(command)}")
-
-                            if self.findDuplicateTab(self.view.ui.ServicesTabWidget, tabTitle):
-                                log.info("Duplicate tab name. Tool might have already run.")
-                                break
-                            tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
+                            command = command.replace('[IP]', ip).replace('[PORT]', port).replace('[OUTPUT]', outputfile)
+                            
+                            log.info(f"[runToolsFor] About to call runCommand")
+                            log.info(f"[runToolsFor]   Textbox: {textbox}")
+                            log.info(f"[runToolsFor]   Command: {command}")
+                            
+                            # Run command
                             self.runCommand(tool[0], tabTitle, ip, port, protocol, command,
                                             getTimestamp(True),
                                             outputfile,
-                                            self.view.createNewTabForHost(ip, tabTitle, not (tab == 'Hosts')))
+                                            textbox)
+                            
+                            log.info(f"[runToolsFor] runCommand called successfully")
                             break
+
+
+
+
+
+
+
+
 
     def addPortToHost(self, host_ip, port_data):
         """
@@ -3286,3 +3496,215 @@ class Controller:
         log.info("=" * 100)
         log.info(f"DATABASE DUMP COMPLETE")
         log.info("=" * 100 + "\n")
+
+    def findExistingTabIndex(self, tabWidget, baseTabTitle):
+        """
+        Find the index of an existing tab by base name.
+        Returns tuple: (index, run_number) or (None, 0) if not found
+        """
+        import re
+        
+        log.debug(f"[findExistingTabIndex] Searching for tab: '{baseTabTitle}'")
+        log.debug(f"[findExistingTabIndex] Total tabs in widget: {tabWidget.count()}")
+        
+        # Extract base tool name and port from title
+        base_pattern = r'^(.+?)(->(\d+))?\s+(\(.+\))$'
+        
+        base_match = re.match(base_pattern, baseTabTitle)
+        if not base_match:
+            log.debug(f"[findExistingTabIndex] Could not parse title with pattern, looking for exact match")
+            for i in range(tabWidget.count()):
+                tab_text = tabWidget.tabText(i)
+                log.debug(f"[findExistingTabIndex]   Tab {i}: '{tab_text}'")
+                if tab_text == baseTabTitle:
+                    log.debug(f"[findExistingTabIndex] Found exact match at index {i}")
+                    return (i, 1)
+            log.debug(f"[findExistingTabIndex] No match found")
+            return (None, 0)
+        
+        base_tool = base_match.group(1).strip()
+        base_port = base_match.group(4)
+        log.debug(f"[findExistingTabIndex] Parsed - tool: '{base_tool}', port: '{base_port}'")
+        
+        # Search for any tab with this tool and port
+        search_pattern = f"^{re.escape(base_tool)}(?:->\\d+)?\\s+{re.escape(base_port)}$"
+        log.debug(f"[findExistingTabIndex] Search pattern: {search_pattern}")
+        
+        for i in range(tabWidget.count()):
+            tabText = tabWidget.tabText(i)
+            log.debug(f"[findExistingTabIndex]   Checking tab {i}: '{tabText}'")
+            if re.match(search_pattern, tabText):
+                run_match = re.search(r'->(\d+)', tabText)
+                run_num = int(run_match.group(1)) if run_match else 1
+                log.debug(f"[findExistingTabIndex] MATCH found at index {i}, run number: {run_num}")
+                return (i, run_num)
+        
+        log.debug(f"[findExistingTabIndex] No matching tab found")
+        return (None, 0)
+
+
+    def getHighestRunNumber(self, tabWidget, baseTabTitle):
+        """
+        Find the highest run number for tabs with the given base title.
+        Returns the highest run number found (starting at 1 for first run).
+        """
+        import re
+        
+        log.debug(f"[getHighestRunNumber] Finding highest run for: '{baseTabTitle}'")
+        
+        # Extract base tool name and port from title
+        base_pattern = r'^(.+?)(->(\d+))?\s+(\(.+\))$'
+        base_match = re.match(base_pattern, baseTabTitle)
+        
+        if not base_match:
+            log.warning(f"[getHighestRunNumber] Could not parse title, returning 0")
+            return 0
+        
+        base_tool = base_match.group(1).strip()
+        base_port = base_match.group(4)
+        log.debug(f"[getHighestRunNumber] Parsed - tool: '{base_tool}', port: '{base_port}'")
+        
+        highest_run = 0
+        search_pattern = f"^{re.escape(base_tool)}(?:->(\\d+))?\\s+{re.escape(base_port)}$"
+        
+        for i in range(tabWidget.count()):
+            tabText = tabWidget.tabText(i)
+            match = re.match(search_pattern, tabText)
+            
+            if match:
+                run_num_match = re.search(r'->(\d+)', tabText)
+                run_num = int(run_num_match.group(1)) if run_num_match else 1
+                log.debug(f"[getHighestRunNumber]   Tab {i} '{tabText}' -> run number: {run_num}")
+                highest_run = max(highest_run, run_num)
+        
+        log.debug(f"[getHighestRunNumber] Highest run number found: {highest_run}")
+        return highest_run
+
+
+    def formatTabTitleWithRunNumber(self, baseTabTitle, runNumber):
+        """
+        Format a tab title with a run number in the format: "tool->N (port/protocol)"
+        """
+        import re
+        
+        log.debug(f"[formatTabTitleWithRunNumber] Input: '{baseTabTitle}', run: {runNumber}")
+        
+        base_pattern = r'^(.+?)(->(\d+))?\s+(\(.+\))$'
+        match = re.match(base_pattern, baseTabTitle)
+        
+        if not match:
+            log.warning(f"[formatTabTitleWithRunNumber] Could not parse title, using fallback")
+            if runNumber > 1:
+                result = f"{baseTabTitle}->{runNumber}"
+            else:
+                result = baseTabTitle
+            log.debug(f"[formatTabTitleWithRunNumber] Output (fallback): '{result}'")
+            return result
+        
+        base_tool = match.group(1).strip()
+        base_port = match.group(4)
+        
+        if runNumber == 1:
+            result = f"{base_tool} {base_port}"
+        else:
+            result = f"{base_tool}->{runNumber} {base_port}"
+        
+        log.debug(f"[formatTabTitleWithRunNumber] Output: '{result}'")
+        return result
+
+
+    def promptDuplicateToolAction(self, toolName, tabTitle):
+        """
+        Prompt user to choose action when a tool/script has already been run.
+        Returns: 'append', 'new_tab', 'skip', or 'cancel'
+        
+        Behavior is controlled by settings.general_tool_duplication setting:
+        - 'append': Always append to existing tab
+        - 'newTab': Always create new numbered tab
+        - 'skip': Skip re-running (don't execute again)
+        - 'askMe': Show dialog to ask user (default)
+        """
+        # DEBUG: Log ALL settings attributes
+        log.info(f"[promptDuplicateToolAction] DEBUG: All settings attributes: {dir(self.settings)}")
+        
+        # DEBUG: Log attributes that contain 'tool' or 'dup'
+        tool_attrs = [attr for attr in dir(self.settings) if 'tool' in attr.lower() or 'dup' in attr.lower()]
+        log.info(f"[promptDuplicateToolAction] DEBUG: Attributes with 'tool' or 'dup': {tool_attrs}")
+        
+        # Check the setting - try multiple possible attribute names
+        duplication_mode = None
+        
+        # Try different possible attribute name formats
+        possible_names = [
+            'general_tool_duplication',
+            'generaltoolduplication', 
+            'generalToolDuplication',
+            'tool_duplication',
+            'toolduplication',
+            'toolDuplication'
+        ]
+        
+        for attr_name in possible_names:
+            if hasattr(self.settings, attr_name):
+                duplication_mode = getattr(self.settings, attr_name, 'askMe')
+                log.info(f"[promptDuplicateToolAction] Found setting attribute '{attr_name}': '{duplication_mode}'")
+                break
+        
+        # Fallback to askMe if no setting found
+        if duplication_mode is None:
+            duplication_mode = 'askMe'
+            log.info(f"[promptDuplicateToolAction] No setting found, defaulting to 'askMe'")
+        
+        # Normalize the mode value (handle case variations)
+        duplication_mode = str(duplication_mode).strip()
+        log.info(f"[promptDuplicateToolAction] Final duplication mode: '{duplication_mode}'")
+        
+        # If mode is set to a specific action, return directly without showing dialog
+        if duplication_mode.lower() == 'append':
+            log.info(f"[promptDuplicateToolAction] Auto-returning 'append' based on setting")
+            return 'append'
+        elif duplication_mode.lower() == 'newtab':
+            log.info(f"[promptDuplicateToolAction] Auto-returning 'new_tab' based on setting")
+            return 'new_tab'
+        elif duplication_mode.lower() == 'skip':
+            log.info(f"[promptDuplicateToolAction] Auto-returning 'skip' based on setting")
+            return 'skip'
+        
+        # Otherwise show the dialog (askMe mode or any other value)
+        log.info(f"[promptDuplicateToolAction] Mode is '{duplication_mode}', showing dialog for user choice")
+        
+        from PyQt6.QtWidgets import QMessageBox
+        
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("Tool/Script Already Run")
+        msg.setText(f"The tool/script '{toolName}' has already been executed for this target.")
+        msg.setInformativeText("How would you like to proceed?")
+        
+        appendBtn = msg.addButton("Append to Existing Tab", QMessageBox.ButtonRole.AcceptRole)
+        newTabBtn = msg.addButton("Create New Tab", QMessageBox.ButtonRole.ActionRole)
+        skipBtn = msg.addButton("Skip (Don't Run)", QMessageBox.ButtonRole.DestructiveRole)
+        cancelBtn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        
+        msg.setDefaultButton(appendBtn)
+        msg.exec()
+        
+        clickedButton = msg.clickedButton()
+        
+        if clickedButton == appendBtn:
+            log.info(f"[promptDuplicateToolAction] User chose: APPEND")
+            return 'append'
+        elif clickedButton == newTabBtn:
+            log.info(f"[promptDuplicateToolAction] User chose: NEW TAB")
+            return 'new_tab'
+        elif clickedButton == skipBtn:
+            log.info(f"[promptDuplicateToolAction] User chose: SKIP")
+            return 'skip'
+        else:
+            log.info(f"[promptDuplicateToolAction] User chose: CANCEL")
+            return 'cancel'
+
+
+
+
+

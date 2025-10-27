@@ -258,6 +258,7 @@ class AppSettings():
         self.actions.setValue('enable-scheduler-on-import', newSettings.general_enable_scheduler_on_import)
         self.actions.setValue('max-fast-processes', newSettings.general_max_fast_processes)
         self.actions.setValue('max-slow-processes', newSettings.general_max_slow_processes)
+        self.actions.setValue('tool-duplication', newSettings.general_tool_duplication)
         self.actions.endGroup()
 
         self.actions.beginGroup('BruteSettings')
@@ -360,6 +361,7 @@ class Settings():
         self.general_enable_scheduler = "True"
         self.general_max_fast_processes = "10"
         self.general_max_slow_processes = "10"
+        self.general_tool_duplication = "askMe" # options: append, skip, newTab, askMe
 
         # brute
         self.brute_store_cleartext_passwords_on_exit = "True"
@@ -430,6 +432,7 @@ class Settings():
                 self.general_enable_scheduler_on_import = self.generalSettings['enable-scheduler-on-import']
                 self.general_max_fast_processes = self.generalSettings['max-fast-processes']
                 self.general_max_slow_processes = self.generalSettings['max-slow-processes']
+                self.general_tool_duplication = self.generalSettings['tool-duplication']
 
                 # brute
                 self.brute_store_cleartext_passwords_on_exit = self.bruteSettings['store-cleartext-passwords-on-exit']
