@@ -29,7 +29,7 @@ class CVERepository:
     def getCVEsByHostIP(self, hostIP):
         session = self.dbAdapter.session
         # Cast severity to REAL (float) and order by it descending (highest CVSS first)
-        query = text('SELECT cves.name, CAST(cves.severity AS REAL) as severity, cves.product, cves.version, cves.url, cves.source, '
+        query = text('SELECT DISTINCT cves.name, CAST(cves.severity AS REAL) as severity, cves.product, cves.version, cves.url, cves.source, '
                      'cves.exploitId, cves.exploit, cves.exploitUrl FROM cve AS cves '
                      'INNER JOIN hostObj AS hosts ON hosts.id = cves.hostId '
                      'WHERE hosts.ip = :hostIP '
@@ -40,3 +40,4 @@ class CVERepository:
         cves = [dict(zip(keys, row)) for row in rows]
         session.close()
         return cves
+
