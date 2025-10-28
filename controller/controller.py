@@ -1481,10 +1481,10 @@ class Controller:
         except Exception:
             maxconcurrentscans = 3
         
-        log.info(f"[Queue] maximum concurrent scans: {str(maxconcurrentscans)}")
-        log.info(f"[Queue] maximum concurrent processes: {str(self.settings.general_max_fast_processes)}")
-        log.info(f"[Queue] processes running: {str(self.fastProcessesRunning)}")
-        log.info(f"[Queue] processes waiting: {str(self.fastProcessQueue.qsize())}")
+        log.debug(f"[Queue] maximum concurrent scans: {str(maxconcurrentscans)}")
+        log.debug(f"[Queue] maximum concurrent processes: {str(self.settings.general_max_fast_processes)}")
+        log.debug(f"[Queue] processes running: {str(self.fastProcessesRunning)}")
+        log.debug(f"[Queue] processes waiting: {str(self.fastProcessQueue.qsize())}")
         
         from PyQt6.QtCore import QProcess
         
@@ -1496,72 +1496,72 @@ class Controller:
                runningscans < maxconcurrentscans) or self.fastProcessQueue.empty():
             
             if self.fastProcessQueue.empty():
-                log.info("[Queue] Queue is empty, breaking")
+                log.debug("[Queue] Queue is empty, breaking")
                 break
             
             nextproc = self.fastProcessQueue.get()
-            log.info(f"[Queue] Got process from queue: {nextproc.name if hasattr(nextproc, 'name') else 'unknown'}")
+            log.debug(f"[Queue] Got process from queue: {nextproc.name if hasattr(nextproc, 'name') else 'unknown'}")
             
             # Check if it's a scan process
             isscan = hasattr(nextproc, 'name') and 'nmap' in str(nextproc.name).lower()
             
             # Check if process was cancelled
             if self.logic.activeProject.repositoryContainer.processRepository.isCancelledProcess(str(nextproc.id)):
-                log.info("[Queue] Process was canceled, checking queue again..")
+                log.debug("[Queue] Process was canceled, checking queue again..")
                 continue
             
             # Check ACTUALLY running processes, not just queue status
             actuallyrunning = [p for p in self.processes if p.state() == QProcess.ProcessState.Running]
-            log.info(f"[Queue] Actually running processes: {len(actuallyrunning)}")
+            log.debug(f"[Queue] Actually running processes: {len(actuallyrunning)}")
             
             if len(actuallyrunning) == 0 and self.fastProcessQueue.empty():
                 # Only stop timer if BOTH queue empty AND no processes actively running
                 if self.processTableUiUpdateTimer.isActive():
-                    log.info("Halting process panel update timer as all processes are finished.")
+                    log.debug("Halting process panel update timer as all processes are finished.")
                     self.processTableUiUpdateTimer.stop()
             elif len(actuallyrunning) > 0:
                 # Ensure timer is running if we have active processes
                 if not self.processTableUiUpdateTimer.isActive():
-                    log.info(f"Restarting process panel update timer - {len(actuallyrunning)} processes still running")
+                    log.debug(f"Restarting process panel update timer - {len(actuallyrunning)} processes still running")
                     self.processTableUiUpdateTimer.start(1000)
             
             # Start the process
             if not self.logic.activeProject.repositoryContainer.processRepository.isCancelledProcess(str(nextproc.id)):
-                log.info("Running " + str(nextproc.command))
+                log.debug("Running " + str(nextproc.command))
                 
                 # CRITICAL FIX: Don't clear if we're in append mode!
-                log.info(f"[Queue] Checking display for append mode...")
-                log.info(f"[Queue] Display object: {nextproc.display}")
-                log.info(f"[Queue] Display type: {type(nextproc.display)}")
+                log.debug(f"[Queue] Checking display for append mode...")
+                log.debug(f"[Queue] Display object: {nextproc.display}")
+                log.debug(f"[Queue] Display type: {type(nextproc.display)}")
                 
                 is_appending = nextproc.display.property("is_appending")
-                log.info(f"[Queue] is_appending property value: {is_appending} (type: {type(is_appending)})")
+                log.debug(f"[Queue] is_appending property value: {is_appending} (type: {type(is_appending)})")
                 
                 if is_appending:
                     # Get current content length before NOT clearing
                     current_content = nextproc.display.toPlainText()
-                    log.info(f"[Queue] *** APPEND MODE ACTIVE *** - NOT clearing display")
-                    log.info(f"[Queue] Current display content length: {len(current_content)} chars")
-                    log.info(f"[Queue] First 200 chars of content: {current_content[:200]}")
+                    log.debug(f"[Queue] *** APPEND MODE ACTIVE *** - NOT clearing display")
+                    log.debug(f"[Queue] Current display content length: {len(current_content)} chars")
+                    log.debug(f"[Queue] First 200 chars of content: {current_content[:200]}")
                 else:
-                    log.info(f"[Queue] NORMAL MODE - clearing display")
-                    log.info(f"[Queue] Display content before clear: {len(nextproc.display.toPlainText())} chars")
+                    log.debug(f"[Queue] NORMAL MODE - clearing display")
+                    log.debug(f"[Queue] Display content before clear: {len(nextproc.display.toPlainText())} chars")
                     nextproc.display.clear()
-                    log.info(f"[Queue] Display cleared")
+                    log.debug(f"[Queue] Display cleared")
                 
                 self.processes.append(nextproc)
                 self.fastProcessesRunning += 1
                 if isscan:
                     runningscans += 1
                 
-                log.info(f"[Queue] About to start process...")
+                log.debug(f"[Queue] About to start process...")
                 # Actually start the process
                 nextproc.waitForFinished(10)
                 formattedCommand = formatCommandQProcess(nextproc.command)
-                log.info(f"[Queue] Formatted command: {formattedCommand[0]}, args: {str(formattedCommand[1])[:100]}")
+                log.debug(f"[Queue] Formatted command: {formattedCommand[0]}, args: {str(formattedCommand[1])[:100]}")
                 
                 nextproc.start(formattedCommand[0], formattedCommand[1])
-                log.info(f"[Queue] Process started with PID: {getPid(nextproc)}")
+                log.debug(f"[Queue] Process started with PID: {getPid(nextproc)}")
                 
                 self.logic.activeProject.repositoryContainer.processRepository.storeProcessRunningStatus(
                     nextproc.id, getPid(nextproc))
@@ -1569,14 +1569,14 @@ class Controller:
                 # Debug: Verify content is still there after process start
                 if is_appending:
                     after_start_content = nextproc.display.toPlainText()
-                    log.info(f"[Queue] After process start, display has {len(after_start_content)} chars")
+                    log.debug(f"[Queue] After process start, display has {len(after_start_content)} chars")
                     if len(after_start_content) == 0:
                         log.error(f"[Queue] ERROR: Display was cleared despite append mode!")
                     else:
-                        log.info(f"[Queue] SUCCESS: Display content preserved in append mode")
+                        log.debug(f"[Queue] SUCCESS: Display content preserved in append mode")
             else:
                 # Put back and break
-                log.info("[Queue] Process cancelled, putting back in queue")
+                log.debug("[Queue] Process cancelled, putting back in queue")
                 self.fastProcessQueue.put(nextproc)
                 break
 
@@ -2296,12 +2296,12 @@ class Controller:
                             
                             # Check for duplicate tab if textbox not set
                             if textbox is None:
-                                log.info(f"[runToolsFor] Textbox is None, checking for duplicate tab")
+                                log.debug(f"[runToolsFor] Textbox is None, checking for duplicate tab")
                                 existing_tab_index, existing_run_num = self.findExistingTabIndex(
                                     self.view.ui.ServicesTabWidget, 
                                     tabTitle
                                 )
-                                log.info(f"[runToolsFor] Duplicate check: index={existing_tab_index}, run={existing_run_num}")
+                                log.debug(f"[runToolsFor] Duplicate check: index={existing_tab_index}, run={existing_run_num}")
                                 
                                 if existing_tab_index is not None:
                                     action = self.promptDuplicateToolAction(tool[0], tabTitle)
@@ -2337,7 +2337,7 @@ class Controller:
                                             # Set the combined content
                                             textbox.setHtml(combined_html)
                                             
-                                            log.info(f"[APPEND MODE] Added separator, content now: {len(textbox.toPlainText())} chars")
+                                            log.debug(f"[APPEND MODE] Added separator, content now: {len(textbox.toPlainText())} chars")
                                             
                                             # NOW mark it for append mode (so checkProcessQueue won't clear it)
                                             textbox.setProperty("is_appending", True)
@@ -2366,7 +2366,7 @@ class Controller:
                                             textbox.append(f"[Run #{new_run_number} - {getTimestamp()}]")
                                             textbox.append("="*80 + "\n")
                                 else:
-                                    log.info(f"[runToolsFor] No existing tab, creating new")
+                                    log.debug(f"[runToolsFor] No existing tab, creating new")
                                     tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
                                     textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"))
                             
@@ -2380,8 +2380,8 @@ class Controller:
                             command = str(a[2])
                             command = command.replace('[IP]', ip).replace('[PORT]', port).replace('[OUTPUT]', outputfile)
                             
-                            log.info(f"[runToolsFor] About to call runCommand")
-                            log.info(f"[runToolsFor]   Textbox: {textbox}")
+                            log.debug(f"[runToolsFor] About to call runCommand")
+                            log.debug(f"[runToolsFor]   Textbox: {textbox}")
                             log.info(f"[runToolsFor]   Command: {command}")
                             
                             # Run command
@@ -2390,7 +2390,7 @@ class Controller:
                                             outputfile,
                                             textbox)
                             
-                            log.info(f"[runToolsFor] runCommand called successfully")
+                            log.debug(f"[runToolsFor] runCommand called successfully")
                             break
 
 
@@ -3625,11 +3625,11 @@ class Controller:
         - 'askMe': Show dialog to ask user (default)
         """
         # DEBUG: Log ALL settings attributes
-        log.info(f"[promptDuplicateToolAction] DEBUG: All settings attributes: {dir(self.settings)}")
+        log.debug(f"[promptDuplicateToolAction] DEBUG: All settings attributes: {dir(self.settings)}")
         
         # DEBUG: Log attributes that contain 'tool' or 'dup'
         tool_attrs = [attr for attr in dir(self.settings) if 'tool' in attr.lower() or 'dup' in attr.lower()]
-        log.info(f"[promptDuplicateToolAction] DEBUG: Attributes with 'tool' or 'dup': {tool_attrs}")
+        log.debug(f"[promptDuplicateToolAction] DEBUG: Attributes with 'tool' or 'dup': {tool_attrs}")
         
         # Check the setting - try multiple possible attribute names
         duplication_mode = None
@@ -3647,31 +3647,31 @@ class Controller:
         for attr_name in possible_names:
             if hasattr(self.settings, attr_name):
                 duplication_mode = getattr(self.settings, attr_name, 'askMe')
-                log.info(f"[promptDuplicateToolAction] Found setting attribute '{attr_name}': '{duplication_mode}'")
+                log.debug(f"[promptDuplicateToolAction] Found setting attribute '{attr_name}': '{duplication_mode}'")
                 break
         
         # Fallback to askMe if no setting found
         if duplication_mode is None:
             duplication_mode = 'askMe'
-            log.info(f"[promptDuplicateToolAction] No setting found, defaulting to 'askMe'")
+            log.debug(f"[promptDuplicateToolAction] No setting found, defaulting to 'askMe'")
         
         # Normalize the mode value (handle case variations)
         duplication_mode = str(duplication_mode).strip()
-        log.info(f"[promptDuplicateToolAction] Final duplication mode: '{duplication_mode}'")
+        log.debug(f"[promptDuplicateToolAction] Final duplication mode: '{duplication_mode}'")
         
         # If mode is set to a specific action, return directly without showing dialog
         if duplication_mode.lower() == 'append':
-            log.info(f"[promptDuplicateToolAction] Auto-returning 'append' based on setting")
+            log.debug(f"[promptDuplicateToolAction] Auto-returning 'append' based on setting")
             return 'append'
         elif duplication_mode.lower() == 'newtab':
-            log.info(f"[promptDuplicateToolAction] Auto-returning 'new_tab' based on setting")
+            log.debug(f"[promptDuplicateToolAction] Auto-returning 'new_tab' based on setting")
             return 'new_tab'
         elif duplication_mode.lower() == 'skip':
-            log.info(f"[promptDuplicateToolAction] Auto-returning 'skip' based on setting")
+            log.debug(f"[promptDuplicateToolAction] Auto-returning 'skip' based on setting")
             return 'skip'
         
         # Otherwise show the dialog (askMe mode or any other value)
-        log.info(f"[promptDuplicateToolAction] Mode is '{duplication_mode}', showing dialog for user choice")
+        log.debug(f"[promptDuplicateToolAction] Mode is '{duplication_mode}', showing dialog for user choice")
         
         from PyQt6.QtWidgets import QMessageBox
         
@@ -3692,16 +3692,16 @@ class Controller:
         clickedButton = msg.clickedButton()
         
         if clickedButton == appendBtn:
-            log.info(f"[promptDuplicateToolAction] User chose: APPEND")
+            log.debug(f"[promptDuplicateToolAction] User chose: APPEND")
             return 'append'
         elif clickedButton == newTabBtn:
-            log.info(f"[promptDuplicateToolAction] User chose: NEW TAB")
+            log.debug(f"[promptDuplicateToolAction] User chose: NEW TAB")
             return 'new_tab'
         elif clickedButton == skipBtn:
-            log.info(f"[promptDuplicateToolAction] User chose: SKIP")
+            log.debug(f"[promptDuplicateToolAction] User chose: SKIP")
             return 'skip'
         else:
-            log.info(f"[promptDuplicateToolAction] User chose: CANCEL")
+            log.debug(f"[promptDuplicateToolAction] User chose: CANCEL")
             return 'cancel'
 
 

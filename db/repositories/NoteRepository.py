@@ -106,7 +106,7 @@ class NoteRepository:
 
             # Commit the transaction
             session.commit()
-            self.log.info(f"✓ Successfully committed notes for hostId={hostId}, length={len(notes)}")
+            self.log.debug(f"✓ Successfully committed notes for hostId={hostId}, length={len(notes)}")
 
         except Exception as e:
             self.log.error(f"✗ Error storing notes for hostId {hostId}: {e}")
