@@ -227,7 +227,7 @@ class ProcessRepository:
                     unicode(proc.command), proc.startTime, "", str(proc.outputfile),
                     'Waiting', [p_output], 100, 0)
 
-        self.log.info(f"Adding process: {p}")
+        self.log.debug(f"Adding process: {p}")
         session.add(p)
         session.commit()
         proc.id = p.id
@@ -244,7 +244,7 @@ class ProcessRepository:
 
         proc_output = session.query(process_output).filter_by(id=process_id).first()
         if proc_output:
-            self.log.info("Storing process output into db: {0}".format(str(proc_output)))
+            self.log.debug("Storing process output into db: {0}".format(str(proc_output)))
             proc_output.output = unicode(output)
             session.add(proc_output)
 

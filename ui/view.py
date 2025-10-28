@@ -2292,68 +2292,68 @@ class View(QtCore.QObject):
 
         ENHANCED: Added comprehensive logging to debug the save/load cycle.
         """
-        log.info("="*80)
-        log.info(f"updateNotesView START - hostid: {hostid} (type: {type(hostid)})")
-        log.info("="*80)
+        log.debug("="*80)
+        log.debug(f"updateNotesView START - hostid: {hostid} (type: {type(hostid)})")
+        log.debug("="*80)
 
         self.viewState.lastHostIdClicked = str(hostid)
-        log.info(f"Set lastHostIdClicked = '{self.viewState.lastHostIdClicked}'")
+        log.debug(f"Set lastHostIdClicked = '{self.viewState.lastHostIdClicked}'")
 
         # Fetch note from database
-        log.info(f"Calling controller.getNoteFromDB({hostid})...")
+        log.debug(f"Calling controller.getNoteFromDB({hostid})...")
         note = self.controller.getNoteFromDB(hostid)
 
         if note:
-            log.info(f"✓ getNoteFromDB returned note object")
-            log.info(f"  - Note text length: {len(note.text)} chars")
-            log.info(f"  - First 100 chars: {repr(note.text[:100])}")
-            log.info(f"  - Contains HTML tags: {'<' in note.text and '>' in note.text}")
+            log.debug(f"✓ getNoteFromDB returned note object")
+            log.debug(f"  - Note text length: {len(note.text)} chars")
+            log.debug(f"  - First 100 chars: {repr(note.text[:100])}")
+            log.debug(f"  - Contains HTML tags: {'<' in note.text and '>' in note.text}")
         else:
-            log.info(f"✗ getNoteFromDB returned None - no note in database for hostid {hostid}")
+            log.debug(f"✗ getNoteFromDB returned None - no note in database for hostid {hostid}")
 
         saveddirty = self.viewState.dirty
-        log.info(f"Current dirty state: {saveddirty}")
+        log.debug(f"Current dirty state: {saveddirty}")
 
         # Store current content before clearing
         old_content = self.ui.NotesTextEdit.toPlainText()
-        log.info(f"Current UI content length before clear: {len(old_content)} chars")
+        log.debug(f"Current UI content length before clear: {len(old_content)} chars")
 
         # Clear the text edit
-        log.info("Calling NotesTextEdit.clear()...")
+        log.debug("Calling NotesTextEdit.clear()...")
         self.ui.NotesTextEdit.clear()
-        log.info(f"After clear, UI content length: {len(self.ui.NotesTextEdit.toPlainText())} chars")
+        log.debug(f"After clear, UI content length: {len(self.ui.NotesTextEdit.toPlainText())} chars")
 
         new_content = ""
         if note:
             if '<' in note.text and '>' in note.text:
-                log.info("Note contains HTML tags, using setHtml()")
+                log.debug("Note contains HTML tags, using setHtml()")
                 self.ui.NotesTextEdit.setHtml(note.text)
                 new_content = self.ui.NotesTextEdit.toPlainText()
-                log.info(f"After setHtml(), plain text length: {len(new_content)} chars")
+                log.debug(f"After setHtml(), plain text length: {len(new_content)} chars")
             else:
-                log.info("Note is plain text, using insertPlainText()")
+                log.debug("Note is plain text, using insertPlainText()")
                 self.ui.NotesTextEdit.insertPlainText(note.text)
                 new_content = note.text
-                log.info(f"After insertPlainText(), length: {len(new_content)} chars")
+                log.debug(f"After insertPlainText(), length: {len(new_content)} chars")
         else:
-            log.info("No note to display - UI remains empty")
+            log.debug("No note to display - UI remains empty")
 
         if saveddirty == False:
-            log.info("Restoring dirty=False state")
+            log.debug("Restoring dirty=False state")
             self.setDirty(False)
 
         # Only highlight if content actually changed (new content added)
         # Don't highlight when just switching between hosts
         if new_content and new_content.strip() != old_content.strip():
-            log.info(f"Content changed (old={len(old_content.strip())}, new={len(new_content.strip())}), highlighting Notes tab")
+            log.debug(f"Content changed (old={len(old_content.strip())}, new={len(new_content.strip())}), highlighting Notes tab")
             self.highlightTab('Notes')
         else:
-            log.info("Content unchanged or empty, NOT highlighting Notes tab")
+            log.debug("Content unchanged or empty, NOT highlighting Notes tab")
 
         final_ui_length = len(self.ui.NotesTextEdit.toPlainText())
-        log.info("="*80)
-        log.info(f"updateNotesView END - Final UI content length: {final_ui_length} chars")
-        log.info("="*80)
+        log.debug("="*80)
+        log.debug(f"updateNotesView END - Final UI content length: {final_ui_length} chars")
+        log.debug("="*80)
 
 
 
