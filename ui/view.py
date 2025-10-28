@@ -2141,7 +2141,6 @@ class View(QtCore.QObject):
         self.ui.ServicesTableView.horizontalHeader().resizeSection(1,65) # resize port
         self.ui.ServicesTableView.horizontalHeader().resizeSection(3,100) # resize protocol
         self.PortsByServiceTableModel.sort(0, Qt.SortOrder.DescendingOrder) # sort by IP by default (override default)
-
     def updateInformationView(self, hostIP):
         log.debug("=" * 60)
         log.debug("updateInformationView START")
@@ -2168,6 +2167,10 @@ class View(QtCore.QObject):
                 else:
                     counterFiltered = 65535 - counterOpen - counterClosed
                 
+                # Build new information text for comparison
+                new_info_text = self.buildInformationText(host, counterOpen, counterClosed, counterFiltered)
+                previous_info = self.previous_data_counts.get(f'{hostIP}_information', '')
+                
                 log.debug(f"  Updating widget with: status={host.status}, open={counterOpen}, closed={counterClosed}, filtered={counterFiltered}")
                 self.hostInfoWidget.updateFields(
                     status=host.status, openPorts=counterOpen, closedPorts=counterClosed, filteredPorts=counterFiltered,
@@ -2176,6 +2179,12 @@ class View(QtCore.QObject):
                     countryCode=host.countryCode, city=host.city, latitude=host.latitude, longitude=host.longitude
                 )
                 log.debug(f"  Widget updated successfully with host data")
+                
+                # ONLY highlight if information has CHANGED
+                if new_info_text != previous_info and new_info_text.strip():
+                    log.debug(f"  *** INFORMATION CHANGED - Calling highlightTab('Information') ***")
+                    self.highlightTab('Information')
+                self.previous_data_counts[f'{hostIP}_information'] = new_info_text
             else:
                 # Host doesn't exist in database - clear the widget
                 log.debug(f"  Host DOES NOT EXIST in database - clearing Information tab")
