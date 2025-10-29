@@ -138,8 +138,8 @@ class View(QtCore.QObject):
 
     def preserveFixedTabColors(self):
         """Preserve/restore the orange color for unread fixed tabs"""
-        log.info("preserveFixedTabColors START")
-        log.info(f"  unread_tabs state: {self.unread_tabs}")
+        log.debug("preserveFixedTabColors START")
+        log.debug(f"  unread_tabs state: {self.unread_tabs}")
         
         tabwidget = self.ui.ServicesTabWidget
         tabbar = tabwidget.tabBar()
@@ -147,22 +147,22 @@ class View(QtCore.QObject):
         # Iterate through all tabs and reapply colors based on unread status
         for i in range(min(self.fixedTabsCount, tabwidget.count())):
             tab_name = tabwidget.tabText(i)
-            log.info(f"  Checking tab {i}: '{tab_name}'")
+            log.debug(f"  Checking tab {i}: '{tab_name}'")
             
             if tab_name in self.unread_tabs:
                 is_unread = self.unread_tabs[tab_name]
-                log.info(f"    - unread status: {is_unread}")
+                log.debug(f"    - unread status: {is_unread}")
                 
                 if is_unread:
                     # Tab is unread - set to orange
                     tabbar.setTabTextColor(i, QtGui.QColor("orange"))
-                    log.info(f"    - SET TO ORANGE")
+                    log.debug(f"    - SET TO ORANGE")
                 else:
                     # Tab is read - set to default
                     tabbar.setTabTextColor(i, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
-                    log.info(f"    - set to default (white)")
+                    log.debug(f"    - set to default (white)")
         
-        log.info("preserveFixedTabColors END")
+        log.debug("preserveFixedTabColors END")
 
 
 
@@ -172,20 +172,20 @@ class View(QtCore.QObject):
         """Reset tab color to default when viewed"""
         import traceback
         
-        log.info("="*80)
-        log.info(f"resetTabHighlight CALLED - tabindex={tabindex}")
+        log.debug("="*80)
+        log.debug(f"resetTabHighlight CALLED - tabindex={tabindex}")
         
         # Get caller information
         stack = traceback.extract_stack()
         if len(stack) >= 2:
             caller = stack[-2]
-            log.info(f"  Called from: {caller.filename}:{caller.lineno} in {caller.name}")
+            log.debug(f"  Called from: {caller.filename}:{caller.lineno} in {caller.name}")
         
-        log.info(f"  suppress_reset_highlight={getattr(self, 'suppress_reset_highlight', False)}")
+        log.debug(f"  suppress_reset_highlight={getattr(self, 'suppress_reset_highlight', False)}")
         
         if hasattr(self, 'suppress_reset_highlight') and self.suppress_reset_highlight:
-            log.info("  → SKIPPING reset (suppress flag is True)")
-            log.info("="*80)
+            log.debug("  → SKIPPING reset (suppress flag is True)")
+            log.debug("="*80)
             return
         
         tabwidget = self.ui.ServicesTabWidget
@@ -193,27 +193,27 @@ class View(QtCore.QObject):
         tabname = tabwidget.tabText(tabindex)
         current_color = tabbar.tabTextColor(tabindex)
         
-        log.info(f"  Tab name: '{tabname}'")
-        log.info(f"  Current color: {current_color.name()}")
-        log.info(f"  unread_tabs['{tabname}']: {self.unread_tabs.get(tabname, 'NOT FOUND')}")
-        log.info(f"  Full unread_tabs: {self.unread_tabs}")
+        log.debug(f"  Tab name: '{tabname}'")
+        log.debug(f"  Current color: {current_color.name()}")
+        log.debug(f"  unread_tabs['{tabname}']: {self.unread_tabs.get(tabname, 'NOT FOUND')}")
+        log.debug(f"  Full unread_tabs: {self.unread_tabs}")
         
         if tabname in self.unread_tabs and self.unread_tabs[tabname]:
             if tabname == "Information":
-                log.info("  → SKIPPING reset (Information tab, waiting for blinking)")
-                log.info("="*80)
+                log.debug("  → SKIPPING reset (Information tab, waiting for blinking)")
+                log.debug("="*80)
                 return
             
-            log.info(f"  → RESETTING {tabname} to default color")
+            log.debug(f"  → RESETTING {tabname} to default color")
             self.unread_tabs[tabname] = False
             tabbar.setTabTextColor(tabindex, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
             new_color = tabbar.tabTextColor(tabindex)
-            log.info(f"  New color: {new_color.name()}")
-            log.info(f"  New unread_tabs: {self.unread_tabs}")
+            log.debug(f"  New color: {new_color.name()}")
+            log.debug(f"  New unread_tabs: {self.unread_tabs}")
         else:
-            log.info(f"  → NOT resetting (tab not unread or not in dictionary)")
+            log.debug(f"  → NOT resetting (tab not unread or not in dictionary)")
         
-        log.info("="*80)
+        log.debug("="*80)
 
 
 
