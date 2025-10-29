@@ -94,24 +94,24 @@ class View(QtCore.QObject):
         """
         Highlight a tab with orange text when new data is added
         """
-        log.info("========== highlightTab START ==========")
-        log.info(f"highlightTab called for {tabname}, app_initialized={self.app_initialized}")
-        log.info(f"highlightTab - BEFORE: unread_tabs = {self.unread_tabs}")
+        log.debug("========== highlightTab START ==========")
+        log.debug(f"highlightTab called for {tabname}, app_initialized={self.app_initialized}")
+        log.debug(f"highlightTab - BEFORE: unread_tabs = {self.unread_tabs}")
         
         if not self.app_initialized:
-            log.info(f"Not highlighting {tabname} - app not initialized yet")
+            log.debug(f"Not highlighting {tabname} - app not initialized yet")
             return
             
         tabwidget = self.ui.ServicesTabWidget
         tabbar = tabwidget.tabBar()
         
-        log.info(f"highlightTab - ServicesTabWidget count = {tabwidget.count()}")
-        log.info(f"highlightTab - Current tabs: {[tabwidget.tabText(i) for i in range(tabwidget.count())]}")
+        log.debug(f"highlightTab - ServicesTabWidget count = {tabwidget.count()}")
+        log.debug(f"highlightTab - Current tabs: {[tabwidget.tabText(i) for i in range(tabwidget.count())]}")
         
         # Always mark fixed tabs as unread in the dictionary
         # This preserves the state even if the tab isn't currently visible (e.g., when on Tools tab)
         if tabname in ['Services', 'Scripts', 'Information', 'CVEs', 'Notes']:
-            log.info(f"highlightTab - Marking {tabname} as unread in dictionary")
+            log.debug(f"highlightTab - Marking {tabname} as unread in dictionary")
             self.unread_tabs[tabname] = True
         
         # Try to find and color the tab if it's currently visible in the widget
@@ -119,19 +119,19 @@ class View(QtCore.QObject):
         for i in range(tabwidget.count()):
             if tabwidget.tabText(i) == tabname:
                 tab_found = True
-                log.info(f"Found {tabname} at index {i}, currently unread={self.unread_tabs.get(tabname, False)}")
+                log.debug(f"Found {tabname} at index {i}, currently unread={self.unread_tabs.get(tabname, False)}")
                 
                 # Set the visual orange color on the tab
                 tabbar.setTabTextColor(i, QtGui.QColor('orange'))
-                log.info(f"Set {tabname} tab to ORANGE at index {i}, visible={tabwidget.isVisible()}")
+                log.debug(f"Set {tabname} tab to ORANGE at index {i}, visible={tabwidget.isVisible()}")
                 break
         
         if not tab_found:
-            log.info(f"Tab {tabname} not currently visible in ServicesTabWidget (probably on Tools/OS view)")
-            log.info("State saved in unread_tabs for when tab is restored")
+            log.debug(f"Tab {tabname} not currently visible in ServicesTabWidget (probably on Tools/OS view)")
+            log.debug("State saved in unread_tabs for when tab is restored")
         
-        log.info(f"highlightTab - AFTER: unread_tabs = {self.unread_tabs}")
-        log.info("========== highlightTab END ==========\n")
+        log.debug(f"highlightTab - AFTER: unread_tabs = {self.unread_tabs}")
+        log.debug("========== highlightTab END ==========\n")
 
 
 
@@ -1395,34 +1395,34 @@ class View(QtCore.QObject):
         self.ui.HostsTabWidget.currentChanged.connect(self.switchTabClick)
 
     def switchTabClick(self):
-        log.info("========== switchTabClick START ==========")
+        log.debug("========== switchTabClick START ==========")
         if self.ServiceNamesTableModel:
             selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
-            log.info(f"switchTabClick - selectedTab = '{selectedTab}'")
-            log.info(f"switchTabClick - BEFORE: unread_tabs = {self.unread_tabs}")
+            log.debug(f"switchTabClick - selectedTab = '{selectedTab}'")
+            log.debug(f"switchTabClick - BEFORE: unread_tabs = {self.unread_tabs}")
             
             # Save notes when LEAVING the Hosts tab
             if selectedTab != 'Hosts' and self.viewState.lastHostIdClicked:
-                log.info("========== switchTabClick - SAVING NOTES (leaving Hosts tab) ==========")
+                log.debug("========== switchTabClick - SAVING NOTES (leaving Hosts tab) ==========")
                 notes_html = self.ui.NotesTextEdit.toHtml()
-                log.info(f"Saving notes for host {self.viewState.lastHostIdClicked}, HTML length: {len(notes_html)}")
+                log.debug(f"Saving notes for host {self.viewState.lastHostIdClicked}, HTML length: {len(notes_html)}")
                 self.controller.saveProject(self.viewState.lastHostIdClicked, notes_html)
-                log.info("Notes saved successfully")
+                log.debug("Notes saved successfully")
             
             if selectedTab == 'Hosts':
-                log.info("switchTabClick - Entering Hosts tab logic")
-                log.info("switchTabClick - About to insert fixed tabs back")
+                log.debug("switchTabClick - Entering Hosts tab logic")
+                log.debug("switchTabClick - About to insert fixed tabs back")
                 
                 # Save current tab index BEFORE operations
                 saved_tab_index = self.ui.ServicesTabWidget.currentIndex()
-                log.info(f"switchTabClick - Saved tab index = {saved_tab_index}")
+                log.debug(f"switchTabClick - Saved tab index = {saved_tab_index}")
                 
                 # Set flag to indicate we're in a dynamic tab redraw
                 self.in_dynamic_tab_redraw = (saved_tab_index >= self.fixedTabsCount)
-                log.info(f"switchTabClick - in_dynamic_tab_redraw = {self.in_dynamic_tab_redraw} (user was on dynamic tab: {saved_tab_index >= self.fixedTabsCount})")
+                log.debug(f"switchTabClick - in_dynamic_tab_redraw = {self.in_dynamic_tab_redraw} (user was on dynamic tab: {saved_tab_index >= self.fixedTabsCount})")
                 
                 # Set flag to prevent resetTabHighlight from resetting colors
-                log.info("switchTabClick - Setting suppress_reset_highlight flag")
+                log.debug("switchTabClick - Setting suppress_reset_highlight flag")
                 self.suppress_reset_highlight = True
 
                 
@@ -1431,8 +1431,8 @@ class View(QtCore.QObject):
                 self.ui.ServicesTabWidget.insertTab(3,self.ui.CvesRightTab,("CVEs"))
                 self.ui.ServicesTabWidget.insertTab(4,self.ui.NotesTab,("Notes"))
                 
-                log.info("switchTabClick - Fixed tabs inserted")
-                log.info(f"switchTabClick - ServicesTabWidget count = {self.ui.ServicesTabWidget.count()}")
+                log.debug("switchTabClick - Fixed tabs inserted")
+                log.debug(f"switchTabClick - ServicesTabWidget count = {self.ui.ServicesTabWidget.count()}")
                 
                 self.ui.ServicesTabWidget.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
                 self.ui.ServicesTabWidget.tabBar().setTabButton(1, QTabBar.ButtonPosition.RightSide, None)
@@ -1440,30 +1440,30 @@ class View(QtCore.QObject):
                 self.ui.ServicesTabWidget.tabBar().setTabButton(3, QTabBar.ButtonPosition.RightSide, None)
                 self.ui.ServicesTabWidget.tabBar().setTabButton(4, QTabBar.ButtonPosition.RightSide, None)
                 
-                log.info("switchTabClick - About to call restoreToolTabWidget()")
+                log.debug("switchTabClick - About to call restoreToolTabWidget()")
                 self.restoreToolTabWidget()
-                log.info("switchTabClick - restoreToolTabWidget() completed")
+                log.debug("switchTabClick - restoreToolTabWidget() completed")
                 
                 # Always restore tool tabs for the current host BEFORE preserving colors
                 if self.viewState.ip_clicked:
-                    log.info(f"switchTabClick - Restoring tool tabs for host {self.viewState.ip_clicked}")
+                    log.debug(f"switchTabClick - Restoring tool tabs for host {self.viewState.ip_clicked}")
                     self.restoreToolTabsForHost(self.viewState.ip_clicked)
-                    log.info("switchTabClick - Tool tabs restored")
+                    log.debug("switchTabClick - Tool tabs restored")
                 
                 # Preserve colors while flag is set (AFTER all tabs are added)
-                log.info("switchTabClick - About to call preserveFixedTabColors()")
+                log.debug("switchTabClick - About to call preserveFixedTabColors()")
                 self.preserveFixedTabColors()
-                log.info("switchTabClick - preserveFixedTabColors() completed")
+                log.debug("switchTabClick - preserveFixedTabColors() completed")
                 
                 # Restore the previously selected tab (clamped to fixed tabs only)
                 if saved_tab_index >= self.fixedTabsCount:
                     saved_tab_index = 0  # Default to Services if was on a tool tab
                 
-                log.info(f"switchTabClick - Restoring ServicesTabWidget to index {saved_tab_index}")
+                log.debug(f"switchTabClick - Restoring ServicesTabWidget to index {saved_tab_index}")
                 self.ui.ServicesTabWidget.blockSignals(True)
                 self.ui.ServicesTabWidget.setCurrentIndex(saved_tab_index)
                 self.ui.ServicesTabWidget.blockSignals(False)
-                log.info(f"switchTabClick - ServicesTabWidget set to index {saved_tab_index}")
+                log.debug(f"switchTabClick - ServicesTabWidget set to index {saved_tab_index}")
                 
                 # Manually reset the now-visible tab since it's being viewed
                 # BUT skip Information tab - it has special blinking behavior
@@ -1471,43 +1471,43 @@ class View(QtCore.QObject):
                 # Only reset colors if user was ACTUALLY viewing a static tab (not defaulted during redraw)
                 original_tab_was_static = saved_tab_index < self.fixedTabsCount
                 current_tab_name = self.ui.ServicesTabWidget.tabText(saved_tab_index)
-                log.info(f"switchTabClick - Current tab: {current_tab_name}, original_tab_was_static: {original_tab_was_static}")
+                log.debug(f"switchTabClick - Current tab: {current_tab_name}, original_tab_was_static: {original_tab_was_static}")
                 
                 if original_tab_was_static:
                     # User was viewing this static tab before redraw - safe to reset if unread
                     if current_tab_name != "Information" and self.unread_tabs.get(current_tab_name, False):
-                        log.info(f"switchTabClick - Manually resetting {current_tab_name} tab to white (user was viewing it)")
+                        log.debug(f"switchTabClick - Manually resetting {current_tab_name} tab to white (user was viewing it)")
                         self.unread_tabs[current_tab_name] = False
                         self.ui.ServicesTabWidget.tabBar().setTabTextColor(saved_tab_index, 
                             self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
-                        log.info(f"switchTabClick - {current_tab_name} tab reset to white")
+                        log.debug(f"switchTabClick - {current_tab_name} tab reset to white")
                     elif current_tab_name == "Information" and self.unread_tabs.get(current_tab_name, False):
-                        log.info("switchTabClick - Information tab is visible, triggering blinking")
+                        log.debug("switchTabClick - Information tab is visible, triggering blinking")
                         self.hostInfoWidget.onTabViewed()
                         self.unread_tabs["Information"] = False
                         self.ui.ServicesTabWidget.tabBar().setTabTextColor(saved_tab_index, 
                             self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
-                        log.info("switchTabClick - Information tab reset to white with blinking")
+                        log.debug("switchTabClick - Information tab reset to white with blinking")
                     else:
-                        log.info(f"switchTabClick - NOT resetting {current_tab_name} (not unread)")
+                        log.debug(f"switchTabClick - NOT resetting {current_tab_name} (not unread)")
                 else:
-                    log.info(f"switchTabClick - User was on dynamic tab, NOT resetting {current_tab_name} during redraw")
+                    log.debug(f"switchTabClick - User was on dynamic tab, NOT resetting {current_tab_name} during redraw")
 
                 
                 if self.viewState.lazy_update_hosts == True:
-                    log.info("switchTabClick - lazy_update_hosts is True, calling updateHostsTableView()")
+                    log.debug("switchTabClick - lazy_update_hosts is True, calling updateHostsTableView()")
                     self.updateHostsTableView()
                 
-                log.info("switchTabClick - About to call hostTableClick()")
+                log.debug("switchTabClick - About to call hostTableClick()")
                 self.hostTableClick()
-                log.info("switchTabClick - hostTableClick() completed")
+                log.debug("switchTabClick - hostTableClick() completed")
                 
                 # Use QTimer to clear flag AND reapply colors after queued events process
-                log.info("switchTabClick - Scheduling flag clear and color reapply via QTimer.singleShot()")
+                log.debug("switchTabClick - Scheduling flag clear and color reapply via QTimer.singleShot()")
                 def clearFlagAndReapplyColors():
-                    log.info("_clearFlagAndReapplyColors - Clearing suppress_reset_highlight flag")
+                    log.debug("_clearFlagAndReapplyColors - Clearing suppress_reset_highlight flag")
                     self.suppress_reset_highlight = False
-                    log.info("_clearFlagAndReapplyColors - Reapplying fixed tab colors")
+                    log.debug("_clearFlagAndReapplyColors - Reapplying fixed tab colors")
                     self.preserveFixedTabColors()
                     
                     # Only reset visible tab if NOT in dynamic redraw
@@ -1515,23 +1515,23 @@ class View(QtCore.QObject):
                         # Reset visible tab again if needed (except Information)
                         visible_index = self.ui.ServicesTabWidget.currentIndex()
                         visible_name = self.ui.ServicesTabWidget.tabText(visible_index)
-                        log.info(f"_clearFlagAndReapplyColors - Not in redraw, checking visible tab: {visible_name} at index {visible_index}")
+                        log.debug(f"_clearFlagAndReapplyColors - Not in redraw, checking visible tab: {visible_name} at index {visible_index}")
                         if visible_name != 'Information' and visible_index < self.fixedTabsCount and self.unread_tabs.get(visible_name, False):
                             self.unread_tabs[visible_name] = False
                             self.ui.ServicesTabWidget.tabBar().setTabTextColor(visible_index, self.app.palette().color(QtGui.QPalette.ColorRole.WindowText))
-                            log.info(f"_clearFlagAndReapplyColors - Reset {visible_name} to white")
+                            log.debug(f"_clearFlagAndReapplyColors - Reset {visible_name} to white")
                     else:
-                        log.info("_clearFlagAndReapplyColors - In dynamic redraw, SKIPPING visible tab reset")
+                        log.debug("_clearFlagAndReapplyColors - In dynamic redraw, SKIPPING visible tab reset")
                     
                     # Clear the redraw flag
                     self.in_dynamic_tab_redraw = False
-                    log.info("_clearFlagAndReapplyColors - Cleared in_dynamic_tab_redraw flag")
+                    log.debug("_clearFlagAndReapplyColors - Cleared in_dynamic_tab_redraw flag")
 
                 
                 QtCore.QTimer.singleShot(100, clearFlagAndReapplyColors)
                 
             elif selectedTab == 'Services':
-                log.info("switchTabClick - Entering Services tab logic")
+                log.debug("switchTabClick - Entering Services tab logic")
                 self.ui.ServicesTabWidget.setCurrentIndex(0)
                 self.removeToolTabs(0)
                 self.controller.saveProject(self.viewState.lastHostIdClicked, self.ui.NotesTextEdit.toHtml())
@@ -1540,36 +1540,36 @@ class View(QtCore.QObject):
                     self.serviceNamesTableClick()
                     
             elif selectedTab == 'Tools':
-                log.info("switchTabClick - Entering Tools tab logic")
+                log.debug("switchTabClick - Entering Tools tab logic")
                 # Set flag when switching TO Tools to preserve unread_tabs state
-                log.info("switchTabClick - Setting suppress_reset_highlight flag for Tools tab")
+                log.debug("switchTabClick - Setting suppress_reset_highlight flag for Tools tab")
                 self.suppress_reset_highlight = True
                 
-                log.info("switchTabClick - About to call updateToolsTableView()")
+                log.debug("switchTabClick - About to call updateToolsTableView()")
                 self.updateToolsTableView()
-                log.info("switchTabClick - updateToolsTableView() completed")
+                log.debug("switchTabClick - updateToolsTableView() completed")
                 
                 # Clear flag with timer and reapply colors
                 def clearFlagForTools():
-                    log.info("clearFlagForTools - Clearing flag and reapplying colors")
+                    log.debug("clearFlagForTools - Clearing flag and reapplying colors")
                     self.suppress_reset_highlight = False
                     self.preserveFixedTabColors()
                 
                 QtCore.QTimer.singleShot(100, clearFlagForTools)
                 
             elif selectedTab == 'OS':
-                log.info("switchTabClick - Entering OS tab logic")
+                log.debug("switchTabClick - Entering OS tab logic")
                 if self.viewState.lazy_update_os or not self.OsListTableModel:
                     self.updateOsListView()
                 else:
                     self.updateOsHostsTableView(self.viewState.os_clicked or 'Unknown')
             
-            log.info("switchTabClick - About to call displayToolPanel()")
+            log.debug("switchTabClick - About to call displayToolPanel()")
             self.displayToolPanel(selectedTab == 'Tools')
-            log.info("switchTabClick - displayToolPanel() completed")
+            log.debug("switchTabClick - displayToolPanel() completed")
             
-            log.info(f"switchTabClick - AFTER: unread_tabs = {self.unread_tabs}")
-            log.info("========== switchTabClick END ==========\n")
+            log.debug(f"switchTabClick - AFTER: unread_tabs = {self.unread_tabs}")
+            log.debug("========== switchTabClick END ==========\n")
 
 
 
@@ -2437,36 +2437,82 @@ class View(QtCore.QObject):
         log.debug(f"updateNotesView END - Final UI content length: {final_ui_length} chars")
         log.debug("="*80)
 
-
-
-
-
-
     def updateToolHostsTableView(self, toolname):
-        headers = ["Progress", "Display", "Elapsed", "Percent Complete", "Pid", "Name", "Tool", "Host", "Port",
-                   "Protocol", "Command", "Start time", "End time", "OutputFile", "Output", "Status", "Closed"]
-        self.ToolHostsTableModel = ProcessesTableModel(self, self.controller.getHostsForTool(toolname), headers)
-        self.ui.ToolHostsTableView.setModel(self.ToolHostsTableModel)
-
-        for i in [0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15]:                         # hide some columns
-            self.ui.ToolHostsTableView.setColumnHidden(i, True)
+        import re
+        headers = ['Progress', 'Display', 'Elapsed', 'Percent Complete', 'Pid', 'Name', 'Tool', 'Host', 'Port', 'Protocol', 'Command', 'Start time', 'End time', 'OutputFile', 'Output', 'Status', 'Closed']
         
+        # Get all processes for this tool
+        processes = self.controller.getHostsForTool(toolname)
+        
+        # Collect process IDs that are in newTab mode (tabs with -N suffix)
+        # AND nmap stage processes (should never be deduplicated)
+        newtab_process_ids = set()
+        nmap_stage_process_ids = set()
+        
+        for ip, tabs in self.viewState.hostTabs.items():
+            for tab in tabs:
+                tab_name = str(tab.objectName())
+                db_id = tab.property('dbId')
+                
+                # Check for nmap stage tabs (e.g., "nmap stage 1", "nmap stage 2")
+                if 'stage' in tab_name.lower() and 'nmap' in tab_name.lower():
+                    if db_id:
+                        nmap_stage_process_ids.add(str(db_id))
+                else:
+                    # Check if tab name has -N pattern immediately before space and opening paren
+                    # Examples: "nikto-2 (80/tcp)" -> newTab, "nikto (80/tcp)" -> append
+                    pattern = r'-(\d+)\s+\('
+                    match = re.search(pattern, tab_name)
+                    if match:
+                        # This is a newTab tab, keep its process
+                        if db_id:
+                            newtab_process_ids.add(str(db_id))
+        
+        # Deduplicate: keep all nmap stages, keep all newTab processes, dedupe append processes
+        deduped = {}
+        final_processes = []
+        
+        for proc in processes:
+            proc_id = str(proc.get('id', ''))
+            key = (proc.get('hostIp', ''), proc.get('port', ''), proc.get('protocol', ''))
+            
+            # Always keep nmap stages
+            if proc_id in nmap_stage_process_ids:
+                final_processes.append(proc)
+            elif proc_id in newtab_process_ids:
+                # newTab mode: keep all processes
+                final_processes.append(proc)
+            else:
+                # append mode: keep only most recent per host/port/protocol
+                if key not in deduped or proc.get('startTime', '') > deduped[key].get('startTime', ''):
+                    deduped[key] = proc
+        
+        # Add deduplicated append-mode processes
+        final_processes.extend(deduped.values())
+        
+        self.ToolHostsTableModel = ProcessesTableModel(self, final_processes, headers)
+        self.ui.ToolHostsTableView.setModel(self.ToolHostsTableModel)
+        for i in [0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15]:  # hide some columns
+            self.ui.ToolHostsTableView.setColumnHidden(i, True)
         self.ui.ToolHostsTableView.horizontalHeader().resizeSection(7, 150)  # default width for Host column
-
-        ids = []                                                        # ensure that there is always something selected
-        for row in range(self.ToolHostsTableModel.rowCount("")):
+        
+        ids = []  # ensure that there is always something selected
+        for row in range(self.ToolHostsTableModel.rowCount(None)):
             ids.append(self.ToolHostsTableModel.getProcessIdForRow(row))
-
+        
         # the host we previously clicked may not be visible anymore (eg: due to filters)
         if self.viewState.tool_host_clicked in ids:
             row = self.ToolHostsTableModel.getRowForDBId(self.viewState.tool_host_clicked)
-
         else:
             row = 0  # or select the first row
-
+        
         if not row == None and self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex()) == 'Tools':
             self.ui.ToolHostsTableView.selectRow(row)
             self.toolHostsClick()
+
+
+
+
 
     def updateRightPanel(self, hostIP):
         """Update right panel with host information"""
