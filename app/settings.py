@@ -162,90 +162,97 @@ class AppSettings():
     #for matching settings
     def getMatchSettings(self):
         """
-        Parse match settings from config file into nested structure.
+        Load match settings from config file.
         """
-        # DEBUG: Read and display first 10 lines of config file
-        configpath = self.actions.fileName()
-        #print(f"DEBUG: Reading config file: {configpath}")
-        #try:
-        #    with open(configpath, 'r') as f:
-         #       lines = f.readlines()[:10]
-         #       print("DEBUG: First 10 lines of legion.conf:")
-         #       for i, line in enumerate(lines, 1):
-                    #print(f"  {i}: {line.rstrip()}")
-        #except Exception as e:
-            #print(f"DEBUG: Error reading config file: {e}")
-        
         self.actions.beginGroup('MatchSettings')
-        settings = dict()
+        matchsettings = {}
         keys = self.actions.childKeys()
         
-        #print(f"DEBUG getMatchSettings: Found {len(keys)} keys")
-        
-        for k in keys:
-            k = str(k)
+        for key in keys:
+            rawValue = self.actions.value(key)
             
-            # Split on first hyphen only
-            parts = k.split('-', 1)
-            if len(parts) != 2:
-                log.warning(f"Invalid match setting key format: {k}")
-                continue
+            # FIX: Handle case where QSettings returns a list instead of string
+            if isinstance(rawValue, list):
+                # QSettings returned a list - join it into a comma-separated string
+                rawValue = ','.join(str(item) for item in rawValue)
+            elif rawValue is None:
+                rawValue = ''
             
-            name, direction = parts
-            if direction not in ['positive', 'negative']:
-                log.warning(f"Invalid direction: {k}")
-                continue
-            
-            # Create nested structure
-            if name not in settings:
-                settings[name] = dict()
-            
-            # Get value with type hint to prevent list parsing
-            rawValue = self.actions.value(k, type=str)
-            
-            #print(f"DEBUG: Key={k}, rawValue (with type=str): {repr(rawValue)}")
-            
-            if rawValue:
-                # Strip outer quotes
+            # Now it's safe to call .strip() on the string
+            if isinstance(rawValue, str):
                 rawValue = rawValue.strip().strip('"').strip("'")
-                #print(f"DEBUG: After stripping quotes: {repr(rawValue)}")
+            else:
+                # Fallback: convert to string
+                rawValue = str(rawValue)
+            
+            # Parse the key (format: "scanner-name-positive" or "scanner-name-negative")
+            parts = key.rsplit('-', 1)  # Split from right, max 1 split
+            if len(parts) == 2:
+                scanner_name = parts[0]
+                direction = parts[1]  # 'positive' or 'negative'
                 
-                # Parse CSV
-                values = next(csv.reader([rawValue]))
-                #print(f"DEBUG: After csv.reader: {values}")
-                
-                # Clean up
-                values = [v.strip() for v in values]
-                values = [v for v in values if v]
-                
-                settings[name][direction] = values
-                #print(f"DEBUG: Parsed {name}.{direction} = {values}")
+                if direction in ['positive', 'negative']:
+                    if scanner_name not in matchsettings:
+                        matchsettings[scanner_name] = {'positive': [], 'negative': []}
+                    
+                    # Split by comma to get individual values
+                    if rawValue:
+                        values = [v.strip() for v in rawValue.split(',') if v.strip()]
+                        matchsettings[scanner_name][direction] = values
+                    else:
+                        matchsettings[scanner_name][direction] = []
         
         self.actions.endGroup()
-        
-        #print(f"DEBUG: Final matchSettings structure: {settings}")
-        return settings
+        return matchsettings
 
-
-
-
-
-
-   
+    
     def backupAndSave(self, newSettings, saveBackup=True):
-        # Backup and save
+        """
+        Save settings with comprehensive backup and repo synchronization.
+        
+        This version matches the ConfigDialog.save() behavior:
+        1. Backup to both local and repo locations
+        2. Write to working config
+        3. Sync to repo with timestamped versions
+        """
+        import shutil
+        
+        working_config = os.path.expanduser('~/.local/share/legion/legion.conf')
+        timestamp = getTimestamp()
+        
+        # Calculate repo root (parent of app/)
+        reporoot = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+        repo_config = os.path.join(reporoot, 'legion.conf')
+        
+        # Step 1: Create backups if requested
         if saveBackup:
             log.info('Backing up old settings and saving new settings...')
+            
+            # Backup to local directory (~/.local/share/legion/backup/)
             backup_dir = os.path.expanduser("~/.local/share/legion/backup/")
             if not os.path.exists(backup_dir):
                 os.makedirs(backup_dir, exist_ok=True)
-            os.rename(
-                os.path.expanduser('~/.local/share/legion/legion.conf'),
-                os.path.join(backup_dir, getTimestamp() + '-legion.conf')
-            )
+            
+            if os.path.exists(working_config):
+                try:
+                    local_backup = os.path.join(backup_dir, f'{timestamp}-legion.conf')
+                    shutil.copy(working_config, local_backup)
+                    log.info(f"Backed up old config to local: {local_backup}")
+                except Exception as e:
+                    log.warning(f"Could not backup to local directory: {e}")
+            
+            # Backup to repo root
+            if os.path.exists(working_config):
+                try:
+                    repo_backup = os.path.join(reporoot, f'{timestamp}-legion.conf.backup')
+                    shutil.copy(working_config, repo_backup)
+                    log.info(f"Backed up old config to repo: {repo_backup}")
+                except Exception as e:
+                    log.warning(f"Could not backup to repo: {e}")
         else:
             log.info('Saving config...')
 
+        # Step 2: Write settings using QSettings (structured save)
         # DON'T recreate QSettings - just clear and reuse existing one
         self.actions.clear()  # Clear all existing settings
 
@@ -333,7 +340,7 @@ class AppSettings():
         
         self.actions.endGroup()
 
-        # Wrap sync in try/except with timeout protection
+        # Step 3: Sync to disk with error handling
         try:
             log.info("Syncing settings to disk...")
             self.actions.sync()
@@ -342,10 +349,28 @@ class AppSettings():
             status = self.actions.status()
             if status != QtCore.QSettings.Status.NoError:
                 log.error(f"QSettings sync failed with status: {status}")
+                return
             else:
-                log.info("Settings synced successfully")
+                log.info("Settings synced successfully to working config")
         except Exception as e:
             log.error(f"Exception during settings sync: {e}")
+            return
+        
+        # Step 4: Copy timestamped version to repo root
+        try:
+            repo_timestamped = os.path.join(reporoot, f'{timestamp}-legion.conf')
+            shutil.copy(working_config, repo_timestamped)
+            log.info(f"Saved timestamped config to repo: {repo_timestamped}")
+        except Exception as e:
+            log.warning(f"Could not save timestamped config to repo: {e}")
+        
+        # Step 5: Update repo default config
+        try:
+            shutil.copy(working_config, repo_config)
+            log.info(f"Updated repo default config: {repo_config}")
+        except Exception as e:
+            log.warning(f"Could not update repo default config: {e}")
+
 
 
 # This class first sets all the default settings and
