@@ -344,14 +344,67 @@ class Ui_MainWindow(object):
         # Log Tab
         self.LogTab = QtWidgets.QWidget()
         self.LogTab.setObjectName(_fromUtf8("LogTab"))
-        self.LogTabLayout = QtWidgets.QHBoxLayout(self.LogTab)
+        self.LogTabLayout = QtWidgets.QVBoxLayout(self.LogTab)
         self.LogTabLayout.setObjectName(_fromUtf8("LogTabLayout"))
+        
+        # Add log level filter layout
+        self.LogFilterLayout = QtWidgets.QHBoxLayout()
+        self.LogFilterLayout.setObjectName(_fromUtf8("LogFilterLayout"))
+        
+        self.LogLevelFilterLabel = QtWidgets.QLabel(self.LogTab)
+        self.LogLevelFilterLabel.setObjectName(_fromUtf8("LogLevelFilterLabel"))
+        self.LogFilterLayout.addWidget(self.LogLevelFilterLabel)
+        
+        self.LogLevelFilterComboBox = QtWidgets.QComboBox(self.LogTab)
+        self.LogLevelFilterComboBox.setObjectName(_fromUtf8("LogLevelFilterComboBox"))
+        self.LogLevelFilterComboBox.addItem("")  # INFO
+        self.LogLevelFilterComboBox.addItem("")  # DEBUG
+        self.LogFilterLayout.addWidget(self.LogLevelFilterComboBox)
+        
+        self.LogFilterLayout.addStretch()
+        self.LogTabLayout.addLayout(self.LogFilterLayout)
+        
+        # Log output text view
         self.LogOutputTextView = QTextEditLogger(self.LogTab)
         self.LogOutputTextView.widget.setObjectName(_fromUtf8("LogOutputTextView"))
         self.LogOutputTextView.widget.setReadOnly(True)
         self.LogTabLayout.addWidget(self.LogOutputTextView.widget)
+        
         self.BottomTabWidget.addTab(self.LogTab, _fromUtf8(""))
         log.addHandler(self.LogOutputTextView)
+        
+        # LogFile Tab
+        self.LogFileTab = QtWidgets.QWidget()
+        self.LogFileTab.setObjectName(_fromUtf8("LogFileTab"))
+        self.LogFileTabLayout = QtWidgets.QVBoxLayout(self.LogFileTab)
+        self.LogFileTabLayout.setObjectName(_fromUtf8("LogFileTabLayout"))
+        
+        # Add log file level filter layout
+        self.LogFileFilterLayout = QtWidgets.QHBoxLayout()
+        self.LogFileFilterLayout.setObjectName(_fromUtf8("LogFileFilterLayout"))
+        
+        self.LogFileLevelFilterLabel = QtWidgets.QLabel(self.LogFileTab)
+        self.LogFileLevelFilterLabel.setObjectName(_fromUtf8("LogFileLevelFilterLabel"))
+        self.LogFileFilterLayout.addWidget(self.LogFileLevelFilterLabel)
+        
+        self.LogFileLevelFilterComboBox = QtWidgets.QComboBox(self.LogFileTab)
+        self.LogFileLevelFilterComboBox.setObjectName(_fromUtf8("LogFileLevelFilterComboBox"))
+        self.LogFileLevelFilterComboBox.addItem("")  # INFO
+        self.LogFileLevelFilterComboBox.addItem("")  # DEBUG
+        self.LogFileFilterLayout.addWidget(self.LogFileLevelFilterComboBox)
+        
+        self.LogFileFilterLayout.addStretch()
+        self.LogFileTabLayout.addLayout(self.LogFileFilterLayout)
+        
+        # Log file text view
+        self.LogFileTextView = QtWidgets.QTextEdit(self.LogFileTab)
+        self.LogFileTextView.setObjectName(_fromUtf8("LogFileTextView"))
+        self.LogFileTextView.setReadOnly(True)
+        self.LogFileTabLayout.addWidget(self.LogFileTextView)
+        
+        self.BottomTabWidget.addTab(self.LogFileTab, _fromUtf8(""))
+
+
 
         # Python Tab - Disabled until next release
         #self.PythonTab = QtWidgets.QWidget()
@@ -459,6 +512,8 @@ class Ui_MainWindow(object):
                                         QtWidgets.QApplication.translate("MainWindow", "Processes", None))
         self.BottomTabWidget.setTabText(self.BottomTabWidget.indexOf(self.LogTab),
                                         QtWidgets.QApplication.translate("MainWindow", "Log", None))
+        self.BottomTabWidget.setTabText(self.BottomTabWidget.indexOf(self.LogFileTab),
+                                        QtWidgets.QApplication.translate("MainWindow", "LogFile", None))
         # self.BottomTabWidget.setTabText(self.BottomTabWidget.indexOf(self.PythonTab),
         # QtWidgets.QApplication.translate("MainWindow", "Python", None)) - Disabled until future release
         self.ProcessStatusFilterLabel.setText(QtWidgets.QApplication.translate("MainWindow", "Filter:", None))
@@ -479,6 +534,12 @@ class Ui_MainWindow(object):
             4,
             QtWidgets.QApplication.translate("MainWindow", "Status: Queued", None)
         )
+        self.LogLevelFilterLabel.setText(QtWidgets.QApplication.translate("MainWindow", "Filter:", None))
+        self.LogLevelFilterComboBox.setItemText(0, QtWidgets.QApplication.translate("MainWindow", "INFO", None))
+        self.LogLevelFilterComboBox.setItemText(1, QtWidgets.QApplication.translate("MainWindow", "DEBUG", None))
+        self.LogFileLevelFilterLabel.setText(QtWidgets.QApplication.translate("MainWindow", "Filter:", None))
+        self.LogFileLevelFilterComboBox.setItemText(0, QtWidgets.QApplication.translate("MainWindow", "INFO", None))
+        self.LogFileLevelFilterComboBox.setItemText(1, QtWidgets.QApplication.translate("MainWindow", "DEBUG", None))
         self.menuFile.setTitle(QtWidgets.QApplication.translate("MainWindow", "File", None))
         #self.menuSettings.setTitle(QtWidgets.QApplication.translate("MainWindow", "Settings", None))
         self.menuHelp.setTitle(QtWidgets.QApplication.translate("MainWindow", "Help", None))
@@ -517,6 +578,8 @@ class Ui_MainWindow(object):
         self.actionHelp.setShortcut(QtWidgets.QApplication.translate("MainWindow", "F1", None))
         self.actionConfig.setText(QtWidgets.QApplication.translate("MainWindow", "Config", None))
         self.actionConfig.setShortcut(QtWidgets.QApplication.translate("MainWindow", "F2", None))
+
+
 
 
 class MatchHighlighter(QtGui.QSyntaxHighlighter):
