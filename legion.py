@@ -31,6 +31,10 @@ import sys
 import subprocess
 
 startupLog = getStartupLogger()
+startupLog.info("=" * 80)
+startupLog.info("LEGION APPLICATION STARTED")
+startupLog.info("=" * 80)
+
 
 def doPathSetup():
     import os
@@ -310,7 +314,10 @@ if __name__ == "__main__":
             return
         
         _cleanup_done = True
-        startupLog.info("=== GRACEFUL SHUTDOWN INITIATED ===")
+        startupLog.info("=" * 80)
+        startupLog.info("LEGION APPLICATION GRACEFUL SHUTDOWN INITIATED")
+        startupLog.info("=" * 80)
+
         
         try:
             # STEP 1: Stop all QTimers
@@ -404,8 +411,8 @@ if __name__ == "__main__":
                 startupLog.info("  Events processed")
             except Exception:
                 pass
-            
-            startupLog.info("=== GRACEFUL SHUTDOWN COMPLETED ===")
+
+
             
         except Exception as e:
             startupLog.error(f"ERROR during shutdown: {e}")
@@ -500,6 +507,8 @@ if __name__ == "__main__":
         except Exception as e:
             startupLog.warning(f"Error clearing references: {e}")
     
-    startupLog.info("Application shutdown complete - exiting cleanly")
+    startupLog.info("=" * 80)
+    startupLog.info("LEGION APPLICATION GRACEFUL SHUTDOWN COMPLETED")
+    startupLog.info("=" * 80)
 
     

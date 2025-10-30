@@ -90,6 +90,12 @@ class View(QtCore.QObject):
         # Track previous counts for each host to detect NEW data
         self.previous_data_counts = {}
 
+        # Add file watcher for log file
+        from PyQt6.QtCore import QFileSystemWatcher
+        self.log_file_watcher = QFileSystemWatcher()
+        self.current_log_file_level = 0  # Track current filter level (0=INFO, 1=DEBUG)
+
+
     def highlightTab(self, tabname):
         """
         Highlight a tab with orange text when new data is added
@@ -446,6 +452,8 @@ class View(QtCore.QObject):
         self.connectToolHostsClick()
         self.connectAdvancedFilterClick()
         self.connectAddHostClick()
+        self.connectLogLevelFilter() #for log view changes
+        self.connectLogFileLevelFilter()
         self.connectSwitchTabClick()                                    # to detect changing tabs (on left panel)
         self.connectSwitchMainTabClick()                                # to detect changing top level tabs
         self.connectTableDoubleClick()   # for double clicking on host (it redirects to the host view)
@@ -3848,6 +3856,86 @@ class View(QtCore.QObject):
         self.updateProcessesTableView()
         
         log.info(f"clearViewsForHost completed for {ip}")
+
+    def connectLogLevelFilter(self):
+        self.ui.LogLevelFilterComboBox.currentIndexChanged.connect(self.handleLogLevelChange)
+
+    def handleLogLevelChange(self, index):
+        """Handle log level filter changes"""
+        import logging
+        if index == 0:  # INFO
+            self.ui.LogOutputTextView.setLogLevel(logging.INFO)
+            log.info("Log level changed to INFO")
+        elif index == 1:  # DEBUG
+            self.ui.LogOutputTextView.setLogLevel(logging.DEBUG)
+            log.info("Log level changed to DEBUG")
+
+    def connectLogFileLevelFilter(self):
+        from PyQt6.QtCore import QFileSystemWatcher
+        import os
+        
+        self.ui.LogFileLevelFilterComboBox.currentIndexChanged.connect(self.handleLogFileLevelChange)
+        
+        # Set up file watcher for log file (initially disabled)
+        log_path = os.path.expanduser("~/.cache/legion/log/legion.log")
+        if os.path.exists(log_path):
+            self.log_file_watcher.addPath(log_path)
+            self.log_file_watcher.fileChanged.connect(self.reloadLogFile)
+        
+        # Connect to tab change events to enable/disable file watching
+        self.ui.BottomTabWidget.currentChanged.connect(self.handleBottomTabChange)
+
+    def handleBottomTabChange(self, index):
+        """Enable/disable log file watching based on which tab is active"""
+        # Check if LogFile tab is selected
+        if self.ui.BottomTabWidget.widget(index) == self.ui.LogFileTab:
+            # LogFile tab selected - reload file and enable watching
+            self.reloadLogFile()
+        # File watcher remains connected but we only reload when tab is active
+
+    def handleLogFileLevelChange(self, index):
+        """Handle log file level filter changes - reloads from file"""
+        self.current_log_file_level = index
+        # Only reload if LogFile tab is currently active
+        if self.ui.BottomTabWidget.currentWidget() == self.ui.LogFileTab:
+            self.reloadLogFile()
+
+    def reloadLogFile(self):
+        """Reload log file content based on current filter level"""
+        import os
+        
+        # Only reload if LogFile tab is currently active
+        if self.ui.BottomTabWidget.currentWidget() != self.ui.LogFileTab:
+            return
+        
+        # Clear the current display
+        self.ui.LogFileTextView.clear()
+        
+        # Reload logs from file at the selected level
+        log_path = os.path.expanduser("~/.cache/legion/log/legion.log")
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, 'r') as f:
+                    for line in f:
+                        # Parse log level from line
+                        if self.current_log_file_level == 0:  # INFO - show INFO, WARNING, ERROR, CRITICAL
+                            if ' - INFO - ' in line or ' - WARNING - ' in line or ' - ERROR - ' in line or ' - CRITICAL - ' in line:
+                                self.ui.LogFileTextView.append(line.rstrip())
+                        elif self.current_log_file_level == 1:  # DEBUG - show all levels
+                            self.ui.LogFileTextView.append(line.rstrip())
+                
+                # Auto-scroll to bottom
+                scrollbar = self.ui.LogFileTextView.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+            except Exception as e:
+                log.error(f"Error loading log file: {e}")
+        else:
+            self.ui.LogFileTextView.append("Log file not found: " + log_path)
+
+
+
+
+
 
 
 

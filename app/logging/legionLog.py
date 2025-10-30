@@ -57,18 +57,38 @@ def getDbLogger() -> Logger:
 def getOrCreateCachedLogger(logName: str, logPath: str, console: bool, cachedLogger):
     if cachedLogger:
         return cachedLogger
-
     from rich.logging import RichHandler
-
     import sys
     from rich.console import Console
-    logging.basicConfig(
-        level="INFO",
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(rich_tracebacks=True, console=Console(file=sys.stderr))]
-    )
-
-    log = logging.getLogger("rich")
-    log.setLevel(logging.INFO)
+    
+    # Create a logger with the specific name
+    log = logging.getLogger(logName)
+    log.setLevel(logging.DEBUG)  # Logger accepts DEBUG and above
+    
+    # Clear any existing handlers to avoid duplicates
+    log.handlers.clear()
+    
+    # Add console handler if requested (INFO level)
+    if console:
+        console_handler = RichHandler(rich_tracebacks=True, console=Console(file=sys.stderr))
+        console_handler.setLevel(logging.INFO)  # Console shows INFO and above
+        console_handler.setFormatter(logging.Formatter("%(message)s", datefmt="[%X]"))
+        log.addHandler(console_handler)
+        log.debug(f"Added console handler for {logName}")
+    
+    # Add file handler to write to log file (DEBUG level)
+    try:
+        file_handler = logging.FileHandler(logPath, mode='a', encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)  # File captures DEBUG and above
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        log.addHandler(file_handler)
+        log.debug(f"Successfully created file handler for {logName} at {logPath}")
+    except Exception as e:
+        log.error(f"Error creating file handler for {logName} at {logPath}: {e}")
+    
     return log
+
+
+
+
+
