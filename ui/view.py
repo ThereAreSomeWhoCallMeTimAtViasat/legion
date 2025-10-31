@@ -531,6 +531,7 @@ class View(QtCore.QObject):
         self.HostsTableModel = HostsTableModel(self.controller.getHostsFromDB(self.viewState.filters), headers)
         # Set the model of the HostsTableView to the HostsTableModel
         self.ui.HostsTableView.setModel(self.HostsTableModel)
+        self.connectHostTableSelectionPrevent()
         # Resize the OS column
         self.ui.HostsTableView.horizontalHeader().resizeSection(1, 120)
         # Sort the model by the Host column in descending order
@@ -3932,6 +3933,20 @@ class View(QtCore.QObject):
                 log.error(f"Error loading log file: {e}")
         else:
             self.ui.LogFileTextView.append("Log file not found: " + log_path)
+
+    def connectHostTableSelectionPrevent(self):
+        """Prevent deselecting all hosts in the table"""
+        selection_model = self.ui.HostsTableView.selectionModel()
+        if selection_model:
+            selection_model.selectionChanged.connect(self.preventHostDeselection)
+
+    def preventHostDeselection(self):
+        """Ensure at least one host is always selected"""
+        if not self.ui.HostsTableView.selectionModel().selectedRows():
+            # If nothing is selected, select the first row
+            if self.HostsTableModel.rowCount("") > 0:
+                self.ui.HostsTableView.selectRow(0)
+                self.hostTableClick()
 
 
 
