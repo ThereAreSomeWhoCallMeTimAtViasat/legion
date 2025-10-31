@@ -28,14 +28,14 @@ class Script:
         output = output.replace(' ','')
         output = output.split('\n')
         output = [entry for entry in output if len(entry) > 1]
-        print(str(output))
+        log.debug(str(output))
 
     def processVulnersScriptOutput(self, vulnersOutput):
         import re
 
         pyExploitDb = None
         if PyExploitDb is None:
-            print("[PyExploitDb] Module unavailable: {0}".format(PY_EXPLOIT_DB_IMPORT_ERROR))
+            log.error("[PyExploitDb] Module unavailable: {0}".format(PY_EXPLOIT_DB_IMPORT_ERROR))
         else:
             try:
                 pyExploitDb = PyExploitDb()
@@ -43,7 +43,7 @@ class Script:
                 pyExploitDb.autoUpdate = False
                 pyExploitDb.openFile()
             except Exception as exc:
-                print("[PyExploitDb] Failed to initialise: {0}".format(exc))
+                log.error("[PyExploitDb] Failed to initialise: {0}".format(exc))
                 pyExploitDb = None
 
         resultsDict = {}
@@ -85,7 +85,7 @@ class Script:
                         try:
                             exploitResults = pyExploitDb.searchCve(fields[0])
                         except Exception as exc:
-                            print("[PyExploitDb] Lookup failed for {0}: {1}".format(fields[0], exc))
+                            log.error("[PyExploitDb] Lookup failed for {0}: {1}".format(fields[0], exc))
                             exploitResults = None
                         if isinstance(exploitResults, dict) and exploitResults:
                             exploit_id = exploitResults.get('edbid') or exploitResults.get('id')
@@ -96,7 +96,7 @@ class Script:
                             if exploit_summary:
                                 cve_dict['exploit'] = exploit_summary
                         elif exploitResults:
-                            print("[PyExploitDb] Unexpected lookup result for {0}: {1}".format(fields[0], type(exploitResults)))
+                            log.warning("[PyExploitDb] Unexpected lookup result for {0}: {1}".format(fields[0], type(exploitResults)))
                     cve_list.append(cve_dict)
                 continue
         # Save last product's CVEs
@@ -117,9 +117,9 @@ class Script:
         try:
             cvesResults = self.processVulnersScriptOutput(cveOutput)
         except Exception as exc:
-            print("[Vulners] Failed to process script output: {0}".format(exc))
+            log.error("[Vulners] Failed to process script output: {0}".format(exc))
             return []
-        print("NEW CVERESULTS: {0}".format(cvesResults))
+        log.debug("NEW CVERESULTS: {0}".format(cvesResults))
 
         for product in cvesResults:
             serviceCpes = cvesResults[product]

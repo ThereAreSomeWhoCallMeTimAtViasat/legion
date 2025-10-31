@@ -18,54 +18,83 @@ Copyright (c) 2025 Shane William Scott
 """
 
 import os
-from PyQt6.QtGui import *                                               # for filters dialog
+import json
+import shutil
+from PyQt6.QtGui import *
 from PyQt6.QtWidgets import *
-from PyQt6 import QtWidgets, QtGui
-from app.auxiliary import *                                             # for timestamps
+from PyQt6 import QtWidgets, QtGui, QtCore
+from app.auxiliary import *
+from app.timing import getTimestamp
 from six import u as unicode
 from ui.ancillaryDialog import flipState
 
 class Config(QtWidgets.QTextEdit):
-    def __init__(self, qss, parent = None):
+    def __init__(self, qss, parent=None):
         super(Config, self).__init__(parent)
         self.setMinimumHeight(550)
         self.setStyleSheet(qss)
-        self.originalText = open(os.path.expanduser('~/.local/share/legion/legion.conf'),'r').read()
-        self.setPlainText(self.originalText)
+        self.originalText = ""
         self.setReadOnly(False)
         
         # Track changes
         self.textChanged.connect(self.markAsModified)
         self.modified = False
     
+    def loadFile(self, filepath):
+        """Load a config file into the editor."""
+        try:
+            with open(filepath, 'r') as f:
+                content = f.read()
+            self.originalText = content
+            self.setPlainText(content)
+            self.modified = False
+            return True
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Load Failed",
+                f"Could not load config file:\n{e}"
+            )
+            return False
+    
     def markAsModified(self):
-        """Track that content has been modified"""
+        """Track that content has been modified."""
         self.modified = True
     
     def getText(self):
         return self.toPlainText()
     
     def hasUnsavedChanges(self):
-        """Check if current text differs from original"""
+        """Check if current text differs from original."""
         return self.toPlainText() != self.originalText
     
-    def reloadFromFile(self):
-        """Reload original content from file, discarding changes"""
-        self.originalText = open(os.path.expanduser('~/.local/share/legion/legion.conf'),'r').read()
-        self.setPlainText(self.originalText)
+    def reloadFromFile(self, filepath):
+        """Reload original content from file, discarding changes."""
+        self.loadFile(filepath)
         self.modified = False
 
 class ConfigDialog(QtWidgets.QDialog):
-    def __init__(self, controller, qss, parent = None):
+    def __init__(self, controller, qss, parent=None):
         super(ConfigDialog, self).__init__(parent)
         self.controller = controller
         self.qss = qss
-        self.setWindowTitle("Config")
-        self.Main = QtWidgets.QVBoxLayout()
-        self.frm = QtWidgets.QFormLayout()
-        self.setGeometry(0, 0, 800, 600)
+        self.setWindowTitle("Config Manager - Multiple Profiles")
+        self.setGeometry(0, 0, 900, 700)
         self.center()
-        self.Qui_update()
+        
+        # Setup profile system
+        self.profilesDir = os.path.expanduser('~/.local/share/legion/profiles')
+        self.ensureProfilesDirectory()
+        self.ensureDefaultProfile()
+        
+        self.currentProfile = self.loadActiveProfile()
+        self.profiles = {}  # {name: filepath}
+        self.loadProfilesList()
+        
+        # Store editor widgets for each profile
+        self.profileEditors = {}  # {profile_name: Config widget}
+        
+        self.buildUI()
         self.setStyleSheet(self.qss)
 
     def center(self):
@@ -74,422 +103,582 @@ class ConfigDialog(QtWidgets.QDialog):
         frameGm.moveCenter(centerPoint)
         self.move(frameGm.topLeft())
 
-    def Qui_update(self):
-        self.form = QtWidgets.QFormLayout()
-        self.form2 = QtWidgets.QVBoxLayout()
-        self.tabwid = QtWidgets.QTabWidget(self)
-        self.TabConfig = QtWidgets.QWidget(self)
-        self.cmdSave = QtWidgets.QPushButton("Save")
-        self.cmdSave.setFixedWidth(90)
-        self.cmdSave.setIcon(QtGui.QIcon('images/save.png'))
-        self.cmdSave.clicked.connect(self.save)
-        self.cmdClose = QtWidgets.QPushButton("Close")
-        self.cmdClose.setFixedWidth(90)
-        self.cmdClose.setIcon(QtGui.QIcon('images/close.png'))
-        self.cmdClose.clicked.connect(self.closeDialog)  # Changed to closeDialog
-
-        self.formConfig = QtWidgets.QFormLayout()
-
-        # Config Section
-        self.configObj = Config(qss = self.qss)
-        self.formConfig.addRow(self.configObj)
-        self.TabConfig.setLayout(self.formConfig)
-
-        self.tabwid.addTab(self.TabConfig,'Config')
-        self.form.addRow(self.tabwid)
-        self.form2.addWidget(QtWidgets.QLabel('<br>'))
-        self.form2.addWidget(self.cmdSave, alignment = Qt.AlignmentFlag.AlignCenter)
-        self.form2.addWidget(self.cmdClose, alignment = Qt.AlignmentFlag.AlignCenter)
-        self.form.addRow(self.form2)
-        self.Main.addLayout(self.form)
-        self.setLayout(self.Main)
-
-    def identifyLoadError(self, error_msg, traceback_text):
-        """
-        Analyze the load error and provide helpful hints about what went wrong.
-        """
-        hints = []
+    def buildUI(self):
+        """Build the entire UI with profile tabs and controls."""
+        mainLayout = QtWidgets.QVBoxLayout()
         
-        # Check for specific error patterns
-        if 'KeyError' in traceback_text:
-            # Extract the missing key if possible
-            import re
-            key_match = re.search(r"KeyError: '([^']+)'", traceback_text)
-            if key_match:
-                missing_key = key_match.group(1)
-                hints.append(
-                    f"Missing required setting: '{missing_key}'\n"
-                    f"This setting is required but not found in the config file."
-                )
+        # Top section: Profile selector and action buttons
+        topLayout = self.buildTopSection()
+        mainLayout.addLayout(topLayout)
         
-        if 'ValueError' in traceback_text:
-            hints.append(
-                "Invalid value format detected.\n"
-                "Check that numeric values are numbers and boolean values are True/False."
-            )
+        # Separator
+        mainLayout.addWidget(QtWidgets.QLabel(""))
         
-        if 'AttributeError' in traceback_text:
-            hints.append(
-                "Configuration structure issue.\n"
-                "A required setting or section may be missing or incorrectly named."
-            )
+        # Tab widget for editing profiles
+        self.profileTabs = QtWidgets.QTabWidget()
+        self.profileTabs.setTabsClosable(True)
+        self.profileTabs.tabCloseRequested.connect(self.closeProfileTab)
         
-        # Check for common setting names in error
-        common_settings = [
-            'GeneralSettings', 'BruteSettings', 'ToolSettings',
-            'StagedNmapSettings', 'GUISettings', 'HostActions',
-            'PortActions', 'SchedulerSettings', 'MatchSettings'
-        ]
-        
-        for setting in common_settings:
-            if setting.lower() in error_msg.lower() or setting.lower() in traceback_text.lower():
-                hints.append(
-                    f"Problem likely in [{setting}] section.\n"
-                    f"Check this section for missing or malformed entries."
-                )
-        
-        if not hints:
-            hints.append(
-                "Unable to identify specific cause.\n"
-                "Check the log file for detailed traceback information."
-            )
-        
-        return "\n".join(hints)
-
-    
-    def closeDialog(self):
-        """Handle close button with unsaved changes check"""
-        # Check if there are unsaved changes
-        if self.configObj.hasUnsavedChanges():
-            reply = QMessageBox.warning(
-                self,
-                "Unsaved Changes",
-                "You have unsaved changes that will be lost.\n\n"
-                "Are you sure you want to close without saving?",
-                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel
-            )
+        # Add tabs for each profile
+        for profile_name, profile_path in sorted(self.profiles.items()):
+            editor = Config(qss=self.qss)
+            editor.loadFile(profile_path)
             
-            if reply == QMessageBox.StandardButton.Cancel:
-                return  # Don't close
-        
-        # User confirmed or no changes - reload from file to discard any edits
-        self.configObj.reloadFromFile()
-        
-        # Close the dialog
-        self.close()
-    
-    def closeEvent(self, event):
-        """Handle window close (X button) with same check"""
-        if self.configObj.hasUnsavedChanges():
-            reply = QMessageBox.warning(
-                self,
-                "Unsaved Changes",
-                "You have unsaved changes that will be lost.\n\n"
-                "Are you sure you want to close without saving?",
-                QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel
-            )
-            
-            if reply == QMessageBox.StandardButton.Cancel:
-                event.ignore()  # Prevent closing
-                return
-        
-        # User confirmed or no changes - reload from file
-        self.configObj.reloadFromFile()
-        event.accept()
-
-    def checkSettingExists(self, config_text, section, key):
-        """
-        Check if a specific setting exists in the config text.
-        """
-        lines = config_text.split('\n')
-        in_section = False
-        
-        for line in lines:
-            stripped = line.strip()
-            
-            # Check if we're entering the target section
-            if stripped == f'[{section}]':
-                in_section = True
-                continue
-            
-            # Check if we're leaving the section
-            if in_section and stripped.startswith('['):
-                in_section = False
-                break
-            
-            # Check for the key in this section
-            if in_section and '=' in stripped:
-                line_key = stripped.split('=', 1)[0].strip()
-                if line_key == key:
-                    return True
-        
-        return False
-
-    def analyzeMissingSettings(self, config_text, missing_keys):
-        """
-        Analyze config to identify which sections are missing required settings.
-        """
-        if not missing_keys:
-            return "Unknown configuration errors detected."
-        
-        # Map settings to their expected sections
-        setting_sections = {
-            'default-terminal': 'GeneralSettings',
-            'tool-output-black-background': 'GeneralSettings',
-            'screenshooter-timeout': 'GeneralSettings',
-            'web-services': 'GeneralSettings',
-            'enable-scheduler': 'GeneralSettings',
-            'enable-scheduler-on-import': 'GeneralSettings',
-            'max-fast-processes': 'GeneralSettings',
-            'max-slow-processes': 'GeneralSettings',
-            'tool-duplication': 'GeneralSettings',
-            'store-cleartext-passwords-on-exit': 'BruteSettings',
-            'username-wordlist-path': 'BruteSettings',
-            'password-wordlist-path': 'BruteSettings',
-            'default-username': 'BruteSettings',
-            'default-password': 'BruteSettings',
-            'services': 'BruteSettings',
-            'no-username-services': 'BruteSettings',
-            'no-password-services': 'BruteSettings',
-            'nmap-path': 'ToolSettings',
-            'hydra-path': 'ToolSettings',
-            'cutycapt-path': 'ToolSettings',
-            'texteditor-path': 'ToolSettings',
-            'pyshodan-api-key': 'ToolSettings',
-            'stage1-ports': 'StagedNmapSettings',
-            'stage2-ports': 'StagedNmapSettings',
-            'stage3-ports': 'StagedNmapSettings',
-            'stage4-ports': 'StagedNmapSettings',
-            'stage5-ports': 'StagedNmapSettings',
-            'stage6-ports': 'StagedNmapSettings',
-            'process-tab-column-widths': 'GUISettings',
-            'process-tab-detail': 'GUISettings',
-        }
-        
-        # Group missing keys by section
-        missing_by_section = {}
-        for key in missing_keys:
-            section = setting_sections.get(key, 'Unknown')
-            if section not in missing_by_section:
-                missing_by_section[section] = []
-            missing_by_section[section].append(key)
-        
-        # Check if sections exist in config
-        lines = config_text.split('\n')
-        existing_sections = set()
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith('[') and stripped.endswith(']'):
-                section_name = stripped[1:-1]
-                existing_sections.add(section_name)
-        
-        # Build detailed error message
-        errors = []
-        for section, keys in missing_by_section.items():
-            if section not in existing_sections:
-                errors.append(
-                    f"❌ Missing section: [{section}]\n"
-                    f"   This entire section is missing from the config file.\n"
-                    f"   Add: [{section}]"
-                )
+            # Add tab with icon if active
+            if profile_name == self.currentProfile:
+                tab_icon = QtGui.QIcon('images/star.png')
+                self.profileTabs.addTab(editor, tab_icon, profile_name)
             else:
-                errors.append(
-                    f"❌ Section [{section}] is incomplete\n"
-                    f"   Missing {len(keys)} required setting(s):\n" +
-                    "\n".join(f"     • {key}" for key in keys)
-                )
+                self.profileTabs.addTab(editor, profile_name)
+            
+            self.profileEditors[profile_name] = editor
         
-        return "\n\n".join(errors)
+        # Add "+" button to create new profile
+        self.addProfileButton = QtWidgets.QPushButton("+")
+        self.addProfileButton.setFixedWidth(40)
+        self.addProfileButton.setToolTip("Create new profile")
+        self.addProfileButton.clicked.connect(self.createNewProfile)
+        self.profileTabs.setCornerWidget(self.addProfileButton, QtCore.Qt.Corner.TopRightCorner)
+        
+        mainLayout.addWidget(self.profileTabs)
+        
+        # Bottom section: Action buttons
+        bottomLayout = self.buildBottomSection()
+        mainLayout.addLayout(bottomLayout)
+        
+        self.setLayout(mainLayout)
 
+    def buildTopSection(self):
+        """Build top section with profile selector and activate button."""
+        layout = QtWidgets.QHBoxLayout()
+        
+        # Label
+        layout.addWidget(QtWidgets.QLabel("Active Profile:"))
+        
+        # Profile selector dropdown
+        self.profileSelector = QtWidgets.QComboBox()
+        self.profileSelector.addItems(sorted(self.profiles.keys()))
+        if self.currentProfile in self.profiles:
+            self.profileSelector.setCurrentText(self.currentProfile)
+        self.profileSelector.setMinimumWidth(150)
+        layout.addWidget(self.profileSelector)
+        
+        # Activate button
+        self.activateButton = QtWidgets.QPushButton("★ Activate Profile")
+        self.activateButton.setToolTip("Make selected profile active for this session")
+        self.activateButton.clicked.connect(self.activateProfile)
+        layout.addWidget(self.activateButton)
+        
+        # Info label showing current active
+        self.activeInfoLabel = QtWidgets.QLabel(f"Currently Active: {self.currentProfile}")
+        self.activeInfoLabel.setStyleSheet("color: #ffaa00; font-weight: bold;")
+        layout.addWidget(self.activeInfoLabel)
+        
+        layout.addStretch()
+        return layout
 
-    def save(self):
-        """
-        Save with comprehensive validation - shows scrollable error dialog if needed.
-        """
-        import shutil
-        import tempfile
-        import traceback
-        from PyQt6 import QtCore
-        from PyQt6.QtWidgets import QMessageBox
-        from app.timing import getTimestamp
-        from app.auxiliary import getAppLogger
-        from app.settings import Settings, AppSettings
-        log = getAppLogger()
+    def buildBottomSection(self):
+        """Build bottom section with action buttons."""
+        layout = QtWidgets.QHBoxLayout()
         
-        log.info("=" * 80)
-        log.debug("DEBUG: save() method called")
+        # Save current profile
+        self.saveButton = QtWidgets.QPushButton("Save")
+        self.saveButton.setFixedWidth(90)
+        self.saveButton.setIcon(QtGui.QIcon('images/save.png'))
+        self.saveButton.clicked.connect(self.saveCurrentProfile)
+        layout.addWidget(self.saveButton)
         
-        # Get the edited config text
-        new_config_text = self.configObj.getText()
-        log.debug(f"DEBUG:Config text length: {len(new_config_text)} characters")
+        # Rename profile
+        self.renameButton = QtWidgets.QPushButton("Rename Profile")
+        self.renameButton.setFixedWidth(120)
+        self.renameButton.clicked.connect(self.renameProfile)
+        layout.addWidget(self.renameButton)
         
-        # Step 1: Syntax validation
-        log.debug("DEBUG: Starting syntax validation")
-        syntax_errors = self.validateConfigSyntax(new_config_text)
+        # Duplicate profile
+        self.duplicateButton = QtWidgets.QPushButton("Duplicate")
+        self.duplicateButton.setFixedWidth(90)
+        self.duplicateButton.clicked.connect(self.duplicateProfile)
+        layout.addWidget(self.duplicateButton)
         
-        if syntax_errors:
-            log.debug(f"DEBUG:BLOCKING SAVE - Found {len(syntax_errors)} syntax errors")
+        layout.addStretch()
+        
+        # Close button
+        self.closeButton = QtWidgets.QPushButton("Close")
+        self.closeButton.setFixedWidth(90)
+        self.closeButton.setIcon(QtGui.QIcon('images/close.png'))
+        self.closeButton.clicked.connect(self.closeDialog)
+        layout.addWidget(self.closeButton)
+        
+        return layout
+
+    def ensureProfilesDirectory(self):
+        """Ensure profiles directory exists."""
+        if not os.path.exists(self.profilesDir):
+            os.makedirs(self.profilesDir, exist_ok=True)
+
+    def ensureDefaultProfile(self):
+        """Ensure default profile exists."""
+        default_path = os.path.join(self.profilesDir, 'default.conf')
+        working_config = os.path.expanduser('~/.local/share/legion/legion.conf')
+        
+        if not os.path.exists(default_path) and os.path.exists(working_config):
+            shutil.copy(working_config, default_path)
+
+    def loadProfilesList(self):
+        """Load all available profiles."""
+        self.profiles = {}
+        
+        if not os.path.exists(self.profilesDir):
+            return
+        
+        for filename in os.listdir(self.profilesDir):
+            if filename.endswith('.conf'):
+                profile_name = filename.replace('.conf', '')
+                profile_path = os.path.join(self.profilesDir, filename)
+                self.profiles[profile_name] = profile_path
+
+    def loadActiveProfile(self):
+        """Load name of currently active profile."""
+        active_file = os.path.expanduser('~/.local/share/legion/active_profile.txt')
+        
+        if os.path.exists(active_file):
+            try:
+                with open(active_file, 'r') as f:
+                    return f.read().strip()
+            except:
+                pass
+        
+        return 'default'
+
+    def saveActiveProfile(self, profile_name):
+        """Save which profile is currently active."""
+        active_file = os.path.expanduser('~/.local/share/legion/active_profile.txt')
+        try:
+            with open(active_file, 'w') as f:
+                f.write(profile_name)
+        except Exception as e:
+            print(f"Error saving active profile: {e}")
+
+    def saveCurrentProfile(self):
+        """Save the currently selected profile tab."""
+        current_index = self.profileTabs.currentIndex()
+        if current_index < 0:
+            return
+        
+        profile_name = self.profileTabs.tabText(current_index)
+        editor = self.profileEditors[profile_name]
+        
+        # Validate config
+        config_text = editor.getText()
+        
+        validation_errors = self.validateConfigSyntax(config_text)
+        if validation_errors:
             self.showScrollableErrorDialog(
-                f"Cannot Save - {len(syntax_errors)} Syntax Error(s)",
-                "The configuration file has syntax errors that MUST be fixed:",
-                syntax_errors
+                f"Cannot Save - {len(validation_errors)} Syntax Error(s)",
+                f"Profile '{profile_name}' has syntax errors:",
+                validation_errors
             )
             return
         
-        log.debug("DEBUG: Syntax validation passed")
-        
-        # Step 2: Semantic validation
-        log.debug("DEBUG: Starting semantic validation (checking setting names)")
-        semantic_errors = self.validateSettingNames(new_config_text)
-        
+        # Validate setting names
+        semantic_errors = self.validateSettingNames(config_text)
         if semantic_errors:
-            log.debug(f"DEBUG:BLOCKING SAVE - Found {len(semantic_errors)} invalid settings")
             self.showScrollableErrorDialog(
                 f"Cannot Save - {len(semantic_errors)} Invalid Setting(s)",
-                "The configuration contains unknown or misspelled setting names:\n\n"
-                "These settings will be ignored by Legion.",
+                f"Profile '{profile_name}' contains unknown settings:",
                 semantic_errors
             )
             return
         
-        log.debug("DEBUG: Semantic validation passed")
-        
-        # Step 3: QSettings validation
-        log.debug("DEBUG: Starting QSettings validation")
-        temp_fd, temp_path = tempfile.mkstemp(suffix='.conf', prefix='legion-validate-')
-        
+        # Write profile file
+        profile_path = self.profiles[profile_name]
         try:
-            with os.fdopen(temp_fd, 'w') as f:
-                f.write(new_config_text)
+            with open(profile_path, 'w') as f:
+                f.write(config_text)
             
-            test_settings = QtCore.QSettings(temp_path, QtCore.QSettings.Format.IniFormat)
-            status = test_settings.status()
+            editor.originalText = config_text
+            editor.modified = False
             
-            if status != QtCore.QSettings.Status.NoError:
-                log.error(f"DEBUG: QSettings validation FAILED")
-                QMessageBox.critical(
-                    self,
-                    "Cannot Save - Parse Error",
-                    f"QSettings cannot parse this configuration.\n❌ Save blocked."
-                )
-                os.remove(temp_path)
+            QtWidgets.QMessageBox.information(
+                self,
+                "Saved",
+                f"Profile '{profile_name}' saved successfully."
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Save Failed",
+                f"Failed to save profile:\n{e}"
+            )
+
+    def activateProfile(self):
+        """Switch to selected profile and reload Legion settings."""
+        profile_name = self.profileSelector.currentText()
+        
+        # Check for unsaved changes in current profile
+        current_editor = self.profileEditors.get(self.currentProfile)
+        if current_editor and current_editor.hasUnsavedChanges():
+            reply = QtWidgets.QMessageBox.warning(
+                self,
+                "Unsaved Changes",
+                f"Profile '{self.currentProfile}' has unsaved changes.\n\n"
+                "Save before switching?",
+                QtWidgets.QMessageBox.StandardButton.Save | 
+                QtWidgets.QMessageBox.StandardButton.Discard |
+                QtWidgets.QMessageBox.StandardButton.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Cancel
+            )
+            
+            if reply == QtWidgets.QMessageBox.StandardButton.Save:
+                self.saveCurrentProfile()
+            elif reply == QtWidgets.QMessageBox.StandardButton.Cancel:
                 return
-        except Exception as e:
-            log.error(f"DEBUG: QSettings crashed: {e}")
-            QMessageBox.critical(self, "Cannot Save", f"Parse error: {str(e)}\n❌ Save blocked.")
-            try:
-                os.remove(temp_path)
-            except:
-                pass
-            return
-        finally:
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except:
-                pass
         
-        log.debug("DEBUG: All validations passed - proceeding with save")
-        
-        # Proceed with save (same as before)
+        # Copy profile to active location
+        profile_path = self.profiles[profile_name]
         working_config = os.path.expanduser('~/.local/share/legion/legion.conf')
-        reporoot = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-        repo_config = os.path.join(reporoot, 'legion.conf')
-        timestamp = getTimestamp()
         
-        # Backup
-        if os.path.exists(working_config):
-            try:
-                repo_backup = os.path.join(reporoot, f'{timestamp}-legion.conf.backup')
-                shutil.copy(working_config, repo_backup)
-                log.info(f"Backed up old config to: {repo_backup}")
-            except Exception as e:
-                log.warning(f"Could not backup: {e}")
-        
-        # Write new config
         try:
-            with open(working_config, 'w') as fileObj:
-                fileObj.write(new_config_text)
-            log.info(f"Saved config to: {working_config}")
+            shutil.copy(profile_path, working_config)
+            self.currentProfile = profile_name
+            self.saveActiveProfile(profile_name)
+            
+            # Reload settings
+            self.controller.loadSettings()
+            
+            # Update UI
+            self.updateProfileIndicators()
+            
+            QtWidgets.QMessageBox.information(
+                self,
+                "Profile Activated",
+                f"Profile '{profile_name}' is now active.\n\n"
+                "Legion has reloaded with the new configuration."
+            )
         except Exception as e:
-            log.error(f"Failed to write config: {e}")
-            QMessageBox.critical(self, "Save Failed", f"Failed to write file:\n{e}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Activation Failed",
+                f"Failed to activate profile:\n{e}"
+            )
+
+    def createNewProfile(self):
+        """Create a new profile."""
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Create New Profile")
+        dialog.setModal(True)
+        
+        layout = QtWidgets.QVBoxLayout()
+        
+        # Profile name input
+        layout.addWidget(QtWidgets.QLabel("Profile name:"))
+        nameInput = QtWidgets.QLineEdit()
+        layout.addWidget(nameInput)
+        
+        # Copy from selector
+        layout.addWidget(QtWidgets.QLabel("Copy settings from:"))
+        copySelector = QtWidgets.QComboBox()
+        copySelector.addItems(sorted(self.profiles.keys()))
+        layout.addWidget(copySelector)
+        
+        # Buttons
+        buttonLayout = QtWidgets.QHBoxLayout()
+        createBtn = QtWidgets.QPushButton("Create")
+        cancelBtn = QtWidgets.QPushButton("Cancel")
+        createBtn.clicked.connect(dialog.accept)
+        cancelBtn.clicked.connect(dialog.reject)
+        buttonLayout.addWidget(createBtn)
+        buttonLayout.addWidget(cancelBtn)
+        layout.addLayout(buttonLayout)
+        
+        dialog.setLayout(layout)
+        
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
         
-        # Copy to repo
-        try:
-            repo_timestamped = os.path.join(reporoot, f'{timestamp}-legion.conf')
-            shutil.copy(working_config, repo_timestamped)
-            log.info(f"Saved timestamped to repo: {repo_timestamped}")
-        except Exception as e:
-            log.warning(f"Could not save timestamped: {e}")
+        profile_name = nameInput.text().strip()
+        if not profile_name:
+            QtWidgets.QMessageBox.warning(self, "Invalid", "Profile name cannot be empty.")
+            return
+        
+        if profile_name in self.profiles:
+            QtWidgets.QMessageBox.warning(self, "Exists", f"Profile '{profile_name}' already exists.")
+            return
+        
+        # Copy from selected profile
+        source_profile = copySelector.currentText()
+        source_path = self.profiles[source_profile]
+        dest_path = os.path.join(self.profilesDir, f'{profile_name}.conf')
         
         try:
-            shutil.copy(working_config, repo_config)
-            log.info(f"Updated repo default: {repo_config}")
+            shutil.copy(source_path, dest_path)
+            self.profiles[profile_name] = dest_path
+            
+            # Add new tab
+            editor = Config(qss=self.qss)
+            editor.loadFile(dest_path)
+            self.profileEditors[profile_name] = editor
+            self.profileTabs.addTab(editor, profile_name)
+            
+            # Update selector
+            self.profileSelector.addItem(profile_name)
+            
+            QtWidgets.QMessageBox.information(
+                self,
+                "Created",
+                f"Profile '{profile_name}' created successfully."
+            )
         except Exception as e:
-            log.warning(f"Could not update repo config: {e}")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Creation Failed",
+                f"Failed to create profile:\n{e}"
+            )
+
+    def renameProfile(self):
+        """Rename current profile."""
+        current_index = self.profileTabs.currentIndex()
+        if current_index < 0:
+            return
         
-        # Reload settings
-        log.debug("DEBUG: Reloading settings")
+        old_name = self.profileTabs.tabText(current_index)
+        
+        if old_name == 'default':
+            QtWidgets.QMessageBox.warning(self, "Cannot Rename", "Cannot rename the default profile.")
+            return
+        
+        new_name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Rename Profile",
+            f"New name for '{old_name}':",
+            text=old_name
+        )
+        
+        if not ok or not new_name.strip():
+            return
+        
+        new_name = new_name.strip()
+        
+        if new_name in self.profiles:
+            QtWidgets.QMessageBox.warning(self, "Exists", f"Profile '{new_name}' already exists.")
+            return
+        
+        old_path = self.profiles[old_name]
+        new_path = os.path.join(self.profilesDir, f'{new_name}.conf')
+        
         try:
-            self.controller.loadSettings()
-            log.info("Settings reloaded successfully")
+            os.rename(old_path, new_path)
+            
+            # Update internal tracking
+            del self.profiles[old_name]
+            self.profiles[new_name] = new_path
+            
+            # Update UI
+            self.profileTabs.setTabText(current_index, new_name)
+            self.profileEditors[new_name] = self.profileEditors.pop(old_name)
+            
+            # Update selector
+            index = self.profileSelector.findText(old_name)
+            if index >= 0:
+                self.profileSelector.removeItem(index)
+            self.profileSelector.addItem(new_name)
+            
+            QtWidgets.QMessageBox.information(
+                self,
+                "Renamed",
+                f"Profile renamed to '{new_name}'."
+            )
         except Exception as e:
-            import traceback
-            log.error(f"Settings reload failed: {e}")
-            log.error(f"Traceback: {traceback.format_exc()}")  # ← Add this
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Rename Failed",
+                f"Failed to rename profile:\n{e}"
+            )
+
+    def duplicateProfile(self):
+        """Duplicate current profile."""
+        current_index = self.profileTabs.currentIndex()
+        if current_index < 0:
+            return
         
-        # Success
-        self.configObj.originalText = new_config_text
-        self.configObj.modified = False
-        log.info("Config saved successfully")
+        source_name = self.profileTabs.tabText(current_index)
+        new_name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Duplicate Profile",
+            f"Name for copy of '{source_name}':",
+            text=f"{source_name}_copy"
+        )
         
-        QMessageBox.information(self, "Success", "Configuration saved and reloaded.")
-        log.info("=" * 80)
+        if not ok or not new_name.strip():
+            return
+        
+        new_name = new_name.strip()
+        
+        if new_name in self.profiles:
+            QtWidgets.QMessageBox.warning(self, "Exists", f"Profile '{new_name}' already exists.")
+            return
+        
+        source_path = self.profiles[source_name]
+        dest_path = os.path.join(self.profilesDir, f'{new_name}.conf')
+        
+        try:
+            shutil.copy(source_path, dest_path)
+            self.profiles[new_name] = dest_path
+            
+            # Add new tab
+            editor = Config(qss=self.qss)
+            editor.loadFile(dest_path)
+            self.profileEditors[new_name] = editor
+            self.profileTabs.addTab(editor, new_name)
+            
+            # Update selector
+            self.profileSelector.addItem(new_name)
+            
+            QtWidgets.QMessageBox.information(
+                self,
+                "Duplicated",
+                f"Profile '{source_name}' duplicated as '{new_name}'."
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Duplication Failed",
+                f"Failed to duplicate profile:\n{e}"
+            )
+
+    def closeProfileTab(self, index):
+        """Close a profile tab (delete profile)."""
+        profile_name = self.profileTabs.tabText(index)
+        
+        if profile_name == 'default':
+            QtWidgets.QMessageBox.warning(self, "Cannot Delete", "Cannot delete the default profile.")
+            return
+        
+        if profile_name == self.currentProfile:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Cannot Delete",
+                "Cannot delete the currently active profile.\n\n"
+                "Switch to another profile first."
+            )
+            return
+        
+        reply = QtWidgets.QMessageBox.warning(
+            self,
+            "Delete Profile",
+            f"Delete profile '{profile_name}'?\n\nThis cannot be undone.",
+            QtWidgets.QMessageBox.StandardButton.Delete |
+            QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Cancel
+        )
+        
+        if reply != QtWidgets.QMessageBox.StandardButton.Delete:
+            return
+        
+        try:
+            profile_path = self.profiles[profile_name]
+            os.remove(profile_path)
+            
+            del self.profiles[profile_name]
+            del self.profileEditors[profile_name]
+            
+            self.profileTabs.removeTab(index)
+            
+            index = self.profileSelector.findText(profile_name)
+            if index >= 0:
+                self.profileSelector.removeItem(index)
+            
+            QtWidgets.QMessageBox.information(
+                self,
+                "Deleted",
+                f"Profile '{profile_name}' deleted."
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Deletion Failed",
+                f"Failed to delete profile:\n{e}"
+            )
+
+    def updateProfileIndicators(self):
+        """Update UI to show which profile is active."""
+        self.activeInfoLabel.setText(f"Currently Active: {self.currentProfile}")
+        
+        # Update star icons on tabs
+        for i in range(self.profileTabs.count()):
+            profile_name = self.profileTabs.tabText(i)
+            if profile_name == self.currentProfile:
+                self.profileTabs.setTabIcon(i, QtGui.QIcon('images/star.png'))
+            else:
+                self.profileTabs.setTabIcon(i, QtGui.QIcon())
+        
+        # Update selector
+        self.profileSelector.setCurrentText(self.currentProfile)
+
+    def closeDialog(self):
+        """Handle close button with unsaved changes check."""
+        # Check all editors for unsaved changes
+        for profile_name, editor in self.profileEditors.items():
+            if editor.hasUnsavedChanges():
+                reply = QtWidgets.QMessageBox.warning(
+                    self,
+                    "Unsaved Changes",
+                    f"Profile '{profile_name}' has unsaved changes.\n\n"
+                    "Are you sure you want to close without saving?",
+                    QtWidgets.QMessageBox.StandardButton.Discard |
+                    QtWidgets.QMessageBox.StandardButton.Cancel,
+                    QtWidgets.QMessageBox.StandardButton.Cancel
+                )
+                
+                if reply == QtWidgets.QMessageBox.StandardButton.Cancel:
+                    return
+                break
+        
+        self.close()
+
+    def closeEvent(self, event):
+        """Handle window close (X button)."""
+        for profile_name, editor in self.profileEditors.items():
+            if editor.hasUnsavedChanges():
+                reply = QtWidgets.QMessageBox.warning(
+                    self,
+                    "Unsaved Changes",
+                    f"Profile '{profile_name}' has unsaved changes.\n\n"
+                    "Are you sure you want to close without saving?",
+                    QtWidgets.QMessageBox.StandardButton.Discard |
+                    QtWidgets.QMessageBox.StandardButton.Cancel,
+                    QtWidgets.QMessageBox.StandardButton.Cancel
+                )
+                
+                if reply == QtWidgets.QMessageBox.StandardButton.Cancel:
+                    event.ignore()
+                    return
+                break
+        
+        event.accept()
 
     def showScrollableErrorDialog(self, title, message, errors):
-        """
-        Show a scrollable dialog with all errors listed.
-        
-        Args:
-            title: Dialog window title
-            message: Header message
-            errors: List of error strings
-        """
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QLabel
-        from PyQt6.QtCore import Qt
-        
-        dialog = QDialog(self)
+        """Show scrollable error dialog."""
+        dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle(title)
         dialog.setModal(True)
-        dialog.resize(700, 500)  # Reasonable size
+        dialog.resize(700, 500)
         
-        # Layout
-        layout = QVBoxLayout()
+        layout = QtWidgets.QVBoxLayout()
         
-        # Header message
-        header = QLabel(message)
+        header = QtWidgets.QLabel(message)
         header.setWordWrap(True)
         header.setStyleSheet("font-weight: bold; padding: 10px;")
         layout.addWidget(header)
         
-        # Error count summary
-        summary = QLabel(f"Found {len(errors)} error(s). Please fix before saving:")
+        summary = QtWidgets.QLabel(f"Found {len(errors)} error(s):")
         summary.setStyleSheet("padding: 5px 10px;")
         layout.addWidget(summary)
         
-        # Scrollable text area with errors
-        error_text = QTextEdit()
+        error_text = QtWidgets.QTextEdit()
         error_text.setReadOnly(True)
-        
-        # Format all errors with spacing
         formatted_errors = "\n\n".join(errors)
         error_text.setPlainText(formatted_errors)
-        
-        # Style the text area
         error_text.setStyleSheet("""
             QTextEdit {
                 font-family: monospace;
@@ -499,36 +688,236 @@ class ConfigDialog(QtWidgets.QDialog):
                 color: #ffffff;
             }
         """)
-        
         layout.addWidget(error_text)
         
-        # Footer message
-        footer = QLabel("❌ Save blocked. Fix the errors and try again.")
-        footer.setStyleSheet("color: #ff4444; font-weight: bold; padding: 10px;")
-        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(footer)
-        
-        # Close button
-        close_btn = QPushButton("Close")
+        close_btn = QtWidgets.QPushButton("Close")
         close_btn.setFixedWidth(100)
         close_btn.clicked.connect(dialog.close)
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(close_btn, alignment=QtCore.Qt.AlignmentFlag.AlignCenter)
         
         dialog.setLayout(layout)
-        
-        # Show dialog
         dialog.exec()
 
-
-    def validateSettingNames(self, config_text):
+    def validateConfigSyntax(self, config_text):
         """
-        Validate that all setting keys are recognized/expected by Legion.
-        Catches typos like 'process-tab-columnwidths' vs 'process-tab-column-widths'.
+        Comprehensive INI validation with element count checking for dynamic sections.
         """
         from app.auxiliary import getAppLogger
         log = getAppLogger()
         
-        # Complete list of ALL valid setting keys by section
+        # Define expected element counts for each section type
+        section_element_counts = {
+            'HostActions': 2,
+            'PortActions': 3,
+            'PortTerminalActions': 3,
+            'SchedulerSettings': 2,
+            'MatchSettings': None
+        }
+        
+        errors = []
+        lines = config_text.split('\n')
+        current_section = None
+        
+        for line_num, line in enumerate(lines, 1):
+            stripped = line.strip()
+            
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('#') or stripped.startswith(';'):
+                continue
+            
+            # Check for section headers
+            if stripped.startswith('['):
+                if not stripped.endswith(']'):
+                    errors.append(
+                        f"❌ Line {line_num}: Unclosed section header\n"
+                        f"   Found: {stripped}\n"
+                        f"   Fix: Add closing bracket ]"
+                    )
+                    continue
+                
+                section_name = stripped[1:-1].strip()
+                if not section_name:
+                    errors.append(
+                        f"❌ Line {line_num}: Empty section header\n"
+                        f"   Found: {stripped}\n"
+                        f"   Fix: Provide a section name between [ ]"
+                    )
+                elif ' ' in section_name:
+                    errors.append(
+                        f"❌ Line {line_num}: Section name contains spaces\n"
+                        f"   Found: [{section_name}]\n"
+                        f"   Fix: Remove spaces (use CamelCase)"
+                    )
+                
+                current_section = section_name
+                log.debug(f"DEBUG: Line {line_num} - Entered section [{current_section}]")
+                continue
+            
+            # Check for key=value pairs
+            if '=' in stripped:
+                # Extract key and value (split on FIRST equals)
+                first_equals_pos = stripped.index('=')
+                key = stripped[:first_equals_pos].strip()
+                value = stripped[first_equals_pos + 1:].strip()
+                
+                log.debug(f"DEBUG: Line {line_num} - key: '{key}', value: '{value[:80]}...'")
+                
+                # Validate key
+                if not key:
+                    errors.append(
+                        f"❌ Line {line_num}: Missing key name before '='\n"
+                        f"   Found: {stripped}\n"
+                        f"   Fix: Add a key name: key=value"
+                    )
+                    continue
+                
+                if '=' in key:
+                    errors.append(
+                        f"❌ Line {line_num}: Key contains '=' sign\n"
+                        f"   Found key: {key}\n"
+                        f"   Fix: Key name cannot contain '=' character"
+                    )
+                    continue
+                
+                if key.startswith('[') or key.endswith(']'):
+                    errors.append(
+                        f"❌ Line {line_num}: Key name contains brackets\n"
+                        f"   Found: {key}\n"
+                        f"   Fix: Did you mean to create a [SectionHeader]?"
+                    )
+                    continue
+                
+                # QUOTE VALIDATION
+                quote_errors = self.validateQuotes(value, line_num, key)
+                if quote_errors:
+                    errors.extend(quote_errors)
+                    continue
+                
+                # ELEMENT COUNT VALIDATION for dynamic sections
+                if current_section and current_section in section_element_counts:
+                    expected_count = section_element_counts[current_section]
+                    
+                    if expected_count is not None:
+                        elements = self.parseCommaSeparated(value)
+                        actual_count = len(elements)
+                        
+                        log.debug(f"DEBUG: Line {line_num} - Section [{current_section}]: "
+                                f"expected {expected_count} elements, found {actual_count}")
+                        
+                        if actual_count != expected_count:
+                            errors.append(
+                                f"❌ Line {line_num}: Wrong number of elements in [{current_section}]\n"
+                                f"   Key: {key}\n"
+                                f"   Expected: {expected_count} comma-separated elements\n"
+                                f"   Found: {actual_count} elements\n"
+                                f"   Value: {value}\n"
+                                f"   Fix: Ensure value has exactly {expected_count} comma-separated parts"
+                            )
+                
+                # Check if key-value pair is inside a section
+                if current_section is None:
+                    errors.append(
+                        f"❌ Line {line_num}: Key-value pair outside of any section\n"
+                        f"   Found: {stripped}\n"
+                        f"   Fix: Add a [SectionName] header before this line"
+                    )
+            else:
+                # No equals sign found
+                log.warning(f"DEBUG: Line {line_num} has NO '=' sign: '{stripped}'")
+                errors.append(
+                    f"❌ Line {line_num}: Invalid syntax - missing '=' sign\n"
+                    f"   Found: {stripped}\n"
+                    f"   Fix: Lines must be [Section], key=value, or comment (#)"
+                )
+        
+        log.info(f"DEBUG: validateConfigSyntax() found {len(errors)} syntax errors")
+        return errors
+
+    def validateQuotes(self, value, line_num, key):
+        """
+        Validate that quotes are properly balanced and closed.
+        Returns list of error messages if invalid.
+        """
+        errors = []
+        
+        # Check for unbalanced double quotes
+        double_quote_count = value.count('"')
+        if double_quote_count % 2 != 0:
+            errors.append(
+                f"❌ Line {line_num}: Unclosed double quote (\") in value\n"
+                f"   Key: {key}\n"
+                f"   Value: {value}\n"
+                f"   Fix: Close all double quotes - found {double_quote_count} quotes (should be even)"
+            )
+        
+        # Check for unbalanced single quotes
+        single_quote_count = value.count("'")
+        if single_quote_count % 2 != 0:
+            errors.append(
+                f"❌ Line {line_num}: Unclosed single quote (') in value\n"
+                f"   Key: {key}\n"
+                f"   Value: {value}\n"
+                f"   Fix: Close all single quotes - found {single_quote_count} quotes (should be even)"
+            )
+        
+        return errors
+
+    def parseCommaSeparated(self, value):
+        """
+        Parse comma-separated values, treating quoted strings as single elements.
+        
+        RULES:
+        - Commas in quotes don't split: 'a, "b,c"' → ['a', 'b,c']
+        - Trailing comma ignored: 'a, b,' → ['a', 'b'] (NOT 3 elements)
+        - Explicit empty needs quotes: 'a, b, ""' → ['a', 'b', '']
+        """
+        from app.auxiliary import getAppLogger
+        log = getAppLogger()
+        
+        elements = []
+        current_element = []
+        in_quotes = False
+        quote_char = None
+        
+        for char in value:
+            if char in ['"', "'"]:
+                if not in_quotes:
+                    in_quotes = True
+                    quote_char = char
+                    current_element.append(char)
+                elif char == quote_char:
+                    in_quotes = False
+                    quote_char = None
+                    current_element.append(char)
+                else:
+                    current_element.append(char)
+            elif char == ',':
+                if in_quotes:
+                    current_element.append(char)
+                else:
+                    element_text = ''.join(current_element).strip()
+                    elements.append(element_text)
+                    current_element = []
+            else:
+                current_element.append(char)
+        
+        # Final element: only add if non-empty (trailing comma case)
+        final_element = ''.join(current_element).strip()
+        if final_element:
+            elements.append(final_element)
+        
+        log.debug(f"DEBUG: Parsed {len(elements)} elements from value")
+        return elements
+
+    def validateSettingNames(self, config_text):
+        """
+        Validate that all setting keys are recognized/expected by Legion.
+        Handles dynamic sections like PortActions where keys are tool names.
+        """
+        from app.auxiliary import getAppLogger
+        log = getAppLogger()
+        
+        # Complete list of valid setting keys by section
         valid_settings = {
             'GeneralSettings': {
                 'default-terminal',
@@ -570,7 +959,8 @@ class ConfigDialog(QtWidgets.QDialog):
                 'process-tab-column-widths',
                 'process-tab-detail'
             },
-            'HostActions': 'dynamic',  # These have dynamic keys
+            # These sections have dynamic keys (tool names, action names, etc.)
+            'HostActions': 'dynamic',
             'PortActions': 'dynamic',
             'PortTerminalActions': 'dynamic',
             'SchedulerSettings': 'dynamic',
@@ -598,31 +988,34 @@ class ConfigDialog(QtWidgets.QDialog):
                     errors.append(
                         f"⚠️  Line {line_num}: Unknown section [{current_section}]\n"
                         f"   This section is not recognized by Legion.\n"
-                        f"   Valid sections: {', '.join(valid_settings.keys())}"
+                        f"   Valid sections: {', '.join(sorted(valid_settings.keys()))}"
                     )
                 continue
             
             # Check key=value pairs
             if '=' in stripped:
-                key = stripped.split('=', 1)[0].strip()
+                # Extract key (everything before FIRST equals sign)
+                first_equals_pos = stripped.index('=')
+                key = stripped[:first_equals_pos].strip()
+                
+                log.debug(f"DEBUG: Line {line_num} - checking key '{key}' in section '{current_section}'")
                 
                 if current_section and current_section in valid_settings:
                     expected_keys = valid_settings[current_section]
                     
                     # Skip validation for sections with dynamic keys
                     if expected_keys == 'dynamic':
+                        log.debug(f"DEBUG: Line {line_num} - skipping validation (dynamic section)")
                         continue
                     
                     # Check if key is in expected set
                     if key not in expected_keys:
-                        log.warning(f"DEBUG: Line {line_num}: Invalid key '{key}' in [{current_section}]")
+                        log.info(f"DEBUG: Line {line_num}: Invalid key '{key}' in [{current_section}]")
                         
                         # Find similar key names (likely typos)
                         suggestions = []
                         for valid_key in expected_keys:
-                            # Simple similarity check: if only 1-2 chars different
                             if abs(len(key) - len(valid_key)) <= 2:
-                                # Check character overlap
                                 overlap = sum(1 for c in key if c in valid_key)
                                 if overlap >= len(key) - 2:
                                     suggestions.append(valid_key)
@@ -637,265 +1030,34 @@ class ConfigDialog(QtWidgets.QDialog):
                         
                         errors.append(error_msg)
         
-        log.debug(f"DEBUG:validateSettingNames() found {len(errors)} invalid settings")
+        log.debug(f"DEBUG: validateSettingNames() found {len(errors)} invalid settings")
         return errors
 
-    def validateConfigSyntax(self, config_text):
+    def checkSettingExists(self, config_text, section, key):
         """
-        Comprehensive INI validation with element count checking for dynamic sections.
-        
-        Expected format for each section:
-        - HostActions: key=label, command (2 comma-separated elements)
-        - PortActions: key=label, command, service (3 comma-separated elements)
-        - PortTerminalActions: key=label, command, service (3 comma-separated elements)
-        - SchedulerSettings: key=value1, value2 (2 comma-separated elements)
-        - MatchSettings: key=csv,list,of,values (variable elements)
+        Check if a specific setting exists in the config text.
         """
-        from app.auxiliary import getAppLogger
-        log = getAppLogger()
-        
-        # Define expected element counts for each section type
-        section_element_counts = {
-            'HostActions': 2,  # label, command
-            'PortActions': 3,  # label, command, service
-            'PortTerminalActions': 3,  # label, command, service
-            'SchedulerSettings': 2,  # value1, value2
-            'MatchSettings': None  # Variable - any number of elements
-        }
-        
-        errors = []
         lines = config_text.split('\n')
-        current_section = None
+        in_section = False
         
-        for line_num, line in enumerate(lines, 1):
+        for line in lines:
             stripped = line.strip()
             
-            # Skip empty lines and comments
-            if not stripped or stripped.startswith('#') or stripped.startswith(';'):
+            # Check if we're entering the target section
+            if stripped == f'[{section}]':
+                in_section = True
                 continue
             
-            # Check for section headers
-            if stripped.startswith('['):
-                if not stripped.endswith(']'):
-                    errors.append(
-                        f"❌ Line {line_num}: Unclosed section header\n"
-                        f"   Found: {stripped}\n"
-                        f"   Fix: Add closing bracket ]"
-                    )
-                    continue
-                
-                section_name = stripped[1:-1].strip()
-                if not section_name:
-                    errors.append(
-                        f"❌ Line {line_num}: Empty section header\n"
-                        f"   Found: {stripped}\n"
-                        f"   Fix: Provide a section name between [ ]"
-                    )
-                elif ' ' in section_name:
-                    errors.append(
-                        f"❌ Line {line_num}: Section name contains spaces\n"
-                        f"   Found: [{section_name}]\n"
-                        f"   Fix: Remove spaces (use CamelCase)"
-                    )
-                
-                current_section = section_name
-                log.debug(f"DEBUG:Line {line_num} - Entered section [{current_section}]")
-                continue
+            # Check if we're leaving the section
+            if in_section and stripped.startswith('['):
+                in_section = False
+                break
             
-            # Check for key=value pairs
-            if '=' in stripped:
-                # Extract key and value (split on FIRST equals)
-                first_equals_pos = stripped.index('=')
-                key = stripped[:first_equals_pos].strip()
-                value = stripped[first_equals_pos + 1:].strip()
-                
-                log.debug(f"DEBUG:Line {line_num} - key: '{key}', value: '{value[:80]}...'")
-                
-                # Validate key
-                if not key:
-                    errors.append(
-                        f"❌ Line {line_num}: Missing key name before '='\n"
-                        f"   Found: {stripped}\n"
-                        f"   Fix: Add a key name: key=value"
-                    )
-                    continue
-                
-                if '=' in key:
-                    errors.append(
-                        f"❌ Line {line_num}: Key contains '=' sign\n"
-                        f"   Found key: {key}\n"
-                        f"   Fix: Key name cannot contain '=' character"
-                    )
-                    continue
-                
-                if key.startswith('[') or key.endswith(']'):
-                    errors.append(
-                        f"❌ Line {line_num}: Key name contains brackets\n"
-                        f"   Found: {key}\n"
-                        f"   Fix: Did you mean to create a [SectionHeader]?"
-                    )
-                    continue
-                
-                # QUOTE VALIDATION - Check for unclosed quotes
-                quote_errors = self.validateQuotes(value, line_num, key)
-                if quote_errors:
-                    errors.extend(quote_errors)
-                    continue  # Skip element count check if quotes are broken
-                
-                # ELEMENT COUNT VALIDATION for dynamic sections
-                if current_section and current_section in section_element_counts:
-                    expected_count = section_element_counts[current_section]
-                    
-                    if expected_count is not None:  # None means variable count allowed
-                        # Parse comma-separated elements, respecting quoted strings
-                        elements = self.parseCommaSeparated(value)
-                        actual_count = len(elements)
-                        
-                        log.debug(f"DEBUG:Line {line_num} - Section [{current_section}]: "
-                                f"expected {expected_count} elements, found {actual_count}")
-                        
-                        if actual_count != expected_count:
-                            errors.append(
-                                f"❌ Line {line_num}: Wrong number of elements in [{current_section}]\n"
-                                f"   Key: {key}\n"
-                                f"   Expected: {expected_count} comma-separated elements\n"
-                                f"   Found: {actual_count} elements\n"
-                                f"   Value: {value}\n"
-                                f"   Fix: Ensure value has exactly {expected_count} comma-separated parts"
-                            )
-                
-                # Check if key-value pair is inside a section
-                if current_section is None:
-                    errors.append(
-                        f"❌ Line {line_num}: Key-value pair outside of any section\n"
-                        f"   Found: {stripped}\n"
-                        f"   Fix: Add a [SectionName] header before this line"
-                    )
-            else:
-                # No equals sign found
-                log.warning(f"DEBUG: Line {line_num} has NO '=' sign: '{stripped}'")
-                errors.append(
-                    f"❌ Line {line_num}: Invalid syntax - missing '=' sign\n"
-                    f"   Found: {stripped}\n"
-                    f"   Fix: Lines must be [Section], key=value, or comment (#)"
-                )
+            # Check for the key in this section
+            if in_section and '=' in stripped:
+                line_key = stripped.split('=', 1)[0].strip()
+                if line_key == key:
+                    return True
         
-        log.debug(f"DEBUG:validateConfigSyntax() found {len(errors)} syntax errors")
-        return errors
-
-    def validateQuotes(self, value, line_num, key):
-        """
-        Validate that quotes are properly balanced and closed.
-        Returns list of error messages if invalid.
-        """
-        errors = []
-        
-        # Check for unbalanced double quotes
-        double_quote_count = value.count('"')
-        if double_quote_count % 2 != 0:
-            errors.append(
-                f"❌ Line {line_num}: Unclosed double quote (\") in value\n"
-                f"   Key: {key}\n"
-                f"   Value: {value}\n"
-                f"   Fix: Close all double quotes - found {double_quote_count} quotes (should be even)"
-            )
-        
-        # Check for unbalanced single quotes
-        single_quote_count = value.count("'")
-        if single_quote_count % 2 != 0:
-            errors.append(
-                f"❌ Line {line_num}: Unclosed single quote (') in value\n"
-                f"   Key: {key}\n"
-                f"   Value: {value}\n"
-                f"   Fix: Close all single quotes - found {single_quote_count} quotes (should be even)"
-            )
-        
-        # Check for mixed quote types (opening with one, closing with another)
-        # This is a basic check - looks for common patterns
-        if (value.count('"') > 0 and value.count("'") > 0):
-            # Check if there's a pattern like "text' or 'text"
-            import re
-            mixed_quote_pattern = r'''["'][^"']*['"]'''
-            if re.search(mixed_quote_pattern, value):
-                # This might be intentional (quoted string containing other quotes)
-                # Only warn if it looks suspicious
-                pass
-        
-        return errors
-
-    def parseCommaSeparated(self, value):
-        """
-        Parse comma-separated values, treating quoted strings as single elements.
-        
-        CRITICAL: Commas inside quotes do NOT count as separators!
-        
-        Examples (correct behavior):
-            'Launch dirbuster, /usr/bin/dirbuster, "http,https,ssl"' → 3 elements
-            'Run enum4linux, enum4linux [IP], "netbios-ssn,microsoft-ds"' → 3 elements
-            
-        Elements are:
-            1. Everything before first comma (outside quotes)
-            2. Everything before second comma (outside quotes)  
-            3. The quoted string "http,https,ssl" (ONE element despite internal commas)
-        """
-        import re
-        from app.auxiliary import getAppLogger
-        log = getAppLogger()
-        
-        elements = []
-        current_element = []
-        in_quotes = False
-        quote_char = None
-        
-        i = 0
-        while i < len(value):
-            char = value[i]
-            
-            # Check for quote characters
-            if char in ['"', "'"]:
-                if not in_quotes:
-                    # Starting a quoted section
-                    in_quotes = True
-                    quote_char = char
-                    current_element.append(char)
-                elif char == quote_char:
-                    # Ending the quoted section (matching quote)
-                    in_quotes = False
-                    quote_char = None
-                    current_element.append(char)
-                else:
-                    # Different quote type inside quoted string
-                    current_element.append(char)
-            
-            # Check for comma separator
-            elif char == ',':
-                if in_quotes:
-                    # Comma inside quotes - part of the value, NOT a separator
-                    current_element.append(char)
-                else:
-                    # Comma outside quotes - this is a separator
-                    element_text = ''.join(current_element).strip()
-                    elements.append(element_text)
-                    current_element = []
-            
-            else:
-                # Regular character
-                current_element.append(char)
-            
-            i += 1
-        
-        # Don't forget the last element
-        if current_element:
-            element_text = ''.join(current_element).strip()
-            elements.append(element_text)
-        
-        log.debug(f"DEBUG:Parsed {len(elements)} elements from value")
-        for idx, elem in enumerate(elements, 1):
-            preview = elem[:80] + '...' if len(elem) > 80 else elem
-            log.debug(f"DEBUG:  Element {idx}: '{preview}'")
-        
-        return elements
-
-
-
+        return False
 
