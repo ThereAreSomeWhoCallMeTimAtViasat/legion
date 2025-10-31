@@ -97,13 +97,14 @@ class Script:
                                 cve_dict['exploit'] = exploit_summary
                         elif exploitResults:
                             print("[PyExploitDb] Unexpected lookup result for {0}: {1}".format(fields[0], type(exploitResults)))
-                cve_list.append(cve_dict)
+                    cve_list.append(cve_dict)
                 continue
         # Save last product's CVEs
         if current_product and cve_list:
             resultsDict[current_product] = cve_list
 
         return resultsDict
+
 
 
     def getCves(self):
@@ -120,13 +121,13 @@ class Script:
             return []
         print("NEW CVERESULTS: {0}".format(cvesResults))
 
-           for product in cvesResults:
-               serviceCpes = cvesResults[product]
-               for cveData in serviceCpes:
-                   log.debug("NEW CVE ENTRY: {0}".format(cveData))
-                   cveObj = CVE.CVE(cveData)
-                   cveObjects.append(cveObj)
-           return cveObjects
+        for product in cvesResults:
+            serviceCpes = cvesResults[product]
+            for cveData in serviceCpes:
+                log.debug("NEW CVE ENTRY: {0}".format(cveData))
+                cveObj = CVE.CVE(cveData)
+                cveObjects.append(cveObj)
+            return cveObjects
         return None
 
 
