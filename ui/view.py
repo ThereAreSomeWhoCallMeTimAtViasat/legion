@@ -2518,42 +2518,43 @@ class View(QtCore.QObject):
             self.ui.ToolHostsTableView.selectRow(row)
             self.toolHostsClick()
 
-
-
-
-
     def updateRightPanel(self, hostIP):
         """Update right panel with host information"""
+        
+        # SAVE notes for PREVIOUS host FIRST (before loading new host)
+        if self.viewState.lastHostIdClicked:
+            try:
+                notes = self.ui.NotesTextEdit.toHtml()
+                
+                if isinstance(self.viewState.lastHostIdClicked, str) and '.' in self.viewState.lastHostIdClicked:
+                    host = self.controller.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(self.viewState.lastHostIdClicked)
+                    if host:
+                        hostId = host.id
+                        self.controller.saveProject(hostId, notes)
+                    else:
+                        log.warning(f"Cannot save notes: host {self.viewState.lastHostIdClicked} not found")
+                else:
+                    hostId = int(self.viewState.lastHostIdClicked)
+                    self.controller.saveProject(hostId, notes)
+            except Exception as e:
+                log.error(f"Error saving notes for {self.viewState.lastHostIdClicked}: {e}")
+        
+        # Update all right panel views for NEW host
         self.updateServiceTableView(hostIP)
         self.updateScriptsView(hostIP)
         self.updateCvesByHostView(hostIP)
         self.updateInformationView(hostIP)
         
-        # Save notes with proper host ID
-        if hostIP:
-            try:
-                host = self.controller.logic.activeProject.repositoryContainer.hostRepository.getHostByIP(hostIP)
-                if host:
-                    hostId = host.id
-                    notes = self.ui.NotesTextEdit.toHtml()
-                    self.controller.saveProject(hostId, notes)
-                else:
-                    log.warning(f"Cannot save notes: host {hostIP} not found")
-            except Exception as e:
-                log.error(f"Error saving notes in updateRightPanel for {hostIP}: {e}")
-            
-            # Update notes view
-            hostRow = self.HostsTableModel.getRowForIp(hostIP)
-            if hostRow is not None:
-                hostId = self.HostsTableModel.getHostIdForRow(hostRow)
-                self.updateNotesView(hostId)
+        # LOAD notes for NEW host
+        hostRow = self.HostsTableModel.getRowForIp(hostIP)
+        if hostRow is not None:
+            hostId = self.HostsTableModel.getHostIdForRow(hostRow)
+            self.updateNotesView(hostId)
+            self.viewState.lastHostIdClicked = hostId
         else:
             self.updateNotesView(None)
+            self.viewState.lastHostIdClicked = None
 
-
-
-
-            
     def displayToolPanel(self, display=False):
         log.debug("========== displayToolPanel START ==========")
         log.debug(f"displayToolPanel - display = {display}")
