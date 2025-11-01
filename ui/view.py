@@ -2049,6 +2049,8 @@ class View(QtCore.QObject):
             column_count = self.ToolsTableModel.columnCount(None)
             for i in range(column_count):
                 self.ui.ToolsTableView.setColumnHidden(i, i != 5)
+                #self.ui.ToolsTableView.setColumnHidden(i, i not in [5, 6]) #for troubleshooting
+
 
             tools = []                                                  # ensure that there is always something selected
             for row in range(self.ToolsTableModel.rowCount("")):
@@ -2483,9 +2485,10 @@ class View(QtCore.QObject):
         # Get all processes for this tool
         processes = self.controller.getHostsForTool(toolname)
         
-        # Collect process IDs that are in newTab mode (tabs with -N suffix)
+        # Collect process IDs that are in newTab mode (tabs with ->N suffix)
         # AND nmap stage processes (should never be deduplicated)
         newtab_process_ids = set()
+        newtab_run_numbers = {}
         nmap_stage_process_ids = set()
         
         for ip, tabs in self.viewState.hostTabs.items():
@@ -2498,14 +2501,16 @@ class View(QtCore.QObject):
                     if db_id:
                         nmap_stage_process_ids.add(str(db_id))
                 else:
-                    # Check if tab name has -N pattern immediately before space and opening paren
-                    # Examples: "nikto-2 (80/tcp)" -> newTab, "nikto (80/tcp)" -> append
-                    pattern = r'-(\d+)\s+\('
+                    # Check if tab name has ->N pattern immediately before space and opening paren
+                    # Examples: "nikto->2 (80/tcp)" -> newTab, "nikto (80/tcp)" -> append
+                    pattern = r'->(\d+)\s+\('
                     match = re.search(pattern, tab_name)
                     if match:
                         # This is a newTab tab, keep its process
                         if db_id:
-                            newtab_process_ids.add(str(db_id))
+                            db_id_str = str(db_id)
+                            newtab_process_ids.add(db_id_str)
+                            newtab_run_numbers[db_id_str] = int(match.group(1))
         
         # Deduplicate: keep all nmap stages, keep all newTab processes, dedupe append processes
         deduped = {}
@@ -2519,7 +2524,12 @@ class View(QtCore.QObject):
             if proc_id in nmap_stage_process_ids:
                 final_processes.append(proc)
             elif proc_id in newtab_process_ids:
-                # newTab mode: keep all processes
+                # newTab mode: keep all processes with run number in port display
+                proc = dict(proc)
+                run_number = newtab_run_numbers.get(proc_id, 1)
+                if run_number > 1:
+                    proc['port'] = f"{proc.get('port', '')}/{proc.get('protocol', '')} ->{run_number}"
+                    proc['protocol'] = ''
                 final_processes.append(proc)
             else:
                 # append mode: keep only most recent per host/port/protocol
@@ -2531,11 +2541,11 @@ class View(QtCore.QObject):
         
         self.ToolHostsTableModel = ProcessesTableModel(self, final_processes, headers)
         self.ui.ToolHostsTableView.setModel(self.ToolHostsTableModel)
-        for i in [0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15]:  # hide some columns
+        for i in [0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15]:
             self.ui.ToolHostsTableView.setColumnHidden(i, True)
-        self.ui.ToolHostsTableView.horizontalHeader().resizeSection(7, 150)  # default width for Host column
+        self.ui.ToolHostsTableView.horizontalHeader().resizeSection(7, 150)
         
-        ids = []  # ensure that there is always something selected
+        ids = []
         for row in range(self.ToolHostsTableModel.rowCount(None)):
             ids.append(self.ToolHostsTableModel.getProcessIdForRow(row))
         
@@ -2543,11 +2553,12 @@ class View(QtCore.QObject):
         if self.viewState.tool_host_clicked in ids:
             row = self.ToolHostsTableModel.getRowForDBId(self.viewState.tool_host_clicked)
         else:
-            row = 0  # or select the first row
+            row = 0
         
         if not row == None and self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex()) == 'Tools':
             self.ui.ToolHostsTableView.selectRow(row)
             self.toolHostsClick()
+
 
     def updateRightPanel(self, hostIP):
         """Update right panel with host information"""
