@@ -920,6 +920,7 @@ class ConfigDialog(QtWidgets.QDialog):
         # Complete list of valid setting keys by section
         valid_settings = {
             'GeneralSettings': {
+                'log-directory',
                 'default-terminal',
                 'tool-output-black-background',
                 'screenshooter-timeout',
