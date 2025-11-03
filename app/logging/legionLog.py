@@ -24,32 +24,61 @@ cachedAppLogger = None
 cachedStartupLogger = None
 cachedDbLogger = None
 
-cache_path = os.path.expanduser("~/.cache/legion/log")
-log_path = os.path.join(cache_path, 'legion.log')
-if not os.path.isfile(log_path):
-    if not os.path.isdir(cache_path):
-        os.makedirs(cache_path)
+
+def get_cache_path():
+    """Get log directory from legion.conf without importing Settings because settings uses logging and it causes a circular import"""
+    try:
+        from configparser import ConfigParser
+        configdir = os.path.expanduser('~/.local/share/legion')
+        configpath = os.path.join(configdir, 'legion.conf')
+        
+        if os.path.exists(configpath):
+            config = ConfigParser()
+            config.read(configpath)
+            if config.has_option('GeneralSettings', 'log-directory'):
+                log_directory = config.get('GeneralSettings', 'log-directory')
+                cache_path = os.path.join(os.getcwd(), log_directory.lstrip('./'))
+                
+                log_path = os.path.join(cache_path, 'legion.log')
+                if not os.path.isfile(log_path):
+                    if not os.path.isdir(cache_path):
+                        os.makedirs(cache_path)
+                
+                return cache_path
+    except Exception as e:
+        print(f"Error getting log directory: {e}")
+    
+    # Fallback
+    fallback = os.path.join(os.getcwd(), 'log')
+    if not os.path.isdir(fallback):
+        os.makedirs(fallback)
+    return fallback
+
+
 
 def getStartupLogger() -> Logger:
     global cachedStartupLogger
+    cache_path = get_cache_path()
     logger = getOrCreateCachedLogger("legion-startup",
-            os.path.expanduser("~/.cache/legion/log/legion-startup.log"), True, cachedStartupLogger)
+            os.path.join(cache_path, "legion-startup.log"), True, cachedStartupLogger)
     cachedStartupLogger = logger
     return logger
 
 
 def getAppLogger() -> Logger:
     global cachedAppLogger
+    cache_path = get_cache_path()
     logger = getOrCreateCachedLogger("legion",
-            os.path.expanduser("~/.cache/legion/log/legion.log"), True, cachedAppLogger)
+            os.path.join(cache_path, "legion.log"), True, cachedAppLogger)
     cachedAppLogger = logger
     return logger
 
 
 def getDbLogger() -> Logger:
     global cachedDbLogger
+    cache_path = get_cache_path()
     logger = getOrCreateCachedLogger("legion-db",
-            os.path.expanduser("~/.cache/legion/log/legion-db.log"), False, cachedDbLogger)
+            os.path.join(cache_path, "legion-db.log"), False, cachedDbLogger)
     cachedDbLogger = logger
     return logger
 
@@ -87,8 +116,3 @@ def getOrCreateCachedLogger(logName: str, logPath: str, console: bool, cachedLog
         log.error(f"Error creating file handler for {logName} at {logPath}: {e}")
     
     return log
-
-
-
-
-

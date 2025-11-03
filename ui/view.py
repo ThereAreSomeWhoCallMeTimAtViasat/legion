@@ -46,7 +46,27 @@ import pandas as pd
 from PyQt6.QtWidgets import QAbstractItemView
 from PyQt6.QtCore import Qt, QCoreApplication
 
+from app.settings import AppSettings
+
+def get_log_file_path():
+    """Get the log file path from settings"""
+    try:
+        settings = AppSettings.getGeneralSettings()
+        return os.path.join(os.getcwd(), settings.general_log_directory.lstrip("./"), "legion.log")
+    except Exception:
+        return os.path.join(os.getcwd(), "log", "legion.log")
+
+# Use this wherever you need the log path
+log_file_path = get_log_file_path()
+
+
 log = getAppLogger()
+
+# Define log directory path as a variable to avoid hardcoding
+#cache_path = os.path.expanduser("~/.cache/legion/log")
+#cache_path = os.path.join(os.getcwd(), settings.general_log_directory)
+#log_file_path = os.path.join(cache_path, "legion.log")
+
 
 # this class handles everything gui-related
 class View(QtCore.QObject):
@@ -4026,7 +4046,7 @@ class View(QtCore.QObject):
         self.ui.LogFileLevelFilterComboBox.currentIndexChanged.connect(self.handleLogFileLevelChange)
         
         # Set up file watcher for log file (initially disabled)
-        log_path = os.path.expanduser("~/.cache/legion/log/legion.log")
+        log_path = log_file_path #os.path.expanduser("~/.cache/legion/log/legion.log")
         if os.path.exists(log_path):
             self.log_file_watcher.addPath(log_path)
             self.log_file_watcher.fileChanged.connect(self.reloadLogFile)
@@ -4061,7 +4081,7 @@ class View(QtCore.QObject):
         self.ui.LogFileTextView.clear()
         
         # Reload logs from file at the selected level
-        log_path = os.path.expanduser("~/.cache/legion/log/legion.log")
+        log_path = log_file_path # = os.path.expanduser("~/.cache/legion/log/legion.log")
         if os.path.exists(log_path):
             try:
                 with open(log_path, 'r') as f:

@@ -257,6 +257,7 @@ class AppSettings():
         self.actions.clear()  # Clear all existing settings
 
         self.actions.beginGroup('GeneralSettings')
+        self.actions.setValue('log-directory', newSettings.general_log_directory)
         self.actions.setValue('default-terminal', newSettings.general_default_terminal)
         self.actions.setValue('tool-output-black-background', newSettings.general_tool_output_black_background)
         self.actions.setValue('screenshooter-timeout', newSettings.general_screenshooter_timeout)
@@ -406,6 +407,7 @@ class Settings():
     def __init__(self, appSettings=None):
 
         # general
+        self.general_log_directory = './log'
         self.general_default_terminal = "gnome-terminal"
         self.general_tool_output_black_background = "False"
         self.general_screenshooter_timeout = "15000"
@@ -504,6 +506,7 @@ class Settings():
 
 
                 # general
+                self.general_log_directory = self.generalSettings.get("log-directory", os.path.join(os.getcwd(), "log"))
                 self.general_default_terminal = self.generalSettings['default-terminal']
                 self.general_tool_output_black_background = self.generalSettings['tool-output-black-background']
                 self.general_screenshooter_timeout = self.generalSettings['screenshooter-timeout']
