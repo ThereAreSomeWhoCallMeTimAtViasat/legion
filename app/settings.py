@@ -492,6 +492,7 @@ class Settings():
         if appSettings:
             try:
                 self.generalSettings = appSettings.getGeneralSettings()
+                log.debug(f"Loaded generalSettings: {self.generalSettings}")
                 self.bruteSettings = appSettings.getBruteSettings()
                 self.stagedNmapSettings = appSettings.getStagedNmapSettings()
                 self.toolSettings = appSettings.getToolSettings()
@@ -506,7 +507,7 @@ class Settings():
 
 
                 # general
-                self.general_log_directory = self.generalSettings.get("log-directory", os.path.join(os.getcwd(), "log"))
+                self.general_log_directory = self.generalSettings.get("log-directory", "./log")
                 self.general_default_terminal = self.generalSettings['default-terminal']
                 self.general_tool_output_black_background = self.generalSettings['tool-output-black-background']
                 self.general_screenshooter_timeout = self.generalSettings['screenshooter-timeout']

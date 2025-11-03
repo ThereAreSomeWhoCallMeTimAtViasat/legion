@@ -37,9 +37,11 @@ def get_cache_path():
             config.read(configpath)
             if config.has_option('GeneralSettings', 'log-directory'):
                 log_directory = config.get('GeneralSettings', 'log-directory')
+                #print(f"log_directory is: {log_directory}")
                 cache_path = os.path.join(os.getcwd(), log_directory.lstrip('./'))
-                
+                #print(f"cache_path is: {cache_path}")
                 log_path = os.path.join(cache_path, 'legion.log')
+                #print(f"log path inside get_cache_path is: {log_path}")
                 if not os.path.isfile(log_path):
                     if not os.path.isdir(cache_path):
                         os.makedirs(cache_path)
