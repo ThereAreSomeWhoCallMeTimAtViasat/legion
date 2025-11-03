@@ -45,6 +45,7 @@ from six import u as unicode
 import pandas as pd
 from PyQt6.QtWidgets import QAbstractItemView
 from PyQt6.QtCore import Qt, QCoreApplication
+from PyQt6.QtCore import QModelIndex
 
 from app.settings import AppSettings
 
@@ -52,8 +53,13 @@ def get_log_file_path():
     """Get the log file path from settings"""
     try:
         settings = AppSettings.getGeneralSettings()
-        return os.path.join(os.getcwd(), settings.general_log_directory.lstrip("./"), "legion.log")
+        tempvar = os.path.join(os.getcwd(), settings.get("log-directory", "./log").lstrip("./"), "legion.log") #.general_log_directory.lstrip("./"), "legion.log")
+
+        log.debug(f"view - get_log_file_path:  {tempvar}")
+        return os.path.join(os.getcwd(), settings.get("log-directory", "./log").lstrip("./"), "legion.log") #settings.general_log_directory.lstrip("./"), "legion.log")
     except Exception:
+        tempvar2 = os.path.join(os.getcwd(), "log", "legion.log")
+        log.error(f"view - get_log_file_path no settings value to setting default {tempvar2}")
         return os.path.join(os.getcwd(), "log", "legion.log")
 
 # Use this wherever you need the log path
@@ -4128,7 +4134,7 @@ class View(QtCore.QObject):
             columnWidths = [int(w) for w in widthString.split(',') if w]
             
             for col, width in enumerate(columnWidths):
-                if col < tableView.model().columnCount() and width > 0:
+                if col < tableView.model().columnCount(QModelIndex()) and width > 0:
                     tableView.setColumnWidth(col, width)
         except (ValueError, AttributeError):
             pass
@@ -4190,7 +4196,7 @@ class View(QtCore.QObject):
             return
         
         columnWidths = []
-        for col in range(tableView.model().columnCount()):
+        for col in range(tableView.model().columnCount(QModelIndex())):
             width = tableView.columnWidth(col)
             columnWidths.append(str(width))
             log.debug(f"saveColumnWidths - Column {col} width: {width}")
