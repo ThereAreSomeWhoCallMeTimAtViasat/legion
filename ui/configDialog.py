@@ -957,8 +957,29 @@ class ConfigDialog(QtWidgets.QDialog):
             },
             'GUISettings': {
                 'process-tab-column-widths',
-                'process-tab-detail'
+                'hosts-table-column-widths',
+                'service-names-table-column-widths',
+                'cves-table-column-widths',
+                'scripts-table-column-widths',
+                'splitter-sizes',
+                'splitter-3-sizes',
+                'splitter-2-sizes',
+                'main-window-geometry',
+                'process-tab-detail',
+                'hosts-tab-splitter-sizes',
+                'hosts-tab-splitter-2-sizes',
+                'hosts-tab-splitter-3-sizes',
+                'services-tab-splitter-sizes',
+                'services-tab-splitter-2-sizes',
+                'services-tab-splitter-3-sizes',
+                'tools-tab-splitter-sizes',
+                'tools-tab-splitter-2-sizes',
+                'tools-tab-splitter-3-sizes',
+                'os-tab-splitter-sizes',
+                'os-tab-splitter-2-sizes',
+                'os-tab-splitter-3-sizes'
             },
+
             # These sections have dynamic keys (tool names, action names, etc.)
             'HostActions': 'dynamic',
             'PortActions': 'dynamic',

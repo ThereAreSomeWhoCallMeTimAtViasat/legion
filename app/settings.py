@@ -298,8 +298,34 @@ class AppSettings():
 
         self.actions.beginGroup('GUISettings')
         self.actions.setValue('process-tab-column-widths', newSettings.gui_process_tab_column_widths)
+        self.actions.setValue('hosts-table-column-widths', newSettings.gui_hosts_table_column_widths)
+        self.actions.setValue('service-names-table-column-widths', newSettings.gui_service_names_table_column_widths)
+        self.actions.setValue('cves-table-column-widths', newSettings.gui_cves_table_column_widths)
+        self.actions.setValue('scripts-table-column-widths', newSettings.gui_scripts_table_column_widths)
+        self.actions.setValue('splitter-sizes', newSettings.gui_splitter_sizes)
+        self.actions.setValue('splitter-3-sizes', newSettings.gui_splitter_3_sizes)
+        self.actions.setValue('splitter-2-sizes', newSettings.gui_splitter_2_sizes)
+        self.actions.setValue('main-window-geometry', newSettings.gui_main_window_geometry)
         self.actions.setValue('process-tab-detail', newSettings.gui_process_tab_detail)
+
+
+        self.actions.setValue('hosts-tab-splitter-sizes', newSettings.gui_hosts_tab_splitter_sizes)
+        self.actions.setValue('hosts-tab-splitter-2-sizes', newSettings.gui_hosts_tab_splitter_2_sizes)
+        self.actions.setValue('hosts-tab-splitter-3-sizes', newSettings.gui_hosts_tab_splitter_3_sizes)
+
+        self.actions.setValue('services-tab-splitter-sizes', newSettings.gui_services_tab_splitter_sizes)
+        self.actions.setValue('services-tab-splitter-2-sizes', newSettings.gui_services_tab_splitter_2_sizes)
+        self.actions.setValue('services-tab-splitter-3-sizes', newSettings.gui_services_tab_splitter_3_sizes)
+
+        self.actions.setValue('tools-tab-splitter-sizes', newSettings.gui_tools_tab_splitter_sizes)
+        self.actions.setValue('tools-tab-splitter-2-sizes', newSettings.gui_tools_tab_splitter_2_sizes)
+        self.actions.setValue('tools-tab-splitter-3-sizes', newSettings.gui_tools_tab_splitter_3_sizes)
+
+        self.actions.setValue('os-tab-splitter-sizes', newSettings.gui_os_tab_splitter_sizes)
+        self.actions.setValue('os-tab-splitter-2-sizes', newSettings.gui_os_tab_splitter_2_sizes)
+        self.actions.setValue('os-tab-splitter-3-sizes', newSettings.gui_os_tab_splitter_3_sizes)
         self.actions.endGroup()
+
 
         self.actions.beginGroup('HostActions')
         for a in newSettings.hostActions:
@@ -347,6 +373,7 @@ class AppSettings():
             
             # Check sync status
             status = self.actions.status()
+            log.info(f"QSettings sync status: {status}") 
             if status != QtCore.QSettings.Status.NoError:
                 log.error(f"QSettings sync failed with status: {status}")
                 return
@@ -418,10 +445,37 @@ class Settings():
         self.tools_path_cutycapt = "/usr/bin/cutycapt"
         self.tools_path_texteditor = "/usr/bin/xdg-open"
         self.tools_pyshodan_api_key = ""
-
+        
         # GUI settings
         self.gui_process_tab_column_widths = "125,0,100,150,100,100,100,100,100,100,100,100,100,100,100,100,100"
+        self.gui_hosts_table_column_widths = "150,150,150,150"
+        self.gui_service_names_table_column_widths = "150,150,150"
+        self.gui_cves_table_column_widths = "150,150,150,150,150,150"
+        self.gui_scripts_table_column_widths = "150,150,150"
+        self.gui_splitter_sizes = "200,500,200"
+        self.gui_splitter_3_sizes = "300,400"
+        self.gui_splitter_2_sizes = "400,200"
+        self.gui_main_window_geometry = "1200,800,100,100"
         self.gui_process_tab_detail = False
+
+        # splitter-sizes definitions
+        self.gui_hosts_tab_splitter_sizes = '200,500,200'
+        self.gui_hosts_tab_splitter_2_sizes = '400,200'
+        self.gui_hosts_tab_splitter_3_sizes = '300,400'
+
+        self.gui_services_tab_splitter_sizes = '200,500,200'
+        self.gui_services_tab_splitter_2_sizes = '400,200'
+        self.gui_services_tab_splitter_3_sizes = '300,400'
+
+        self.gui_tools_tab_splitter_sizes = '200,500,200'
+        self.gui_tools_tab_splitter_2_sizes = '400,200'
+        self.gui_tools_tab_splitter_3_sizes = '300,400'
+
+        self.gui_os_tab_splitter_sizes = '200,500,200'
+        self.gui_os_tab_splitter_2_sizes = '400,200'
+        self.gui_os_tab_splitter_3_sizes = '300,400'
+
+
 
         self.hostActions = []
         self.portActions = []
@@ -440,6 +494,7 @@ class Settings():
                 self.stagedNmapSettings = appSettings.getStagedNmapSettings()
                 self.toolSettings = appSettings.getToolSettings()
                 self.guiSettings = appSettings.getGUISettings()
+                log.debug(f"Loaded guiSettings: {self.guiSettings}")
                 self.hostActions = appSettings.getHostActions()
                 self.portActions = appSettings.getPortActions()
                 self.portTerminalActions = appSettings.getPortTerminalActions()
@@ -484,8 +539,39 @@ class Settings():
                 self.tools_pyshodan_api_key = self.toolSettings['pyshodan-api-key']
 
                 # gui
-                self.gui_process_tab_column_widths = self.guiSettings['process-tab-column-widths']
-                self.gui_process_tab_detail = self.guiSettings['process-tab-detail']
+                self.gui_process_tab_column_widths = self.guiSettings.get('process-tab-column-widths', "125,0,100,150,100,100,100,100,100,100,100,100,100,100,100,100,100")
+                self.gui_process_tab_detail = self.guiSettings.get('process-tab-detail', "False")
+                self.gui_hosts_table_column_widths = self.guiSettings.get('hosts-table-column-widths', "150,150,150,150")
+                self.gui_service_names_table_column_widths = self.guiSettings.get('service-names-table-column-widths', "150,150,150")
+                self.gui_cves_table_column_widths = self.guiSettings.get('cves-table-column-widths', "150,150,150,150,150,150")
+                self.gui_scripts_table_column_widths = self.guiSettings.get('scripts-table-column-widths', "150,150,150")
+                self.gui_splitter_sizes = self.guiSettings.get('splitter-sizes', "200,500,200")
+                self.gui_splitter_3_sizes = self.guiSettings.get('splitter-3-sizes', "300,400")
+                self.gui_splitter_2_sizes = self.guiSettings.get('splitter-2-sizes', "400,200")
+                #self.gui_main_window_geometry = self.guiSettings['main-window-geometry']#.get('main-window-geometry', "1200,800,100,100")
+                self.gui_main_window_geometry = self.guiSettings.get('main-window-geometry', "1200,800,100,100")
+                log.debug(f"replacing guiSettings - gui_splitter_sizes: {self.gui_splitter_sizes}")
+                log.debug(f"replacing guiSettings - main-window-geometry: {self.gui_main_window_geometry}")
+
+                # Tab-specific splitter sizes
+                self.gui_hosts_tab_splitter_sizes = self.guiSettings.get('hosts-tab-splitter-sizes', '200,500,200')
+                self.gui_hosts_tab_splitter_2_sizes = self.guiSettings.get('hosts-tab-splitter-2-sizes', '400,200')
+                self.gui_hosts_tab_splitter_3_sizes = self.guiSettings.get('hosts-tab-splitter-3-sizes', '300,400')
+
+                self.gui_services_tab_splitter_sizes = self.guiSettings.get('services-tab-splitter-sizes', '200,500,200')
+                self.gui_services_tab_splitter_2_sizes = self.guiSettings.get('services-tab-splitter-2-sizes', '400,200')
+                self.gui_services_tab_splitter_3_sizes = self.guiSettings.get('services-tab-splitter-3-sizes', '300,400')
+
+                self.gui_tools_tab_splitter_sizes = self.guiSettings.get('tools-tab-splitter-sizes', '200,500,200')
+                self.gui_tools_tab_splitter_2_sizes = self.guiSettings.get('tools-tab-splitter-2-sizes', '400,200')
+                self.gui_tools_tab_splitter_3_sizes = self.guiSettings.get('tools-tab-splitter-3-sizes', '300,400')
+
+                self.gui_os_tab_splitter_sizes = self.guiSettings.get('os-tab-splitter-sizes', '200,500,200')
+                self.gui_os_tab_splitter_2_sizes = self.guiSettings.get('os-tab-splitter-2-sizes', '400,200')
+                self.gui_os_tab_splitter_3_sizes = self.guiSettings.get('os-tab-splitter-3-sizes', '300,400')
+
+
+
 
             except KeyError as e:
                 log.info('Something went wrong while loading the configuration file. Falling back to default ' +

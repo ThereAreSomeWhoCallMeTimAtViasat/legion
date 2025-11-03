@@ -56,11 +56,40 @@ class View(QtCore.QObject):
         QtCore.QObject.__init__(self)
         self.ui = ui
         self.ui_mainwindow = ui_mainwindow  # TODO: retrieve window dimensions/location from settings
+        '''
+        # Override the main window's resizeEvent to save geometry on resize
+        original_resizeEvent = self.ui_mainwindow.resizeEvent
+        def resizeEvent_wrapper(event):
+            original_resizeEvent(event)
+            self.saveMainWindowGeometry()
+        self.ui_mainwindow.resizeEvent = resizeEvent_wrapper
+        '''
+
+        # TEMPORARY DEBUG: Track splitter size changes
+        def log_splitter_sizes(splitter_name):
+            def track():
+                sizes = getattr(self.ui, splitter_name).sizes()
+                log.debug(f"SPLITTER CHANGED: {splitter_name}.sizes() = {sizes}")
+                # Print a short stack trace to see where this is coming from
+                import traceback
+                stack = traceback.extract_stack()
+                if len(stack) > 3:
+                    caller = stack[-2]
+                    log.debug(f"  Called from: {caller.filename}:{caller.lineno} in {caller.name}")
+            return track
+
+        # Connect to splitter moved signals
+        self.ui.splitter.splitterMoved.connect(log_splitter_sizes('splitter'))
+        self.ui.splitter_2.splitterMoved.connect(log_splitter_sizes('splitter_2'))
+        self.ui.splitter_3.splitterMoved.connect(log_splitter_sizes('splitter_3'))
+
         self.app = app
         self.loop = loop
 
+
         self.bottomWindowSize = 100
         self.leftPanelSize = 300
+
 
         self.ui.splitter_2.setSizes([250, self.bottomWindowSize])  # set better default size for bottom panel
         self.qss = None
@@ -74,6 +103,7 @@ class View(QtCore.QObject):
         self.processStatusFilter = None
         # Flag to prevent double close confirmation
         self._closing = False
+
 
         #for update highlighting unread tabs
         # Track tabs with unread updates
@@ -89,6 +119,7 @@ class View(QtCore.QObject):
             
         # Track previous counts for each host to detect NEW data
         self.previous_data_counts = {}
+
 
         # Add file watcher for log file
         from PyQt6.QtCore import QFileSystemWatcher
@@ -426,6 +457,7 @@ class View(QtCore.QObject):
         self.ui.BottomTabWidget.setCurrentIndex(0)  # display Log tab by default
         self.ui.BruteTabWidget.setTabsClosable(True)  # sets all tabs as closable in bruteforcer
         self.initializeTabColors()
+        self.restoreLayoutSettings()
 
     def startConnections(self):  # signal initialisations (signals/slots, actions, etc)
         #for update highlighting unread tabs
@@ -458,6 +490,9 @@ class View(QtCore.QObject):
         self.connectSwitchMainTabClick()                                # to detect changing top level tabs
         self.connectTableDoubleClick()   # for double clicking on host (it redirects to the host view)
         self.connectProcessTableHeaderResize()
+        #self.restoreLayoutSettings()
+        self.connectLayoutChangeSignals() #for resize
+
         ### CONTEXT MENUS ###
         self.connectHostsTableContextMenu()
         self.connectServiceNamesTableContextMenu()
@@ -621,6 +656,18 @@ class View(QtCore.QObject):
 
     def connectProcessTableHeaderResize(self):
         self.ui.ProcessesTableView.horizontalHeader().sectionResized.connect(self.saveProcessHeaderWidth)
+
+    def connectLayoutChangeSignals(self):
+        """Connect layout change signals to save functions"""
+        self.ui.HostsTableView.horizontalHeader().sectionResized.connect(lambda: self.saveColumnWidths(self.ui.HostsTableView, 'gui_hosts_table_column_widths'))
+        self.ui.ServiceNamesTableView.horizontalHeader().sectionResized.connect(lambda: self.saveColumnWidths(self.ui.ServiceNamesTableView, 'gui_service_names_table_column_widths'))
+        self.ui.CvesTableView.horizontalHeader().sectionResized.connect(lambda: self.saveColumnWidths(self.ui.CvesTableView, 'gui_cves_table_column_widths'))
+        self.ui.splitter.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter, 'gui_splitter_sizes'))
+        self.ui.splitter_3.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter_3, 'gui_splitter_3_sizes'))
+        self.ui.splitter_2.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter_2, 'gui_splitter_2_sizes'))
+
+
+
 
     def saveProcessHeaderWidth(self, index, oldSize, newSize):
         columnWidths = self.controller.getSettings().gui_process_tab_column_widths.split(',')
@@ -1138,6 +1185,8 @@ class View(QtCore.QObject):
         self._exiting = True
         log.info('appExit called - setting exit flag')
         
+        self.saveMainWindowGeometry() 
+        
         if self.dealWithCurrentProject(True):  # the parameter indicates that we are exiting the application
             self.closeProject()
             log.info('Exiting application..')
@@ -1405,6 +1454,36 @@ class View(QtCore.QObject):
         self.ui.HostsTabWidget.currentChanged.connect(self.switchTabClick)
 
     def switchTabClick(self):
+        """Handle tab switching in HostsTabWidget and preserve/restore splitter state"""
+        log.debug(f"\n{'#'*80}")
+        log.debug(f"# switchTabClick - START")
+        log.debug(f"{'#'*80}")
+        
+        # Get currently selected tab in HostsTabWidget BEFORE switching
+        current_index = self.ui.HostsTabWidget.currentIndex()
+        currentTabText = self.ui.HostsTabWidget.tabText(current_index)
+        log.debug(f"switchTabClick - Current tab BEFORE switch: '{currentTabText}' (index={current_index})")
+        
+        # SAVE splitter state for the tab we're LEAVING
+        log.debug(f"switchTabClick - About to SAVE splitter state for tab we're leaving: '{currentTabText}'")
+        if currentTabText == 'Hosts':
+            log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('hosts')")
+            self.saveSplitterSizesForTab('hosts')
+            log.debug(f"switchTabClick - saveSplitterSizesForTab('hosts') completed")
+        elif currentTabText == 'Services':
+            log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('services')")
+            self.saveSplitterSizesForTab('services')
+            log.debug(f"switchTabClick - saveSplitterSizesForTab('services') completed")
+        elif currentTabText == 'Tools':
+            log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('tools')")
+            self.saveSplitterSizesForTab('tools')
+            log.debug(f"switchTabClick - saveSplitterSizesForTab('tools') completed")
+        elif currentTabText == 'OS':
+            log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('os')")
+            self.saveSplitterSizesForTab('os')
+            log.debug(f"switchTabClick - saveSplitterSizesForTab('os') completed")
+        
+        # ... rest of your existing switchTabClick code (everything that's currently there) ...
         log.debug("========== switchTabClick START ==========")
         if self.ServiceNamesTableModel:
             selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
@@ -1584,6 +1663,32 @@ class View(QtCore.QObject):
 
 
 
+        # After you switch to the new tab in HostsTabWidget, RESTORE splitter state
+        new_index = self.ui.HostsTabWidget.currentIndex()
+        selectedTab = self.ui.HostsTabWidget.tabText(new_index)
+        log.debug(f"\nswitchTabClick - NEW tab selected in HostsTabWidget: '{selectedTab}' (index={new_index})")
+        log.debug(f"switchTabClick - About to RESTORE splitter state for tab we're entering: '{selectedTab}'")
+        
+        if selectedTab == 'Hosts':
+            log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('hosts')")
+            self.restoreSplitterSizesForTab('hosts')
+            log.debug(f"switchTabClick - restoreSplitterSizesForTab('hosts') completed")
+        elif selectedTab == 'Services':
+            log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('services')")
+            self.restoreSplitterSizesForTab('services')
+            log.debug(f"switchTabClick - restoreSplitterSizesForTab('services') completed")
+        elif selectedTab == 'Tools':
+            log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('tools')")
+            self.restoreSplitterSizesForTab('tools')
+            log.debug(f"switchTabClick - restoreSplitterSizesForTab('tools') completed")
+        elif selectedTab == 'OS':
+            log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('os')")
+            self.restoreSplitterSizesForTab('os')
+            log.debug(f"switchTabClick - restoreSplitterSizesForTab('os') completed")
+        
+        log.debug(f"{'#'*80}")
+        log.debug(f"# switchTabClick - END")
+        log.debug(f"{'#'*80}\n\n")
 
     
     def _clearSuppressFlag(self):
@@ -3502,6 +3607,7 @@ class View(QtCore.QObject):
                     log.info('  [3A] About to call saveSettings()...')
                     log.info(f'  [3A] Thread count before: {threading.active_count()}')
                     
+                    self.saveMainWindowGeometry()
                     self.controller.saveSettings()
                     
                     log.info('  [3B] saveSettings() RETURNED successfully')
@@ -3988,6 +4094,312 @@ class View(QtCore.QObject):
             if self.HostsTableModel.rowCount("") > 0:
                 self.ui.HostsTableView.selectRow(0)
                 self.hostTableClick()
+    
+    def restoreColumnWidths(self, tableView, configKey):
+        """Generic method to restore column widths for any table"""
+        if not tableView or not tableView.model():
+            return
+        
+        try:
+            widthString = getattr(self.controller.getSettings(), configKey, '')
+            if not widthString:
+                return
+            
+            columnWidths = [int(w) for w in widthString.split(',') if w]
+            
+            for col, width in enumerate(columnWidths):
+                if col < tableView.model().columnCount() and width > 0:
+                    tableView.setColumnWidth(col, width)
+        except (ValueError, AttributeError):
+            pass
+    
+    def saveMainWindowGeometry(self):
+        """Save main window size and position"""
+        try:
+            geometry = self.ui.centralwidget.geometry()
+            geomString = f"{geometry.width()},{geometry.height()},{geometry.x()},{geometry.y()}"
+            
+            settingsObj = self.controller.getSettings()
+            settingsObj.gui_main_window_geometry = geomString
+            self.controller.applySettings(settingsObj)
+            log.debug(f"saveMainWindowGeometry - Saved geometry: {geomString}")
+        except Exception as e:
+            log.warning(f"Failed to save window geometry: {e}")
+
+
+    
+    def restoreMainWindowGeometry(self):
+        """Restore main window size and position"""
+        log.debug("restoreMainWindowGeometry called")
+        try:
+            geomString = self.controller.getSettings().gui_main_window_geometry
+            log.debug(f"restoreMainWindowGeometry - Retrieved geometry string: {geomString}")
+            if not geomString:
+                log.debug("restoreMainWindowGeometry - No saved geometry found")
+                return
+            width, height, x, y = [int(v) for v in geomString.split(',')]
+            log.debug(f"restoreMainWindowGeometry - Parsed values: width={width}, height={height}, x={x}, y={y}")
+            self.ui_mainwindow.setGeometry(x, y, width, height)
+            log.debug(f"restoreMainWindowGeometry - Restored main window geometry: {geomString}")
+        except (ValueError, AttributeError) as e:
+            log.warning(f"restoreMainWindowGeometry - Error: {e}")
+
+
+
+    def restoreLayoutSettings(self):
+        """Restore all saved layout settings on startup"""
+        log.debug("restoreLayoutSettings called")
+        self.restoreColumnWidths(self.ui.HostsTableView, 'gui_hosts_table_column_widths')
+        self.restoreColumnWidths(self.ui.ServiceNamesTableView, 'gui_service_names_table_column_widths')
+        self.restoreColumnWidths(self.ui.CvesTableView, 'gui_cves_table_column_widths')
+        
+        self.restoreSplitterSizes(self.ui.splitter, 'gui_splitter_sizes')
+        self.restoreSplitterSizes(self.ui.splitter_3, 'gui_splitter_3_sizes')
+        self.restoreSplitterSizes(self.ui.splitter_2, 'gui_splitter_2_sizes')
+        
+        self.restoreMainWindowGeometry()
+        log.debug("restoreLayoutSettings completed")
+
+
+    def saveColumnWidths(self, tableView, configKey):
+        """Generic method to save column widths for any table"""
+        log.debug(f"saveColumnWidths called with configKey: {configKey}")
+        
+        if not tableView or not tableView.model():
+            log.debug(f"saveColumnWidths - tableView or model is None, returning")
+            return
+        
+        columnWidths = []
+        for col in range(tableView.model().columnCount()):
+            width = tableView.columnWidth(col)
+            columnWidths.append(str(width))
+            log.debug(f"saveColumnWidths - Column {col} width: {width}")
+        
+        widthString = ','.join(columnWidths)
+        log.debug(f"saveColumnWidths - Final widthString: {widthString}")
+        
+        # Update settings in memory
+        settingsObj = self.controller.getSettings()
+        log.debug(f"saveColumnWidths - Got settings object: {settingsObj}")
+        log.debug(f"saveColumnWidths - Setting attribute {configKey} to {widthString}")
+        setattr(settingsObj, configKey, widthString)
+        
+        # Verify it was set
+        newValue = getattr(settingsObj, configKey, 'NOT FOUND')
+        log.debug(f"saveColumnWidths - Verification: {configKey} is now {newValue}")
+        
+        self.controller.applySettings(settingsObj)
+        log.debug(f"saveColumnWidths - Called applySettings")
+        
+        # Save to disk
+        self.controller.saveSettings()
+        log.debug(f"saveColumnWidths - Called saveSettings")
+    
+    def saveSplitterSizes(self, splitter, configKey):
+        """Generic method to save splitter sizes"""
+        log.debug(f"saveSplitterSizes called with configKey: {configKey}")
+        
+        if not splitter:
+            log.debug(f"saveSplitterSizes - splitter is None, returning")
+            return
+        
+        sizes = splitter.sizes()
+        log.debug(f"saveSplitterSizes - Splitter sizes: {sizes}")
+        sizeString = ','.join(str(size) for size in sizes)
+        log.debug(f"saveSplitterSizes - Final sizeString: {sizeString}")
+        
+        # Update settings in memory
+        settingsObj = self.controller.getSettings()
+        log.debug(f"saveSplitterSizes - Got settings object: {settingsObj}")
+        log.debug(f"saveSplitterSizes - Setting attribute {configKey} to {sizeString}")
+        setattr(settingsObj, configKey, sizeString)
+        
+        # Verify it was set
+        newValue = getattr(settingsObj, configKey, 'NOT FOUND')
+        log.debug(f"saveSplitterSizes - Verification: {configKey} is now {newValue}")
+        
+        self.controller.applySettings(settingsObj)
+        log.debug(f"saveSplitterSizes - Called applySettings")
+        
+        # Save to disk
+        self.controller.saveSettings()
+        log.debug(f"saveSplitterSizes - Called saveSettings")
+    
+    def restoreSplitterSizes(self, splitter, configKey):
+        """Generic method to restore splitter sizes"""
+        log.debug(f"restoreSplitterSizes called with configKey: {configKey}")
+        
+        if not splitter:
+            log.debug(f"restoreSplitterSizes - splitter is None, returning")
+            return
+        
+        try:
+            settingsObj = self.controller.getSettings()
+            log.debug(f"restoreSplitterSizes - Got settings object")
+            
+            sizeString = getattr(settingsObj, configKey, '')
+            log.debug(f"restoreSplitterSizes - Retrieved {configKey} value: {sizeString}")
+            
+            if not sizeString:
+                log.debug(f"restoreSplitterSizes - sizeString is empty, returning")
+                return
+            
+            sizes = [int(s) for s in sizeString.split(',') if s]
+            log.debug(f"restoreSplitterSizes - Parsed sizes: {sizes}")
+            
+            if sizes:
+                log.debug(f"restoreSplitterSizes - Setting splitter sizes to {sizes}")
+                splitter.setSizes(sizes)
+                log.debug(f"restoreSplitterSizes - Splitter sizes set successfully")
+            else:
+                log.debug(f"restoreSplitterSizes - sizes list is empty")
+        except (ValueError, AttributeError) as e:
+            log.debug(f"restoreSplitterSizes - Exception: {e}")
+
+    def saveSplitterSizesForTab(self, tab_name):
+        """Save splitter sizes for a specific tab"""
+        log.debug(f"\n{'='*80}")
+        log.debug(f"saveSplitterSizesForTab - START for tab: {tab_name}")
+        log.debug(f"{'='*80}")
+        
+        try:
+            # Get current splitter sizes
+            sizes_splitter = self.ui.splitter.sizes()
+            sizes_splitter_3 = self.ui.splitter_3.sizes()
+            sizes_splitter_2 = self.ui.splitter_2.sizes()
+            
+            log.debug(f"saveSplitterSizesForTab - Current splitter sizes:")
+            log.debug(f"  splitter:   {sizes_splitter}")
+            log.debug(f"  splitter_3: {sizes_splitter_3}")
+            log.debug(f"  splitter_2: {sizes_splitter_2}")
+            
+            # Create comma-separated strings
+            size_string_splitter = ','.join(str(size) for size in sizes_splitter)
+            size_string_splitter_3 = ','.join(str(size) for size in sizes_splitter_3)
+            size_string_splitter_2 = ','.join(str(size) for size in sizes_splitter_2)
+            
+            log.debug(f"saveSplitterSizesForTab - Created strings:")
+            log.debug(f"  splitter:   '{size_string_splitter}'")
+            log.debug(f"  splitter_3: '{size_string_splitter_3}'")
+            log.debug(f"  splitter_2: '{size_string_splitter_2}'")
+            
+            # Store in settings
+            settings_obj = self.controller.getSettings()
+            log.debug(f"saveSplitterSizesForTab - Got settings object: {settings_obj}")
+            
+            if tab_name == 'hosts':
+                settings_obj.gui_hosts_tab_splitter_sizes = size_string_splitter
+                settings_obj.gui_hosts_tab_splitter_3_sizes = size_string_splitter_3
+                settings_obj.gui_hosts_tab_splitter_2_sizes = size_string_splitter_2
+                log.debug(f"saveSplitterSizesForTab - Updated HOSTS attributes in settings object")
+            elif tab_name == 'services':
+                settings_obj.gui_services_tab_splitter_sizes = size_string_splitter
+                settings_obj.gui_services_tab_splitter_3_sizes = size_string_splitter_3
+                settings_obj.gui_services_tab_splitter_2_sizes = size_string_splitter_2
+                log.debug(f"saveSplitterSizesForTab - Updated SERVICES attributes in settings object")
+            elif tab_name == 'tools':
+                settings_obj.gui_tools_tab_splitter_sizes = size_string_splitter
+                settings_obj.gui_tools_tab_splitter_3_sizes = size_string_splitter_3
+                settings_obj.gui_tools_tab_splitter_2_sizes = size_string_splitter_2
+                log.debug(f"saveSplitterSizesForTab - Updated TOOLS attributes in settings object")
+            elif tab_name == 'os':
+                settings_obj.gui_os_tab_splitter_sizes = size_string_splitter
+                settings_obj.gui_os_tab_splitter_3_sizes = size_string_splitter_3
+                settings_obj.gui_os_tab_splitter_2_sizes = size_string_splitter_2
+                log.debug(f"saveSplitterSizesForTab - Updated OS attributes in settings object")
+            else:
+                log.warning(f"saveSplitterSizesForTab - Unknown tab_name: {tab_name}")
+                return
+            
+            # Save to disk
+            log.debug(f"saveSplitterSizesForTab - Calling applySettings() to save to disk")
+            self.controller.applySettings(settings_obj)
+            log.debug(f"saveSplitterSizesForTab - SAVED to disk successfully")
+            log.debug(f"{'='*80}\n")
+        
+        except Exception as e:
+            log.error(f"saveSplitterSizesForTab - ERROR: {e}", exc_info=True)
+            log.debug(f"{'='*80}\n")
+
+    def restoreSplitterSizesForTab(self, tab_name):
+        """Restore splitter sizes for a specific tab"""
+        log.debug(f"\n{'='*80}")
+        log.debug(f"restoreSplitterSizesForTab - START for tab: {tab_name}")
+        log.debug(f"{'='*80}")
+        
+        try:
+            settings_obj = self.controller.getSettings()
+            log.debug(f"restoreSplitterSizesForTab - Got settings object")
+            
+            if tab_name == 'hosts':
+                size_string_splitter = settings_obj.gui_hosts_tab_splitter_sizes
+                size_string_splitter_3 = settings_obj.gui_hosts_tab_splitter_3_sizes
+                size_string_splitter_2 = settings_obj.gui_hosts_tab_splitter_2_sizes
+                log.debug(f"restoreSplitterSizesForTab - Retrieved HOSTS settings")
+            elif tab_name == 'services':
+                size_string_splitter = settings_obj.gui_services_tab_splitter_sizes
+                size_string_splitter_3 = settings_obj.gui_services_tab_splitter_3_sizes
+                size_string_splitter_2 = settings_obj.gui_services_tab_splitter_2_sizes
+                log.debug(f"restoreSplitterSizesForTab - Retrieved SERVICES settings")
+            elif tab_name == 'tools':
+                size_string_splitter = settings_obj.gui_tools_tab_splitter_sizes
+                size_string_splitter_3 = settings_obj.gui_tools_tab_splitter_3_sizes
+                size_string_splitter_2 = settings_obj.gui_tools_tab_splitter_2_sizes
+                log.debug(f"restoreSplitterSizesForTab - Retrieved TOOLS settings")
+            elif tab_name == 'os':
+                size_string_splitter = settings_obj.gui_os_tab_splitter_sizes
+                size_string_splitter_3 = settings_obj.gui_os_tab_splitter_3_sizes
+                size_string_splitter_2 = settings_obj.gui_os_tab_splitter_2_sizes
+                log.debug(f"restoreSplitterSizesForTab - Retrieved OS settings")
+            else:
+                log.warning(f"restoreSplitterSizesForTab - Unknown tab_name: {tab_name}")
+                log.debug(f"{'='*80}\n")
+                return
+            
+            log.debug(f"restoreSplitterSizesForTab - Retrieved strings:")
+            log.debug(f"  splitter:   '{size_string_splitter}'")
+            log.debug(f"  splitter_3: '{size_string_splitter_3}'")
+            log.debug(f"  splitter_2: '{size_string_splitter_2}'")
+            
+            # Parse and restore each splitter independently
+            log.debug(f"restoreSplitterSizesForTab - Parsing and applying sizes...")
+            
+            try:
+                sizes_splitter = [int(s) for s in size_string_splitter.split(',') if s]
+                log.debug(f"restoreSplitterSizesForTab - Parsed splitter sizes: {sizes_splitter}")
+                if sizes_splitter:
+                    log.debug(f"restoreSplitterSizesForTab - APPLYING splitter.setSizes({sizes_splitter})")
+                    self.ui.splitter.setSizes(sizes_splitter)
+                    log.debug(f"restoreSplitterSizesForTab - APPLIED splitter sizes")
+            except ValueError as e:
+                log.warning(f"restoreSplitterSizesForTab - Error parsing splitter sizes: {e}")
+            
+            try:
+                sizes_splitter_3 = [int(s) for s in size_string_splitter_3.split(',') if s]
+                log.debug(f"restoreSplitterSizesForTab - Parsed splitter_3 sizes: {sizes_splitter_3}")
+                if sizes_splitter_3:
+                    log.debug(f"restoreSplitterSizesForTab - APPLYING splitter_3.setSizes({sizes_splitter_3})")
+                    self.ui.splitter_3.setSizes(sizes_splitter_3)
+                    log.debug(f"restoreSplitterSizesForTab - APPLIED splitter_3 sizes")
+            except ValueError as e:
+                log.warning(f"restoreSplitterSizesForTab - Error parsing splitter_3 sizes: {e}")
+            
+            try:
+                sizes_splitter_2 = [int(s) for s in size_string_splitter_2.split(',') if s]
+                log.debug(f"restoreSplitterSizesForTab - Parsed splitter_2 sizes: {sizes_splitter_2}")
+                if sizes_splitter_2:
+                    log.debug(f"restoreSplitterSizesForTab - APPLYING splitter_2.setSizes({sizes_splitter_2})")
+                    self.ui.splitter_2.setSizes(sizes_splitter_2)
+                    log.debug(f"restoreSplitterSizesForTab - APPLIED splitter_2 sizes")
+            except ValueError as e:
+                log.warning(f"restoreSplitterSizesForTab - Error parsing splitter_2 sizes: {e}")
+            
+            log.debug(f"restoreSplitterSizesForTab - COMPLETE")
+            log.debug(f"{'='*80}\n")
+        
+        except Exception as e:
+            log.error(f"restoreSplitterSizesForTab - ERROR: {e}", exc_info=True)
+            log.debug(f"{'='*80}\n")
 
 
 
