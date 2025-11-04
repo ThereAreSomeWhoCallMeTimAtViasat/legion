@@ -244,7 +244,7 @@ class AppSettings():
             # Backup to repo root
             if os.path.exists(working_config):
                 try:
-                    repo_backup = os.path.join(reporoot, f'{timestamp}-legion.conf.backup')
+                    repo_backup = os.path.join(reporoot, "backup", f'{timestamp}-legion.conf.backup')
                     shutil.copy(working_config, repo_backup)
                     log.info(f"Backed up old config to repo: {repo_backup}")
                 except Exception as e:
