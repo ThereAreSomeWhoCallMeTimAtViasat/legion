@@ -2477,6 +2477,10 @@ class View(QtCore.QObject):
     def updateScriptsView(self, hostIP):
         headers = ['Id', 'Script', 'Port', 'Protocol']
         scripts_data = self.controller.getScriptsFromDB(hostIP)
+        
+        # Clear the script output display when switching hosts
+        self.ui.ScriptsOutputTextEdit.clear()
+
         self.ScriptsTableModel = ScriptsTableModel(self, scripts_data, headers)
         self.ui.ScriptsTableView.setModel(self.ScriptsTableModel)
         
