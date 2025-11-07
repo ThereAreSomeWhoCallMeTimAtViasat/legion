@@ -500,7 +500,7 @@ class View(QtCore.QObject):
             sizes = [int(s) for s in sizesplitter.split(',') if s]
             #        if sizes:
             self.ui.splitter.setSizes(sizes)
-            log.info(f"Restored hosts tab splitter sizes: {sizes}")
+            log.debug(f"Restored hosts tab splitter sizes: {sizes}")
                 
                 # Restore splitter2 if it exists
             #    if hasattr(hosts_widget, 'splitter2'):
@@ -509,7 +509,7 @@ class View(QtCore.QObject):
             sizes2 = [int(s) for s in sizesplitter2.split(',') if s]
             #            if sizes2:
             self.ui.splitter_2.setSizes(sizes2)
-            log.info(f"Restored hosts tab splitter2 sizes: {sizes2}")
+            log.debug(f"Restored hosts tab splitter2 sizes: {sizes2}")
                 
                 # Restore splitter3 if it exists
             #    if hasattr(hosts_widget, 'splitter3'):
@@ -518,7 +518,7 @@ class View(QtCore.QObject):
             sizes3 = [int(s) for s in sizesplitter3.split(',') if s]
             #            if sizes3:
             self.ui.splitter_3.setSizes(sizes3)
-            log.info(f"Restored hosts tab splitter3 sizes: {sizes3}")
+            log.debug(f"Restored hosts tab splitter3 sizes: {sizes3}")
         except Exception as e:
             log.warning(f"Could not restore hosts tab splitter sizes on startup: {e}")
         self.isInitializing = False
@@ -4369,11 +4369,11 @@ class View(QtCore.QObject):
             
             if tab_name == 'hosts':
                 settings_obj.gui_hosts_tab_splitter_sizes = size_string_splitter
-                log.info(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_sizes to '{size_string_splitter}'")
+                log.debug(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_sizes to '{size_string_splitter}'")
                 settings_obj.gui_hosts_tab_splitter_3_sizes = size_string_splitter_3
-                log.info(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_3_sizes to '{size_string_splitter_3}'")
+                log.debug(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_3_sizes to '{size_string_splitter_3}'")
                 settings_obj.gui_hosts_tab_splitter_2_sizes = size_string_splitter_2
-                log.info(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_2_sizes to '{size_string_splitter_2}'")
+                log.debug(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_2_sizes to '{size_string_splitter_2}'")
                 log.debug(f"saveSplitterSizesForTab - Updated HOSTS attributes in settings object")
             elif tab_name == 'services':
                 settings_obj.gui_services_tab_splitter_sizes = size_string_splitter
