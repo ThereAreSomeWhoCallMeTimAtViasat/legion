@@ -46,6 +46,19 @@ class MyEventFilter(QObject):
             return self.filterKeyPressInHostsTableView(event.key(), receiver)
         elif event.type() == QEvent.Type.Close and receiver == self.main_window:
             log.info("Close event detected by event filter")
+
+            # Save the currently active tab's splitter sizes before exiting
+            try:
+                current_index = self.view.ui.HostsTabWidget.currentIndex()
+                if current_index >= 0:
+                    current_widget = self.view.ui.HostsTabWidget.currentWidget()
+                    if current_widget and hasattr(current_widget, 'splitter'):
+                        self.view.saveSplitterSizesForTab(current_index, 'HostsTab')
+                        log.debug(f"Saved hosts tab splitter sizes for tab {current_index} before exit")
+                    else:
+                        log.warning(f"Current widget for tab {current_index} has no splitter attribute")
+            except Exception as e:
+                log.warning(f"Could not save hosts tab splitter sizes on exit: {e}")
             
             # Check if already exiting to prevent loop
             if hasattr(self.view, '_exiting') and self.view._exiting:

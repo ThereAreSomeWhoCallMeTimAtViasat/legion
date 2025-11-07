@@ -50,18 +50,18 @@ from PyQt6.QtCore import QModelIndex
 from app.settings import AppSettings
 
 def get_log_file_path():
-    """Get the log file path from settings"""
+    """Get the log file path from settings in legion.conf"""
     try:
-        settings = AppSettings.getGeneralSettings()
-        tempvar = os.path.join(os.getcwd(), settings.get("log-directory", "./log").lstrip("./"), "legion.log") #.general_log_directory.lstrip("./"), "legion.log")
-
-        log.debug(f"view - get_log_file_path:  {tempvar}")
-        return os.path.join(os.getcwd(), settings.get("log-directory", "./log").lstrip("./"), "legion.log") #settings.general_log_directory.lstrip("./"), "legion.log")
-    except Exception:
-        tempvar2 = os.path.join(os.getcwd(), "log", "legion.log")
-        log.error(f"view - get_log_file_path no settings value to setting default {tempvar2}")
-        return os.path.join(os.getcwd(), "log", "legion.log")
-
+        app_settings = AppSettings()
+        settings = app_settings.getGeneralSettings()
+        log_file_path = os.path.join(os.getcwd(), settings.get("log-directory", "./log").lstrip("./"), "legion.log")
+        log.debug(f"view - get_log_file_path: {log_file_path}")
+        return log_file_path
+    except Exception as e:
+        default_path = os.path.join(os.getcwd(), "log", "legion.log")
+        log.error(f"view - get_log_file_path failed to read from settings: {e}. Using default: {default_path}")
+        return default_path
+    
 # Use this wherever you need the log path
 log_file_path = get_log_file_path()
 
@@ -82,6 +82,7 @@ class View(QtCore.QObject):
         QtCore.QObject.__init__(self)
         self.ui = ui
         self.ui_mainwindow = ui_mainwindow  # TODO: retrieve window dimensions/location from settings
+        self.isInitializing = True
         '''
         # Override the main window's resizeEvent to save geometry on resize
         original_resizeEvent = self.ui_mainwindow.resizeEvent
@@ -152,8 +153,9 @@ class View(QtCore.QObject):
         self.log_file_watcher = QFileSystemWatcher()
         self.current_log_file_level = 0  # Track current filter level (0=INFO, 1=DEBUG)
 
+        self.previous_tab_index = 0  # Track the last selected tab
 
-    def highlightTab(self, tabname):
+    def highlightTab(self, tabname):    
         """
         Highlight a tab with orange text when new data is added
         """
@@ -455,8 +457,8 @@ class View(QtCore.QObject):
         self.restoreToolTabWidget(True)                  # True means we want to show the original textedit
         self.updateScriptsOutputView('')                                # update the script output panel (right)
         self.updateToolHostsTableView('')
-        self.ui.MainTabWidget.setCurrentIndex(0)                        # display scan tab by default
-        self.ui.HostsTabWidget.setCurrentIndex(0)                       # display Hosts tab by default
+        self.ui.MainTabWidget.setCurrentIndex(0)                        # display scan tab by default      
+        self.ui.HostsTabWidget.setCurrentIndex(0)  # display Hosts tab by default   
         self.ui.ServicesTabWidget.setCurrentIndex(0)                    # display Services tab by default
         self.ui.BottomTabWidget.setCurrentIndex(0)                      # display Log tab by default
         self.ui.BruteTabWidget.setTabsClosable(True)                    # sets all tabs as closable in bruteforcer
@@ -484,6 +486,42 @@ class View(QtCore.QObject):
         self.ui.BruteTabWidget.setTabsClosable(True)  # sets all tabs as closable in bruteforcer
         self.initializeTabColors()
         self.restoreLayoutSettings()
+        # Restore hosts tab splitter sizes on startup
+        try:
+            appsettings = AppSettings()
+            settings = appsettings.getGUISettings()
+            
+            # Get the hosts tab widget (index 0)
+            #hosts_widget = self.ui.HostsTabWidget.widget(0)
+            #if hosts_widget and hasattr(hosts_widget, 'splitter'):
+                # Restore main splitter
+            sizesplitter = settings.get('hosts-tab-splitter-sizes')
+            #    if sizesplitter:
+            sizes = [int(s) for s in sizesplitter.split(',') if s]
+            #        if sizes:
+            self.ui.splitter.setSizes(sizes)
+            log.info(f"Restored hosts tab splitter sizes: {sizes}")
+                
+                # Restore splitter2 if it exists
+            #    if hasattr(hosts_widget, 'splitter2'):
+            sizesplitter2 = settings.get('hosts-tab-splitter-2-sizes')
+            #        if sizesplitter2:
+            sizes2 = [int(s) for s in sizesplitter2.split(',') if s]
+            #            if sizes2:
+            self.ui.splitter_2.setSizes(sizes2)
+            log.info(f"Restored hosts tab splitter2 sizes: {sizes2}")
+                
+                # Restore splitter3 if it exists
+            #    if hasattr(hosts_widget, 'splitter3'):
+            sizesplitter3 = settings.get('hosts-tab-splitter-3-sizes')
+            #        if sizesplitter3:
+            sizes3 = [int(s) for s in sizesplitter3.split(',') if s]
+            #            if sizes3:
+            self.ui.splitter_3.setSizes(sizes3)
+            log.info(f"Restored hosts tab splitter3 sizes: {sizes3}")
+        except Exception as e:
+            log.warning(f"Could not restore hosts tab splitter sizes on startup: {e}")
+        self.isInitializing = False
 
     def startConnections(self):  # signal initialisations (signals/slots, actions, etc)
         #for update highlighting unread tabs
@@ -688,9 +726,9 @@ class View(QtCore.QObject):
         self.ui.HostsTableView.horizontalHeader().sectionResized.connect(lambda: self.saveColumnWidths(self.ui.HostsTableView, 'gui_hosts_table_column_widths'))
         self.ui.ServiceNamesTableView.horizontalHeader().sectionResized.connect(lambda: self.saveColumnWidths(self.ui.ServiceNamesTableView, 'gui_service_names_table_column_widths'))
         self.ui.CvesTableView.horizontalHeader().sectionResized.connect(lambda: self.saveColumnWidths(self.ui.CvesTableView, 'gui_cves_table_column_widths'))
-        self.ui.splitter.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter, 'gui_splitter_sizes'))
-        self.ui.splitter_3.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter_3, 'gui_splitter_3_sizes'))
-        self.ui.splitter_2.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter_2, 'gui_splitter_2_sizes'))
+        #self.ui.splitter.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter, 'gui_splitter_sizes'))
+        #self.ui.splitter_3.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter_3, 'gui_splitter_3_sizes'))
+        #self.ui.splitter_2.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter_2, 'gui_splitter_2_sizes'))
 
 
 
@@ -1485,34 +1523,35 @@ class View(QtCore.QObject):
         log.debug(f"# switchTabClick - START")
         log.debug(f"{'#'*80}")
         
-        # Get currently selected tab in HostsTabWidget BEFORE switching
+        # Get the PREVIOUS tab (the one we're LEAVING)
+        previousTabText = self.ui.HostsTabWidget.tabText(self.previous_tab_index)
+        log.debug(f"switchTabClick - PREVIOUS tab (leaving): '{previousTabText}' (index={self.previous_tab_index})")
+        
+        # Get the CURRENT tab (the one we're ENTERING)
         current_index = self.ui.HostsTabWidget.currentIndex()
         currentTabText = self.ui.HostsTabWidget.tabText(current_index)
-        log.debug(f"switchTabClick - Current tab BEFORE switch: '{currentTabText}' (index={current_index})")
+        log.debug(f"switchTabClick - CURRENT tab (entering): '{currentTabText}' (index={current_index})")
         
-        # SAVE splitter state for the tab we're LEAVING
-        log.debug(f"switchTabClick - About to SAVE splitter state for tab we're leaving: '{currentTabText}'")
-        if currentTabText == 'Hosts':
+        # SAVE splitter state for the tab we're LEAVING (previous tab)
+        log.debug(f"switchTabClick - About to SAVE splitter state for tab we're leaving: '{previousTabText}'")
+        if previousTabText == 'Hosts':
             log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('hosts')")
             self.saveSplitterSizesForTab('hosts')
-            log.debug(f"switchTabClick - saveSplitterSizesForTab('hosts') completed")
-        elif currentTabText == 'Services':
+        elif previousTabText == 'Services':
             log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('services')")
             self.saveSplitterSizesForTab('services')
-            log.debug(f"switchTabClick - saveSplitterSizesForTab('services') completed")
-        elif currentTabText == 'Tools':
+        elif previousTabText == 'Tools':
             log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('tools')")
             self.saveSplitterSizesForTab('tools')
-            log.debug(f"switchTabClick - saveSplitterSizesForTab('tools') completed")
-        elif currentTabText == 'OS':
+        elif previousTabText == 'OS':
             log.debug(f"switchTabClick - Calling saveSplitterSizesForTab('os')")
             self.saveSplitterSizesForTab('os')
-            log.debug(f"switchTabClick - saveSplitterSizesForTab('os') completed")
         
         # ... rest of your existing switchTabClick code (everything that's currently there) ...
         log.debug("========== switchTabClick START ==========")
         if self.ServiceNamesTableModel:
-            selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
+            selectedTab = currentTabText  # Use currentTabText instead of re-reading
+            #selectedTab = self.ui.HostsTabWidget.tabText(self.ui.HostsTabWidget.currentIndex())
             log.debug(f"switchTabClick - selectedTab = '{selectedTab}'")
             log.debug(f"switchTabClick - BEFORE: unread_tabs = {self.unread_tabs}")
             
@@ -1695,22 +1734,22 @@ class View(QtCore.QObject):
         log.debug(f"\nswitchTabClick - NEW tab selected in HostsTabWidget: '{selectedTab}' (index={new_index})")
         log.debug(f"switchTabClick - About to RESTORE splitter state for tab we're entering: '{selectedTab}'")
         
-        if selectedTab == 'Hosts':
+        if currentTabText == 'Hosts':
             log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('hosts')")
             self.restoreSplitterSizesForTab('hosts')
-            log.debug(f"switchTabClick - restoreSplitterSizesForTab('hosts') completed")
-        elif selectedTab == 'Services':
+        elif currentTabText == 'Services':
             log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('services')")
             self.restoreSplitterSizesForTab('services')
-            log.debug(f"switchTabClick - restoreSplitterSizesForTab('services') completed")
-        elif selectedTab == 'Tools':
+        elif currentTabText == 'Tools':
             log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('tools')")
             self.restoreSplitterSizesForTab('tools')
-            log.debug(f"switchTabClick - restoreSplitterSizesForTab('tools') completed")
-        elif selectedTab == 'OS':
+        elif currentTabText == 'OS':
             log.debug(f"switchTabClick - Calling restoreSplitterSizesForTab('os')")
             self.restoreSplitterSizesForTab('os')
-            log.debug(f"switchTabClick - restoreSplitterSizesForTab('os') completed")
+        
+        # UPDATE the previous_tab_index for next time
+        self.previous_tab_index = current_index
+        log.debug(f"switchTabClick - Updated previous_tab_index to {self.previous_tab_index}")
         
         log.debug(f"{'#'*80}")
         log.debug(f"# switchTabClick - END")
@@ -3704,26 +3743,26 @@ class View(QtCore.QObject):
 
     
     def closeEvent(self, event):
-        """
-        Handle window close event (X button clicked).
-        Uses flag to prevent double confirmation dialog.
-        """
-        log.info('=== closeEvent triggered ===')
+        """Handle window close event (X button clicked)."""
+        log.info("closeEvent triggered")
         
-        # Prevent double close confirmation (Qt bug on some platforms)
-        if self._closing:
-            log.info('closeEvent: Already closing, accepting immediately')
-            event.accept()
-            return
+        # Save the currently active tab's splitter sizes before exiting
+        try:
+            current_index = self.ui.HostsTabWidget.currentIndex()
+            if current_index >= 0:
+                current_widget = self.ui.HostsTabWidget.currentWidget()
+                if current_widget and hasattr(current_widget, 'splitter'):
+                    self.saveSplitterSizesForTab(current_index, 'HostsTab')
+                    log.debug(f"Saved hosts tab splitter sizes for tab {current_index} before exit")
+        except Exception as e:
+            log.warning(f"Could not save hosts tab splitter sizes on exit: {e}")
         
-        # Check if we can proceed with closing
         if self.dealWithCurrentProject(exiting=True):
-            log.info('closeEvent: User confirmed exit, setting closing flag')
-            self._closing = True
+            log.info("closeEvent User confirmed exit, setting closing flag")
+            self.closing = True
             event.accept()
-            # Cleanup will be handled by aboutToQuit signal
         else:
-            log.info('closeEvent: User canceled exit, ignoring event')
+            log.info("closeEvent User canceled exit, ignoring event")
             event.ignore()
 
     def updateTabHighlight(self, hostIp, tabTitle):
@@ -4218,8 +4257,8 @@ class View(QtCore.QObject):
         log.debug(f"saveColumnWidths - Called applySettings")
         
         # Save to disk
-        self.controller.saveSettings()
-        log.debug(f"saveColumnWidths - Called saveSettings")
+        #self.controller.saveSettings()
+        #log.debug(f"saveColumnWidths - Called saveSettings")
     
     def saveSplitterSizes(self, splitter, configKey):
         """Generic method to save splitter sizes"""
@@ -4248,8 +4287,8 @@ class View(QtCore.QObject):
         log.debug(f"saveSplitterSizes - Called applySettings")
         
         # Save to disk
-        self.controller.saveSettings()
-        log.debug(f"saveSplitterSizes - Called saveSettings")
+        #self.controller.saveSettings()
+        #log.debug(f"saveSplitterSizes - Called saveSettings")
     
     def restoreSplitterSizes(self, splitter, configKey):
         """Generic method to restore splitter sizes"""
@@ -4270,7 +4309,10 @@ class View(QtCore.QObject):
                 log.debug(f"restoreSplitterSizes - sizeString is empty, returning")
                 return
             
-            sizes = [int(s) for s in sizeString.split(',') if s]
+            # Handle list representation format: "['400', '200']"
+            sizeString = sizeString.strip("[]'\" ")
+            
+            sizes = [int(s.strip("'\" ")) for s in sizeString.split(',') if s.strip()]
             log.debug(f"restoreSplitterSizes - Parsed sizes: {sizes}")
             
             if sizes:
@@ -4287,6 +4329,11 @@ class View(QtCore.QObject):
         log.debug(f"\n{'='*80}")
         log.debug(f"saveSplitterSizesForTab - START for tab: {tab_name}")
         log.debug(f"{'='*80}")
+
+        # Don't save during initialization
+        if getattr(self, 'isInitializing', True):
+            log.debug(f"saveSplitterSizesForTab - Skipping save during initialization")
+            return
         
         try:
             # Get current splitter sizes
@@ -4315,8 +4362,11 @@ class View(QtCore.QObject):
             
             if tab_name == 'hosts':
                 settings_obj.gui_hosts_tab_splitter_sizes = size_string_splitter
+                log.info(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_sizes to '{size_string_splitter}'")
                 settings_obj.gui_hosts_tab_splitter_3_sizes = size_string_splitter_3
+                log.info(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_3_sizes to '{size_string_splitter_3}'")
                 settings_obj.gui_hosts_tab_splitter_2_sizes = size_string_splitter_2
+                log.info(f"saveSplitterSizesForTab - Setting gui_hosts_tab_splitter_2_sizes to '{size_string_splitter_2}'")
                 log.debug(f"saveSplitterSizesForTab - Updated HOSTS attributes in settings object")
             elif tab_name == 'services':
                 settings_obj.gui_services_tab_splitter_sizes = size_string_splitter
@@ -4337,10 +4387,11 @@ class View(QtCore.QObject):
                 log.warning(f"saveSplitterSizesForTab - Unknown tab_name: {tab_name}")
                 return
             
-            # Save to disk
-            log.debug(f"saveSplitterSizesForTab - Calling applySettings() to save to disk")
+            # Save to memory
+            log.debug(f"saveSplitterSizesForTab - Calling applySettings() to save to memory")
             self.controller.applySettings(settings_obj)
-            log.debug(f"saveSplitterSizesForTab - SAVED to disk successfully")
+            #self.controller.saveSettings() 
+            log.debug(f"saveSplitterSizesForTab - SAVED to memory successfully")
             log.debug(f"{'='*80}\n")
         
         except Exception as e:
@@ -4368,9 +4419,9 @@ class View(QtCore.QObject):
                 size_string_splitter_2 = settings_obj.gui_services_tab_splitter_2_sizes
                 log.debug(f"restoreSplitterSizesForTab - Retrieved SERVICES settings")
             elif tab_name == 'tools':
-                size_string_splitter = settings_obj.gui_tools_tab_splitter_sizes
-                size_string_splitter_3 = settings_obj.gui_tools_tab_splitter_3_sizes
-                size_string_splitter_2 = settings_obj.gui_tools_tab_splitter_2_sizes
+                size_string_splitter =   settings_obj.gui_tools_tab_splitter_sizes#'300,0,856'
+                size_string_splitter_3 = settings_obj.gui_tools_tab_splitter_3_sizes#'500,352,0'
+                size_string_splitter_2 = settings_obj.gui_tools_tab_splitter_2_sizes#'352,176'
                 log.debug(f"restoreSplitterSizesForTab - Retrieved TOOLS settings")
             elif tab_name == 'os':
                 size_string_splitter = settings_obj.gui_os_tab_splitter_sizes
@@ -4426,14 +4477,3 @@ class View(QtCore.QObject):
         except Exception as e:
             log.error(f"restoreSplitterSizesForTab - ERROR: {e}", exc_info=True)
             log.debug(f"{'='*80}\n")
-
-
-
-
-
-
-
-
-
-
-

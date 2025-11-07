@@ -131,3 +131,7 @@ huge_nmap.xml
 *.xml
 
 legion.code-workspace
+backup/
+2025*.conf
+legion_verify.py
+launch.json

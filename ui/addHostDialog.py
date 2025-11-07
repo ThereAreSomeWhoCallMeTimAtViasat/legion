@@ -25,10 +25,11 @@ from app.auxiliary import *                                             # for ti
 from six import u as unicode
 from ui.ancillaryDialog import flipState
 
-try:
+if hasattr(QtCore, 'QString'):
     _fromUtf8 = QtCore.QString.fromUtf8
-except AttributeError:
+else:
     _fromUtf8 = lambda s: s
+
 
 # dialog shown when the user selects "Add host(s)" from the menu
 class AddHostsDialog(QtWidgets.QDialog):

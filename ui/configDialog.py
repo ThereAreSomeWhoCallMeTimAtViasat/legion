@@ -84,10 +84,12 @@ class ConfigDialog(QtWidgets.QDialog):
         
         # Setup profile system
         self.profilesDir = os.path.expanduser('~/.local/share/legion/profiles')
+        log.info(f"ConfigDialog - Profiles directory: {self.profilesDir}")
         self.ensureProfilesDirectory()
         self.ensureDefaultProfile()
         
         self.currentProfile = self.loadActiveProfile()
+        log.info(f"ConfigDialog - Current active profile: {self.currentProfile}")
         self.profiles = {}  # {name: filepath}
         self.loadProfilesList()
         
@@ -220,15 +222,19 @@ class ConfigDialog(QtWidgets.QDialog):
         """Ensure default profile exists."""
         default_path = os.path.join(self.profilesDir, 'default.conf')
         working_config = os.path.expanduser('~/.local/share/legion/legion.conf')
+        log.info(f"ConfigDialog - Ensuring default profile at: {default_path}")
+        log.info(f"ConfigDialog - Working config path: {working_config}")
         
         if not os.path.exists(default_path) and os.path.exists(working_config):
             shutil.copy(working_config, default_path)
+            log.info(f"ConfigDialog - Default profile created from working config.")
 
     def loadProfilesList(self):
         """Load all available profiles."""
         self.profiles = {}
         
         if not os.path.exists(self.profilesDir):
+            log.warning(f"Profiles directory does not exist: {self.profilesDir}")
             return
         
         for filename in os.listdir(self.profilesDir):
@@ -240,12 +246,14 @@ class ConfigDialog(QtWidgets.QDialog):
     def loadActiveProfile(self):
         """Load name of currently active profile."""
         active_file = os.path.expanduser('~/.local/share/legion/active_profile.txt')
+        log.info(f"ConfigDialog - Loading active profile from: {active_file}")
         
         if os.path.exists(active_file):
             try:
                 with open(active_file, 'r') as f:
                     return f.read().strip()
             except:
+                log.error(f"Error reading active profile file: {active_file}")
                 pass
         
         return 'default'
@@ -257,7 +265,7 @@ class ConfigDialog(QtWidgets.QDialog):
             with open(active_file, 'w') as f:
                 f.write(profile_name)
         except Exception as e:
-            print(f"Error saving active profile: {e}")
+            log.error(f"Error saving active profile: {e}")
 
     def saveCurrentProfile(self):
         """Save the currently selected profile tab."""

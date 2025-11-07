@@ -34,7 +34,9 @@ log = getAppLogger()
 class AppSettings():
     def __init__(self):
         configdir = os.path.expanduser('~/.local/share/legion')
-        configpath = os.path.join(configdir, 'legion.conf')
+        #configdir = '/home/kali/.local/share/legion'
+        #configpath = os.path.join(configdir, 'legion.conf')
+        configpath = os.path.expanduser('~/.local/share/legion/legion.conf')
         
         # ADD THESE DEBUG LINES
         #print(f"DEBUG: Config file path: {configpath}")
@@ -51,21 +53,23 @@ class AppSettings():
                 os.makedirs(configdir, exist_ok=True)
             reporoot = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
             defaultconf = os.path.join(reporoot, 'legion.conf')
+            log.debug(f"defaultconf is: {defaultconf}")
             
             # ADD THIS DEBUG LINE
             #print(f"DEBUG: Copying default config from: {defaultconf}")
             
             if os.path.exists(defaultconf):
                 shutil.copy(defaultconf, configpath)
+                log.debug(f"copied {defaultconf} configuration to {configpath}.")
             else:
                 log.error(f"Default configuration file not found at {defaultconf}.")
         
-        log.info("Loading settings file..")
+        log.info(f"Loading settings file: {configpath}")
         
         # ADD THESE DEBUG LINES
-        #print(f"DEBUG: Loading QSettings from: {configpath}")
+        log.debug(f"DEBUG: Loading QSettings from: {configpath}")
         self.actions = QtCore.QSettings(configpath, QtCore.QSettings.Format.IniFormat)
-        #print(f"DEBUG: QSettings fileName: {self.actions.fileName()}")
+        log.debug(f"DEBUG: QSettings fileName: {self.actions.fileName()}")
 
 
     #for matching
@@ -163,10 +167,17 @@ class AppSettings():
     def getMatchSettings(self):
         """
         Load match settings from config file.
+        Raises ValueError if no matchsettings are found in legion.conf.
         """
         self.actions.beginGroup('MatchSettings')
         matchsettings = {}
         keys = self.actions.childKeys()
+        
+        if not keys:
+            self.actions.endGroup()
+            addthis="[MatchSettings] \n global-negative=\"Enumerating vulnerable,valid password not found\" \n global-positive=\"valid pair found,valid password found,open,exists,Netbios,supported,vulnerable\" \n nikto-negative=asdf \n nikto-positive=Server leaks inodes via ETags,X-Frame-Options"
+            log.error(f"No matchsettings found in legion.conf:  add this to legion.conf to fix:\n{addthis}")
+            raise ValueError("No matchsettings found in legion.conf")
         
         for key in keys:
             rawValue = self.actions.value(key)
@@ -204,7 +215,6 @@ class AppSettings():
         
         self.actions.endGroup()
         return matchsettings
-
     
     def backupAndSave(self, newSettings, saveBackup=True):
         """
@@ -311,8 +321,11 @@ class AppSettings():
 
 
         self.actions.setValue('hosts-tab-splitter-sizes', newSettings.gui_hosts_tab_splitter_sizes)
+        log.debug(f"Saving hosts-tab-splitter-sizes: {newSettings.gui_hosts_tab_splitter_sizes}")
         self.actions.setValue('hosts-tab-splitter-2-sizes', newSettings.gui_hosts_tab_splitter_2_sizes)
+        log.debug(f"Saving hosts-tab-splitter-2-sizes: {newSettings.gui_hosts_tab_splitter_2_sizes}")
         self.actions.setValue('hosts-tab-splitter-3-sizes', newSettings.gui_hosts_tab_splitter_3_sizes)
+        log.debug(f"Saving hosts-tab-splitter-3-sizes: {newSettings.gui_hosts_tab_splitter_3_sizes}")
 
         self.actions.setValue('services-tab-splitter-sizes', newSettings.gui_services_tab_splitter_sizes)
         self.actions.setValue('services-tab-splitter-2-sizes', newSettings.gui_services_tab_splitter_2_sizes)
@@ -364,6 +377,8 @@ class AppSettings():
                                 csv_string = str(values_list)
                             self.actions.setValue(setting_key, csv_string)
                             log.debug(f"Saved MatchSetting: {setting_key} = {csv_string}")
+        else:
+            log.error("No matchSettings found in newSettings to save.")
         
         self.actions.endGroup()
 
@@ -461,9 +476,9 @@ class Settings():
         self.gui_process_tab_detail = False
 
         # splitter-sizes definitions
-        self.gui_hosts_tab_splitter_sizes = '200,500,200'
-        self.gui_hosts_tab_splitter_2_sizes = '400,200'
-        self.gui_hosts_tab_splitter_3_sizes = '300,400'
+        self.gui_hosts_tab_splitter_sizes = '290,1243,0'
+        self.gui_hosts_tab_splitter_2_sizes = '343,149'
+        self.gui_hosts_tab_splitter_3_sizes = '0,0,0'
 
         self.gui_services_tab_splitter_sizes = '200,500,200'
         self.gui_services_tab_splitter_2_sizes = '400,200'
@@ -558,17 +573,17 @@ class Settings():
                 log.debug(f"replacing guiSettings - main-window-geometry: {self.gui_main_window_geometry}")
 
                 # Tab-specific splitter sizes
-                self.gui_hosts_tab_splitter_sizes = self.guiSettings.get('hosts-tab-splitter-sizes', '200,500,200')
-                self.gui_hosts_tab_splitter_2_sizes = self.guiSettings.get('hosts-tab-splitter-2-sizes', '400,200')
-                self.gui_hosts_tab_splitter_3_sizes = self.guiSettings.get('hosts-tab-splitter-3-sizes', '300,400')
+                self.gui_hosts_tab_splitter_sizes = self.guiSettings['hosts-tab-splitter-sizes']
+                self.gui_hosts_tab_splitter_2_sizes = self.guiSettings['hosts-tab-splitter-2-sizes']
+                self.gui_hosts_tab_splitter_3_sizes = self.guiSettings['hosts-tab-splitter-3-sizes']
 
                 self.gui_services_tab_splitter_sizes = self.guiSettings.get('services-tab-splitter-sizes', '200,500,200')
                 self.gui_services_tab_splitter_2_sizes = self.guiSettings.get('services-tab-splitter-2-sizes', '400,200')
                 self.gui_services_tab_splitter_3_sizes = self.guiSettings.get('services-tab-splitter-3-sizes', '300,400')
 
-                self.gui_tools_tab_splitter_sizes = self.guiSettings.get('tools-tab-splitter-sizes', '200,500,200')
-                self.gui_tools_tab_splitter_2_sizes = self.guiSettings.get('tools-tab-splitter-2-sizes', '400,200')
-                self.gui_tools_tab_splitter_3_sizes = self.guiSettings.get('tools-tab-splitter-3-sizes', '300,400')
+                self.gui_tools_tab_splitter_sizes = self.guiSettings['tools-tab-splitter-sizes']
+                self.gui_tools_tab_splitter_2_sizes = self.guiSettings['tools-tab-splitter-2-sizes']
+                self.gui_tools_tab_splitter_3_sizes = self.guiSettings['tools-tab-splitter-3-sizes']
 
                 self.gui_os_tab_splitter_sizes = self.guiSettings.get('os-tab-splitter-sizes', '200,500,200')
                 self.gui_os_tab_splitter_2_sizes = self.guiSettings.get('os-tab-splitter-2-sizes', '400,200')
