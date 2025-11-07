@@ -24,10 +24,11 @@ from ui.dialogs import *                                                # for th
 from ui.ancillaryDialog import *
 from utilities.qtLogging import *
 
-try:
+if hasattr(QtCore, 'QString'):
     _fromUtf8 = QtCore.QString.fromUtf8
-except AttributeError:
+else:
     _fromUtf8 = lambda s: s
+
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):

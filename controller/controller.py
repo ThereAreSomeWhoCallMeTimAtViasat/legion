@@ -1950,7 +1950,7 @@ class Controller:
             if discovery:
                 command_tokens.extend(["-T4", "-sV", "-sSU", "-O"])
             else:
-                command_tokens.extend(["-Pn", "-sSU"])
+                command_tokens.extend(["-Pn", "-sS"])
 
             stage_command_tokens = list(command_tokens)
             if stageOp == 'PORTS':
