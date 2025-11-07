@@ -731,23 +731,25 @@ class View(QtCore.QObject):
         #self.ui.splitter_2.splitterMoved.connect(lambda: self.saveSplitterSizes(self.ui.splitter_2, 'gui_splitter_2_sizes'))
 
 
-
-
     def saveProcessHeaderWidth(self, index, oldSize, newSize):
         columnWidths = self.controller.getSettings().gui_process_tab_column_widths.split(',')
+        
         # Ensure columnWidths has enough entries
         while len(columnWidths) <= index:
             columnWidths.append(str(newSize))
-        # Validate current value
+        
         try:
-            current_width = int(columnWidths[index])
+            # Strip quotes, brackets, spaces before converting
+            current_width = int(columnWidths[index].strip(" '[]\""))
         except (ValueError, TypeError):
             current_width = newSize
+        
         difference = abs(current_width - newSize)
-        if difference >= 5:
+        if difference > 5:
             columnWidths[index] = str(newSize)
             self.controller.settings.gui_process_tab_column_widths = ','.join(columnWidths)
             self.controller.applySettings(self.controller.settings)
+
 
     def dealWithRunningProcesses(self, exiting=False):
         """
@@ -2159,7 +2161,7 @@ class View(QtCore.QObject):
         self.viewState.lazy_update_os = True
 
     def updateServiceNamesTableView(self):
-        headers = ["Name"]
+        headers = ['Name', 'Port']
         self.ServiceNamesTableModel = ServiceNamesTableModel(
             self.controller.getServiceNamesFromDB(self.viewState.filters), headers)
         self.ui.ServiceNamesTableView.setModel(self.ServiceNamesTableModel)

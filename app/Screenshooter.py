@@ -110,11 +110,15 @@ class Screenshooter(QtCore.QThread):
         host_for_https = str(url)
         if '://' in host_for_https:
             host_for_https = host_for_https.split('://', 1)[1]
-            host_for_https = host_for_https.split(':', 1)[0]
+        host_for_https = host_for_https.split(':', 1)[0]
 
-        if isHttps(host_for_https, port):
-            url = 'https://{0}'.format(url)
-        else:
+        try:
+            if isHttps(host_for_https, port):
+                url = 'https://{0}'.format(url)
+            else:
+                url = 'http://{0}'.format(url)
+        except Exception as e:
+            self.tsLog(f"Error determining HTTPS for {host_for_https}:{port} - {e}. Defaulting to HTTP.")
             url = 'http://{0}'.format(url)
 
         self.tsLog('Taking Screenshot of: {0}'.format(str(url)))
