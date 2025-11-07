@@ -49,7 +49,7 @@ class Logic:
         from app.timing import getTimestamp
         from app.httputil.isHttps import isHttps
 
-        print("[*] Running scripted actions/automated attacks (headless mode)...")
+        log.info("[*] Running scripted actions/automated attacks (headless mode)...")
         settingsFile = AppSettings()
         settings = Settings(settingsFile)
         repo_container = self.activeProject.repositoryContainer
@@ -90,7 +90,7 @@ class Logic:
                                     url = f"https://{url}"
                                 else:
                                     url = f"http://{url}"
-                                print(f"[+] Taking screenshot of {url} using EyeWitness...")
+                                log.info(f"[+] Taking screenshot of {url} using EyeWitness...")
                                 # Determine EyeWitness path
                                 eyewitness_path = (
                                     "/usr/bin/eyewitness"
@@ -98,7 +98,7 @@ class Logic:
                                     else "/usr/local/bin/eyewitness"
                                 )
                                 if not os.path.isfile(eyewitness_path):
-                                    print(f"[!] EyeWitness not found at {eyewitness_path}. Please install it.")
+                                    log.error(f"[!] EyeWitness not found at {eyewitness_path}. Please install it.")
                                     continue
                                 screenshots_dir = os.path.join(
                                     self.activeProject.properties.outputFolder, "screenshots"
@@ -108,27 +108,27 @@ class Logic:
                                 command = (
                                     f"{eyewitness_path} --single {url} --no-prompt --web --delay 5 -d {tmpOutputfolder}"
                                 )
-                                print(f"[screenshooter CMD] {command}")
+                                log.info(f"[screenshooter CMD] {command}")
                                 p = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=180)
-                                print(f"[screenshooter STDOUT]\n{p.stdout}")
+                                log.info(f"[screenshooter STDOUT]\n{p.stdout}")
                                 if p.stderr:
-                                    print(f"[screenshooter STDERR]\n{p.stderr}")
+                                    log.error(f"[screenshooter STDERR]\n{p.stderr}")
                                 screens_dir = os.path.join(tmpOutputfolder, 'screens')
                                 if not os.path.isdir(screens_dir):
-                                    print(f"[!] EyeWitness did not create expected directory: {screens_dir}")
+                                    log.error(f"[!] EyeWitness did not create expected directory: {screens_dir}")
                                     continue
                                 files = [f for f in os.listdir(screens_dir) if f.lower().endswith('.png')]
                                 if not files:
-                                    print(f"[!] No screenshot PNG found in {screens_dir}. EyeWitness may have failed.")
+                                    log.error(f"[!] No screenshot PNG found in {screens_dir}. EyeWitness may have failed.")
                                     continue
                                 fileName = files[0]
                                 deterministic_name = f"{ip}-{port_num}-screenshot.png"
                                 deterministic_path = os.path.join(screenshots_dir, deterministic_name)
                                 src_path = os.path.join(screens_dir, fileName)
                                 shutil.copy2(src_path, deterministic_path)
-                                print(f"[screenshooter] Copied screenshot to {deterministic_path}")
+                                log.debug(f"[screenshooter] Copied screenshot to {deterministic_path}")
                             except Exception as e:
-                                print(f"[!] Error taking screenshot for {ip}:{port_num}: {e}")
+                                log.error(f"[!] Error taking screenshot for {ip}:{port_num}: {e}")
                         else:
                             # Find the corresponding portAction for this tool
                             for a in settings.portActions:
@@ -144,7 +144,7 @@ class Logic:
                                     )
                                     outputfile = os.path.normpath(outputfile).replace("\\", "/")
                                     command = command.replace("[OUTPUT]", outputfile)
-                                    print(f"[+] Running tool '{tool_name}' for {ip}:{port_num}/{protocol}: {command}")
+                                    log.info(f"[+] Running tool '{tool_name}' for {ip}:{port_num}/{protocol}: {command}")
                                     try:
                                         result = subprocess.run(
                                             command,
@@ -153,11 +153,11 @@ class Logic:
                                             text=True,
                                             timeout=300,
                                         )
-                                        print(f"[{tool_name} STDOUT]\n{result.stdout}")
+                                        log.info(f"[{tool_name} STDOUT]\n{result.stdout}")
                                         if result.stderr:
-                                            print(f"[{tool_name} STDERR]\n{result.stderr}")
+                                            log.error(f"[{tool_name} STDERR]\n{result.stderr}")
                                     except Exception as e:
-                                        print(f"[!] Error running tool '{tool_name}' for {ip}:{port_num}: {e}")
+                                        log.error(f"[!] Error running tool '{tool_name}' for {ip}:{port_num}: {e}")
                                     break
 
     def createFolderForTool(self, tool):
@@ -182,8 +182,8 @@ class Logic:
 
             shutil.copy(str(file), path)  # will overwrite if file already exists
         except:
-            log.info('Something went wrong copying the imported XML to the project folder.')
-            log.info("Unexpected error: {0}".format(sys.exc_info()[0]))
+            log.error('Something went wrong copying the imported XML to the project folder.')
+            log.error("Unexpected error: {0}".format(sys.exc_info()[0]))
 
     def createNewTemporaryProject(self) -> None:
         self.activeProject = self.projectManager.createNewProject(projectType="legion", isTemp=True)

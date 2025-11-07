@@ -401,7 +401,8 @@ class AppSettings():
         
         # Step 4: Copy timestamped version to repo root
         try:
-            repo_timestamped = os.path.join(reporoot, f'{timestamp}-legion.conf')
+            repo_timestamped = os.path.join(reporoot, 'backup', f'{timestamp}-legion.conf')
+            #backup_dir = os.path.expanduser("~/.local/share/legion/backup/")
             shutil.copy(working_config, repo_timestamped)
             log.info(f"Saved timestamped config to repo: {repo_timestamped}")
         except Exception as e:
