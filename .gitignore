@@ -132,6 +132,7 @@ huge_nmap.xml
 
 legion.code-workspace
 backup/
-2025*.conf
+2025*
 legion_verify.py
 launch.json
+firstMultiRun*

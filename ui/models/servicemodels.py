@@ -190,13 +190,15 @@ class ServiceNamesTableModel(QtCore.QAbstractTableModel):
     def headerData(self, section, orientation, role):
         return resolveHeaders(role, orientation, section, self.__headers)
 
-    def data(self, index, role):   # This method takes care of how the information is displayed
-
-        if role == QtCore.Qt.ItemDataRole.DisplayRole:                               # how to display each cell
+    def data(self, index, role): # This method takes care of how the information is displayed
+        if role == QtCore.Qt.ItemDataRole.DisplayRole: # how to display each cell
             row = index.row()
             column = index.column()
             if column == 0:
                 return self.__serviceNames[row]['name']
+            elif column == 1:
+                return self.__serviceNames[row]['port']
+
 
     # method that allows views to know how to treat each item, eg: if it should be enabled, editable, selectable etc
     def flags(self, index):
@@ -208,21 +210,24 @@ class ServiceNamesTableModel(QtCore.QAbstractTableModel):
 
     # sort function called when the user clicks on a header
     def sort(self, Ncol, order):
-        
         self.layoutAboutToBeChanged.emit()
         array = []
         
         if Ncol == 0:  # if sorting by service name (and by default)
             for i in range(len(self.__serviceNames)):
                 array.append(self.__serviceNames[i]['name'])
-
+        elif Ncol == 1:  # if sorting by port
+            for i in range(len(self.__serviceNames)):
+                array.append(int(self.__serviceNames[i]['port']))
+        
         # sort the services based on the values in the array
         sortArrayWithArray(array, self.__serviceNames)
-
-        if order == Qt.SortOrder.AscendingOrder:                                  # reverse if needed
+        
+        if order == Qt.SortOrder.AscendingOrder:  # reverse if needed
             self.__serviceNames.reverse()
-            
-        self.layoutChanged.emit()                            # update the UI (built-in signal)
+        
+        self.layoutChanged.emit()  # update the UI (built-in signal)
+
 
     ### getter functions ###
 

@@ -28,12 +28,12 @@ class ServiceRepository:
 
     def getServiceNames(self, filters: Filters):
         session = self.dbAdapter.session
-        query = ("SELECT DISTINCT service.name FROM serviceObj as service "
+        query = ("SELECT DISTINCT service.name, ports.portId as port FROM serviceObj as service "
                  "INNER JOIN portObj as ports "
                  "INNER JOIN hostObj AS hosts "
                  "ON hosts.id = ports.hostId AND service.id=ports.serviceId WHERE 1=1")
         query += applyFilters(filters)
-        query += ' ORDER BY service.name ASC'
+        query += ' ORDER BY service.name ASC, ports.portId ASC'
         query = text(query)
         result = session.execute(query)
         rows = result.fetchall()

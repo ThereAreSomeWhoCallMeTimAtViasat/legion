@@ -168,9 +168,14 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
                     value = ""
                 else:
                     try:
-                        value = self.__processes[row][processColumns.get(int(column))]
+                        key = processColumns.get(int(column))
+                        if key is not None:
+                            value = self.__processes[row][key]
+                        else:
+                            value = ""
                     except:
                         value = ""
+
             except Exception:
                 value = ""
             return value
