@@ -4486,3 +4486,273 @@ class View(QtCore.QObject):
         except Exception as e:
             log.error(f"restoreSplitterSizesForTab - ERROR: {e}", exc_info=True)
             log.debug(f"{'='*80}\n")
+
+    def createTerminalTabForHost(self, ip, tabTitle):
+        """
+        Create a fully interactive terminal tab for the specified host.
+        
+        Args:
+            ip: IP address of the host
+            tabTitle: Title for the tab
+            
+        Returns:
+            QWidget containing the interactive terminal
+        """
+        from PyQt6 import QtWidgets, QtGui, QtCore
+        from PyQt6.QtCore import QProcess, QTimer, QObject, QEvent
+        import pyte
+        import pty
+        import os
+        import subprocess
+        import select
+        import sys
+        
+        # Create container widget
+        tempWidget = QtWidgets.QWidget()
+        tempWidget.setObjectName(str(tabTitle))
+        
+        # Create layout
+        tempLayout = QtWidgets.QVBoxLayout(tempWidget)
+        tempLayout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create pyte screen and stream
+        screen = pyte.Screen(80, 24)
+        stream = pyte.Stream(screen)
+        
+        # Create terminal display
+        terminalDisplay = QtWidgets.QTextEdit()
+        terminalDisplay.setReadOnly(True)
+        terminalDisplay.setStyleSheet(
+            "background-color: black; "
+            "color: #00ff00; "
+            "font-family: 'Courier New', monospace; "
+            "font-size: 10pt;"
+        )
+        terminalDisplay.setLineWrapMode(QtWidgets.QTextEdit.LineWrapMode.NoWrap)
+        tempLayout.addWidget(terminalDisplay)
+        
+        # Store references
+        tempWidget.screen = screen
+        tempWidget.stream = stream
+        tempWidget.ip = ip
+        tempWidget.cursorVisible = True
+        
+        # Create PTY for proper terminal
+        master_fd, slave_fd = pty.openpty()
+        
+        # Start bash with PTY
+        bash_env = os.environ.copy()
+        bash_env['TERM'] = 'xterm-256color'
+        
+        proc = subprocess.Popen(
+            ['bash'],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=bash_env,
+            preexec_fn=os.setsid
+        )
+        
+        os.close(slave_fd)
+        tempWidget.master_fd = master_fd
+        tempWidget.proc = proc
+        
+        # Function to update display from pyte screen
+        def updateDisplay():
+            cursor = terminalDisplay.textCursor()
+            terminalDisplay.clear()
+            
+            # Build display from pyte screen
+            lines = []
+            for y, line in enumerate(screen.display):
+                # Check if this line contains the cursor
+                if y == screen.cursor.y and tempWidget.cursorVisible:
+                    # Insert cursor character at cursor position
+                    line_text = line.rstrip()
+                    cursor_x = screen.cursor.x
+                    
+                    # Ensure line is long enough
+                    if len(line_text) < cursor_x:
+                        line_text += ' ' * (cursor_x - len(line_text))
+                    
+                    # Insert cursor block
+                    if cursor_x < len(line_text):
+                        line_text = line_text[:cursor_x] + '█' + line_text[cursor_x+1:]
+                    else:
+                        line_text += '█'
+                    
+                    lines.append(line_text)
+                else:
+                    lines.append(line.rstrip())
+            
+            display_text = "\n".join(lines)
+            terminalDisplay.setPlainText(display_text)
+        
+        # Timer to read from PTY
+        def readFromTerminal():
+            try:
+                # Check if there's data to read
+                readable, _, _ = select.select([master_fd], [], [], 0)
+                if readable:
+                    data = os.read(master_fd, 1024)
+                    if data:
+                        text = data.decode('utf-8', errors='replace')
+                        stream.feed(text)
+                        updateDisplay()
+            except Exception as e:
+                log.error(f"Error reading from terminal: {e}")
+        
+        readTimer = QTimer(tempWidget)
+        readTimer.timeout.connect(readFromTerminal)
+        readTimer.start(50)  # Check every 50ms
+        tempWidget.readTimer = readTimer
+        
+        # Timer to blink cursor
+        def blinkCursor():
+            tempWidget.cursorVisible = not tempWidget.cursorVisible
+            updateDisplay()
+        
+        blinkTimer = QTimer(tempWidget)
+        blinkTimer.timeout.connect(blinkCursor)
+        blinkTimer.start(500)  # Blink every 500ms
+        tempWidget.blinkTimer = blinkTimer
+        
+        # Create event filter to intercept ALL keyboard events before QTextEdit
+        class TerminalEventFilter(QObject):
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Type.KeyPress:
+                    key = event.key()
+                    text = event.text()
+                    modifiers = event.modifiers()
+                    
+                    try:
+                        # Handle Ctrl+key combinations FIRST
+                        if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier:
+                            if key == QtCore.Qt.Key.Key_C:
+                                os.write(master_fd, b"\x03")  # Ctrl+C
+                                return True  # Event handled, don't pass to QTextEdit
+                            elif key == QtCore.Qt.Key.Key_D:
+                                os.write(master_fd, b"\x04")  # Ctrl+D
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Z:
+                                os.write(master_fd, b"\x1a")  # Ctrl+Z
+                                return True
+                            elif key == QtCore.Qt.Key.Key_L:
+                                os.write(master_fd, b"\x0c")  # Ctrl+L
+                                return True
+                            elif key == QtCore.Qt.Key.Key_A:
+                                os.write(master_fd, b"\x01")  # Ctrl+A
+                                return True
+                            elif key == QtCore.Qt.Key.Key_E:
+                                os.write(master_fd, b"\x05")  # Ctrl+E
+                                return True
+                            elif key == QtCore.Qt.Key.Key_K:
+                                os.write(master_fd, b"\x0b")  # Ctrl+K
+                                return True
+                            elif key == QtCore.Qt.Key.Key_U:
+                                os.write(master_fd, b"\x15")  # Ctrl+U
+                                return True
+                            elif key == QtCore.Qt.Key.Key_W:
+                                os.write(master_fd, b"\x17")  # Ctrl+W
+                                return True
+                            elif key == QtCore.Qt.Key.Key_R:
+                                os.write(master_fd, b"\x12")  # Ctrl+R
+                                return True
+                        
+                        # Handle special keys
+                        if key == QtCore.Qt.Key.Key_Return or key == QtCore.Qt.Key.Key_Enter:
+                            os.write(master_fd, b"\r")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Backspace:
+                            os.write(master_fd, b"\x7f")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Tab:
+                            os.write(master_fd, b"\t")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Up:
+                            os.write(master_fd, b"\x1b[A")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Down:
+                            os.write(master_fd, b"\x1b[B")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Right:
+                            os.write(master_fd, b"\x1b[C")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Left:
+                            os.write(master_fd, b"\x1b[D")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Home:
+                            os.write(master_fd, b"\x1b[H")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_End:
+                            os.write(master_fd, b"\x1b[F")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_Delete:
+                            os.write(master_fd, b"\x1b[3~")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_PageUp:
+                            os.write(master_fd, b"\x1b[5~")
+                            return True
+                        elif key == QtCore.Qt.Key.Key_PageDown:
+                            os.write(master_fd, b"\x1b[6~")
+                            return True
+                        elif text:
+                            os.write(master_fd, text.encode('utf-8'))
+                            return True
+                    except Exception as e:
+                        log.error(f"Error writing to terminal: {e}")
+                    
+                    return True  # Always consume keyboard events
+                
+                # Pass other events to parent
+                return False
+        
+        # Install event filter
+        eventFilter = TerminalEventFilter(tempWidget)
+        terminalDisplay.installEventFilter(eventFilter)
+        tempWidget.eventFilter = eventFilter  # Keep reference
+        
+        # Send initial SSH command with legacy algorithm support
+        def sendSSHCommand():
+            ssh_command = (
+                f"ssh -o StrictHostKeyChecking=no "
+                f"-o UserKnownHostsFile=/dev/null "
+                f"-o HostKeyAlgorithms=+ssh-rsa,ssh-dss "
+                f"-o PubkeyAcceptedKeyTypes=+ssh-rsa,ssh-dss "
+                f"root@{ip}\n"
+            )
+            try:
+                os.write(master_fd, ssh_command.encode())
+            except Exception as e:
+                log.error(f"Error sending SSH command: {e}")
+        
+        QTimer.singleShot(500, sendSSHCommand)
+        
+        # Add the tab
+        strip = str(ip)
+        tabindex = self.ui.ServicesTabWidget.addTab(tempWidget, str(tabTitle))
+        
+        # Add to hostTabs tracking
+        if strip in self.viewState.hostTabs:
+            hosttabs = self.viewState.hostTabs[strip]
+        else:
+            hosttabs = []
+        
+        hosttabs.append(tempWidget)
+        self.viewState.hostTabs.update({strip: hosttabs})
+        
+        # Switch to the new tab
+        self.ui.ServicesTabWidget.setCurrentIndex(tabindex)
+        
+        log.info(f"Created interactive terminal tab for {ip} at index {tabindex}")
+        
+        return tempWidget
+
+
+
+
+
+
+
+
+

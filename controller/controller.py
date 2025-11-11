@@ -574,6 +574,8 @@ class Controller:
                 menu.addAction('Mark as unchecked')
             else:
                 menu.addAction('Mark as checked')
+            
+            menu.addAction("Open Terminal")
             menu.addAction('Rescan')
             menu.addAction('Purge Results')
             menu.addAction('Delete')
@@ -1027,11 +1029,14 @@ class Controller:
                                outputfile, self.view.createNewTabForHost(ip, tabTitle, invisibleTab))
                 break
 
-
-
-
-
-
+        if action.text() == "Open Terminal":
+            log.info(f"Opening interactive terminal for {ip.strip()}")
+            tabTitle = f"Terminal - {ip}"
+            
+            # Create a new terminal tab
+            self.view.createTerminalTabForHost(ip, tabTitle)
+            
+            return
 
 
 
