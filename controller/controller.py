@@ -2432,21 +2432,15 @@ class Controller:
                             log.debug(f"[runToolsFor]   Textbox: {textbox}")
                             log.info(f"[runToolsFor]   Command: {command}")
                             
-                            # Run command
-                            self.runCommand(tool[0], tabTitle, ip, port, protocol, command,
-                                            getTimestamp(True),
-                                            outputfile,
-                                            textbox)
+                            # Check if command contains bash or msfconsole for interactive terminal
+                            if ("bash" in command.lower() or "msfconsole" in command.lower()):
+                                log.info(f"Creating interactive terminal for automated tool {tool[0]}")
+                                self.view.createTerminalTabForCommand(ip, tabTitle, command)
+                            else:
+                                self.runCommand(tool[0], tabTitle, ip, port, protocol, command, getTimestamp(True), outputfile, textbox)
                             
                             log.debug(f"[runToolsFor] runCommand called successfully")
                             break
-
-
-
-
-
-
-
 
 
     def addPortToHost(self, host_ip, port_data):
