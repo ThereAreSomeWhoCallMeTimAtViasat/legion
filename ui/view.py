@@ -3034,16 +3034,13 @@ class View(QtCore.QObject):
         if self.ProcessesTableModel:
             for row in range(len(self.ProcessesTableModel.getProcesses())):
                 status = self.ProcessesTableModel.getProcesses()[row]['status']
-                
-                directStatus = {'Waiting':'waiting', 'Running':'running', 'Finished':'finished', 'Crashed':'killed'}
+                directStatus = {'Waiting':'waiting', 'Running':'running', 'Interactive':'interactive', 'Finished':'finished', 'Crashed':'killed'}
                 defaultStatus = 'killed'
-
                 processIconName = directStatus.get(status) or defaultStatus
-                processIcon = './images/{processIconName}.gif'.format(processIconName=processIconName)
-
+                processIcon = './images/{0}.gif'.format(processIconName)
                 self.runningWidget = ImagePlayer(processIcon)
-                self.ui.ProcessesTableView.setIndexWidget(self.ui.ProcessesTableView.model().index(row,0),
-                                                          self.runningWidget)
+                self.ui.ProcessesTableView.setIndexWidget(self.ui.ProcessesTableView.model().index(row,0), self.runningWidget)
+
 
     #################### GLOBAL INTERFACE UPDATE FUNCTION ####################
     
@@ -3087,7 +3084,7 @@ class View(QtCore.QObject):
     # this function creates a new tool tab for a given host
     # TODO: refactor/review, especially the restoring part. we should not check if toolname=nmap everywhere in the code
     # ..maybe we should do it here. rethink
-    def createNewTabForHost(self, ip, tabTitle, restoring=False, content='', filename=''):
+    def createNewTabForHost(self, ip, tabTitle, restoring=False, content='', filename='', command=''):
         # TODO: use regex otherwise tools with 'screenshot' in the name are screwed.
         if 'screenshot' in str(tabTitle):
             tempWidget = ImageViewer()
@@ -3103,19 +3100,125 @@ class View(QtCore.QObject):
             tempMatches = QtWidgets.QLabel()
             tempMatches.setVisible(True)
             
-            tempTextView = QtWidgets.QTextEdit(tempWidget)
-            tempTextView.setReadOnly(True)
-            if self.controller.getSettings().general_tool_output_black_background == 'True':
-                p = tempTextView.palette()
-                p.setColor(QtGui.QPalette.ColorRole.Base, Qt.GlobalColor.black)
-                p.setColor(QtGui.QPalette.ColorRole.Text, Qt.GlobalColor.white)
-                tempTextView.setPalette(p)
-                tempTextView.setStyleSheet("QMenu { color:black;}")
-            
-            # Use VBoxLayout to stack label on top of text view
-            tempLayout = QtWidgets.QVBoxLayout(tempWidget)
-            tempLayout.addWidget(tempMatches)
-            tempLayout.addWidget(tempTextView)
+            # Check if this is an interactive command (bash or msfconsole)
+            log.info(f"-createNewTabForHost- Checking if command '{command}' is interactive...")
+            is_interactive_command = ('bash' in str(command).lower() or 'msfconsole' in str(command).lower())
+            log.info(f"-createNewTabForHost- is_interactive_command: {is_interactive_command}")
+
+            if is_interactive_command:
+                # Create checkbox for interactive mode
+                interactiveCheckbox = QtWidgets.QCheckBox("Interactive")
+                interactiveCheckbox.setChecked(False)
+                
+                # Create stacked widget to hold both QTextEdit and QTerminal
+                stackedWidget = QtWidgets.QStackedWidget()
+                
+                # Create QTextEdit for display-only output
+                tempTextView = QtWidgets.QTextEdit()
+                tempTextView.setReadOnly(True)
+                if self.controller.getSettings().general_tool_output_black_background == 'True':
+                    p = tempTextView.palette()
+                    p.setColor(QtGui.QPalette.ColorRole.Base, Qt.GlobalColor.black)
+                    p.setColor(QtGui.QPalette.ColorRole.Text, Qt.GlobalColor.white)
+                    tempTextView.setPalette(p)
+                    tempTextView.setStyleSheet("QMenu { color:black;}")
+                
+                # Create input line for sending commands to the process
+                inputWidget = QtWidgets.QLineEdit()
+                inputWidget.setPlaceholderText("Type command and press Enter to send to process...")
+                inputWidget.setStyleSheet("QLineEdit { background-color: #2b2b2b; color: white; font-family: monospace; padding: 5px; }")
+                inputWidget.qprocess = None  # Will be set when process starts
+                
+                # Store reference to input widget on the text view
+                tempTextView.inputWidget = inputWidget
+                
+                # Create interactive terminal widget using pyte (full implementation)
+                import pyte
+                import pty
+                import os
+                import subprocess
+                import select
+                from PyQt6.QtCore import QTimer, QObject, QEvent
+                from collections import deque
+                
+                # Create pyte screen and stream with history
+                screen = pyte.HistoryScreen(80, 24, 1000)  # 1000 lines of scrollback
+                stream = pyte.Stream(screen)
+                
+                # Create terminal display
+                terminalWidget = QtWidgets.QTextEdit()
+                terminalWidget.setReadOnly(True)
+                terminalWidget.setStyleSheet(
+                    "background-color: black; "
+                    "color: #00ff00; "
+                    "font-family: 'Courier New', monospace; "
+                    "font-size: 10pt;"
+                )
+                terminalWidget.setLineWrapMode(QtWidgets.QTextEdit.LineWrapMode.NoWrap)
+                terminalWidget.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                terminalWidget.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                terminalWidget.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+                
+                # Store references
+                terminalWidget.screen = screen
+                terminalWidget.stream = stream
+                terminalWidget.cursorVisible = True
+                terminalWidget.processRunning = False
+                terminalWidget.autoScroll = True
+                terminalWidget.master_fd = None
+                terminalWidget.proc = None
+                terminalWidget.readTimer = None
+                terminalWidget.blinkTimer = None
+                terminalWidget.processTimer = None
+                terminalWidget.eventFilter = None
+                
+                # Add display widget to stacked widget (index 0)
+                stackedWidget.addWidget(tempTextView)
+                # Add terminal widget to stacked widget (index 1)
+                stackedWidget.addWidget(terminalWidget)
+                stackedWidget.setCurrentIndex(0)
+                
+                # Store references on tempWidget for later access
+                tempWidget.stackedWidget = stackedWidget
+                tempWidget.terminalWidget = terminalWidget
+                tempWidget.textWidget = tempTextView
+                tempWidget.interactiveCheckbox = interactiveCheckbox
+                tempWidget.inputWidget = inputWidget
+                tempWidget.command = command 
+
+                # ALSO store reference on the textWidget itself for easy access from controller
+                tempTextView.terminalWidget = terminalWidget
+                tempTextView.interactiveCheckbox = interactiveCheckbox
+                
+                # Connect checkbox to toggle function
+                interactiveCheckbox.stateChanged.connect(
+                    lambda state: self._toggleInteractiveMode(tempWidget, state)
+                )
+                
+                # Use VBoxLayout to stack: label -> checkbox -> stacked widget -> input line
+                tempLayout = QtWidgets.QVBoxLayout(tempWidget)
+                tempLayout.setContentsMargins(5, 5, 5, 5)
+                tempLayout.setSpacing(2)
+                tempLayout.addWidget(tempMatches)
+                tempLayout.addWidget(interactiveCheckbox)
+                tempLayout.addWidget(stackedWidget)  # This takes most of the space
+                tempLayout.addWidget(inputWidget)  # Input line at bottom
+                
+            else:
+                # Normal tab without interactive mode
+                tempTextView = QtWidgets.QTextEdit(tempWidget)
+                tempTextView.setReadOnly(True)
+                if self.controller.getSettings().general_tool_output_black_background == 'True':
+                    p = tempTextView.palette()
+                    p.setColor(QtGui.QPalette.ColorRole.Base, Qt.GlobalColor.black)
+                    p.setColor(QtGui.QPalette.ColorRole.Text, Qt.GlobalColor.white)
+                    tempTextView.setPalette(p)
+                    tempTextView.setStyleSheet("QMenu { color:black;}")
+                
+                # Use VBoxLayout to stack label on top of text view
+                tempLayout = QtWidgets.QVBoxLayout(tempWidget)
+                tempLayout.addWidget(tempMatches)
+                tempLayout.addWidget(tempTextView)
         
             if not content == '':
                 tempTextView.setHtml(content)
@@ -3136,6 +3239,92 @@ class View(QtCore.QObject):
         self.viewState.hostTabs.update({str(ip):hosttabs})
 
         return tempTextView
+
+
+    def _toggleInteractiveMode(self, tabWidget, state):
+        """
+        Toggle between display-only (QTextEdit) and interactive (QTerminal) mode.
+        
+        Args:
+            tabWidget: The tab widget containing stackedWidget
+            state: Checkbox state (2 = checked, 0 = unchecked)
+        """
+        if not hasattr(tabWidget, 'stackedWidget'):
+            return
+        
+        stackedWidget = tabWidget.stackedWidget
+        terminalWidget = tabWidget.terminalWidget
+        textWidget = tabWidget.textWidget
+        
+        if state == 2:
+            # Switching to interactive mode
+            
+            # STEP 1: Kill the existing QProcess for this tab
+            dbId = textWidget.property('dbId')
+            if dbId:
+                log.info(f"Killing display-only process for interactive mode. dbId={dbId}")
+                try:
+                    # Find and kill the process
+                    for proc in self.controller.processes:
+                        if hasattr(proc, 'id') and str(proc.id) == str(dbId):
+                            log.info(f"Found process to kill: {proc.name}, pid={proc.processId()}")
+                            
+                            # Kill the process
+                            proc.kill()
+                            
+                            # Mark as killed in database
+                            processRepo = self.controller.logic.activeProject.repositoryContainer.processRepository
+                            processRepo.storeProcessCancelStatusById(str(proc.id), True)
+                            
+                            # Remove from controller's process list
+                            if proc in self.controller.processes:
+                                self.controller.processes.remove(proc)
+                            
+                            log.info(f"Process killed successfully")
+                            break
+                except Exception as e:
+                    log.error(f"Error killing process for interactive mode: {e}")
+            
+            # STEP 2: Switch to interactive view
+            stackedWidget.setCurrentIndex(1)
+            
+            # STEP 3: Start terminal if not already running, pass the original command
+            if hasattr(terminalWidget, 'processRunning') and not terminalWidget.processRunning:
+                # Get the resolved command from the tabWidget
+                command = getattr(tabWidget, 'command', '')
+                self._startInteractiveTerminal(terminalWidget, command)
+            
+            log.debug(f"Switched to interactive mode for tab {tabWidget.objectName()}")
+        else:
+            # Switching back to display-only mode
+            
+            # STEP 1: Kill the interactive terminal
+            if hasattr(terminalWidget, 'processRunning') and terminalWidget.processRunning:
+                log.info("Killing interactive terminal process")
+                try:
+                    if hasattr(terminalWidget, 'proc') and terminalWidget.proc:
+                        terminalWidget.proc.terminate()
+                        terminalWidget.processRunning = False
+                    
+                    if hasattr(terminalWidget, 'master_fd') and terminalWidget.master_fd:
+                        try:
+                            os.close(terminalWidget.master_fd)
+                        except:
+                            pass
+                    
+                    # Stop timers
+                    if hasattr(terminalWidget, 'readTimer') and terminalWidget.readTimer:
+                        terminalWidget.readTimer.stop()
+                    if hasattr(terminalWidget, 'processTimer') and terminalWidget.processTimer:
+                        terminalWidget.processTimer.stop()
+                        
+                except Exception as e:
+                    log.error(f"Error killing interactive terminal: {e}")
+            
+            # STEP 2: Switch back to display-only view
+            stackedWidget.setCurrentIndex(0)
+            
+            log.debug(f"Switched to display-only mode for tab {tabWidget.objectName()}")
 
 
     def createNewConsole(self, tabTitle, content='Hello\n', filename=''):
@@ -5296,4 +5485,318 @@ class View(QtCore.QObject):
         log.info(f"Created interactive terminal tab '{tabTitle}' at index {tabindex}")
         
         return tempWidget
+
+    def _startInteractiveTerminal(self, terminalWidget, command=''):
+        """
+        Start a fully interactive terminal with complete pyte functionality.
+        """
+        import pty
+        import os
+        import subprocess
+        import select
+        from PyQt6.QtCore import QTimer, QObject, QEvent
+        from PyQt6 import QtCore, QtWidgets
+        
+        if terminalWidget.processRunning:
+            return  # Already running
+        
+        screen = terminalWidget.screen
+        stream = terminalWidget.stream
+        
+        # Show initial message
+        stream.feed(f"Terminal starting...\n")
+        if command:
+            stream.feed(f"Command: {command}\n\n")
+        
+        # Function to update display from pyte screen
+        def updateDisplay():
+            scrollbar = terminalWidget.verticalScrollBar()
+            was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 10
+            
+            terminalWidget.clear()
+            lines = []
+            
+            # Add history lines
+            for line in screen.history.top:
+                if hasattr(line, 'rstrip'):
+                    lines.append(line.rstrip())
+                else:
+                    line_str = ''.join(char.data if hasattr(char, 'data') else str(char) for char in line.values())
+                    lines.append(line_str.rstrip())
+            
+            # Add current display with STATIC cursor (no blinking)
+            for y, line_data in enumerate(screen.display):
+                if hasattr(line_data, 'rstrip'):
+                    line = line_data.rstrip()
+                else:
+                    line = ''.join(char.data if hasattr(char, 'data') else str(char) for char in line_data.values())
+                
+                # Show static cursor only when process is running
+                if y == screen.cursor.y and terminalWidget.processRunning:
+                    line_text = line.rstrip() if hasattr(line, 'rstrip') else line
+                    cursor_x = screen.cursor.x
+                    
+                    if len(line_text) < cursor_x:
+                        line_text += ' ' * (cursor_x - len(line_text))
+                    
+                    if cursor_x < len(line_text):
+                        line_text = line_text[:cursor_x] + '█' + line_text[cursor_x+1:]
+                    else:
+                        line_text += '█'
+                    
+                    lines.append(line_text)
+                else:
+                    lines.append(line.rstrip() if hasattr(line, 'rstrip') else line)
+            
+            display_text = "\n".join(lines)
+            terminalWidget.setPlainText(display_text)
+            
+            if was_at_bottom or terminalWidget.autoScroll:
+                scrollbar.setValue(scrollbar.maximum())
+        
+        # Handle right-click context menu
+        def showContextMenu(pos):
+            menu = QtWidgets.QMenu(terminalWidget)
+            
+            copyAction = menu.addAction("Copy")
+            pasteAction = menu.addAction("Paste")
+            menu.addSeparator()
+            selectAllAction = menu.addAction("Select All")
+            
+            copyAction.setEnabled(terminalWidget.textCursor().hasSelection())
+            pasteAction.setEnabled(terminalWidget.processRunning)
+            
+            action = menu.exec(terminalWidget.mapToGlobal(pos))
+            
+            if action == copyAction:
+                terminalWidget.copy()
+            elif action == pasteAction:
+                clipboard = QtWidgets.QApplication.clipboard()
+                text = clipboard.text()
+                if text and terminalWidget.processRunning:
+                    try:
+                        os.write(terminalWidget.master_fd, text.encode('utf-8'))
+                    except Exception as e:
+                        log.error(f"Error pasting to terminal: {e}")
+            elif action == selectAllAction:
+                terminalWidget.selectAll()
+        
+        terminalWidget.customContextMenuRequested.connect(showContextMenu)
+        
+        try:
+            # Create PTY
+            master_fd, slave_fd = pty.openpty()
+            
+            # Start bash
+            bash_env = os.environ.copy()
+            bash_env['TERM'] = 'xterm-256color'
+            
+            proc = subprocess.Popen(
+                ['bash'],
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                env=bash_env,
+                preexec_fn=os.setsid
+            )
+            
+            os.close(slave_fd)
+            terminalWidget.master_fd = master_fd
+            terminalWidget.proc = proc
+            terminalWidget.processRunning = True
+            
+            # Timer to read from PTY
+            def readFromTerminal():
+                if not terminalWidget.processRunning:
+                    return
+                
+                try:
+                    readable, _, _ = select.select([master_fd], [], [], 0)
+                    if readable:
+                        data = os.read(master_fd, 1024)
+                        if data:
+                            text = data.decode('utf-8', errors='replace')
+                            stream.feed(text)
+                            updateDisplay()
+                except OSError as e:
+                    if e.errno == 5:
+                        log.info(f"Terminal process terminated")
+                        terminalWidget.processRunning = False
+                        stream.feed("\n[Terminal closed]\n")
+                        updateDisplay()
+                        if terminalWidget.readTimer:
+                            terminalWidget.readTimer.stop()
+                        try:
+                            os.close(master_fd)
+                        except:
+                            pass
+                    else:
+                        log.error(f"Error reading from terminal: {e}")
+                except Exception as e:
+                    log.error(f"Unexpected error reading from terminal: {e}")
+            
+            readTimer = QTimer(terminalWidget)
+            readTimer.timeout.connect(readFromTerminal)
+            readTimer.start(50)
+            terminalWidget.readTimer = readTimer
+            
+            # NO BLINK TIMER - cursor is always visible as static block
+            
+            # Monitor process status
+            def checkProcess():
+                if terminalWidget.processRunning:
+                    poll_result = proc.poll()
+                    if poll_result is not None:
+                        log.info(f"Bash process exited with code {poll_result}")
+                        terminalWidget.processRunning = False
+                        stream.feed(f"\n[Process exited with code {poll_result}]\n")
+                        updateDisplay()
+                        if terminalWidget.readTimer:
+                            terminalWidget.readTimer.stop()
+                        if terminalWidget.processTimer:
+                            terminalWidget.processTimer.stop()
+                        try:
+                            os.close(master_fd)
+                        except:
+                            pass
+            
+            processTimer = QTimer(terminalWidget)
+            processTimer.timeout.connect(checkProcess)
+            processTimer.start(1000)
+            terminalWidget.processTimer = processTimer
+            
+            # Create event filter for keyboard input
+            class TerminalEventFilter(QObject):
+                def eventFilter(self, obj, event):
+                    if event.type() == QEvent.Type.KeyPress:
+                        if not terminalWidget.processRunning:
+                            return True
+                        
+                        key = event.key()
+                        text = event.text()
+                        modifiers = event.modifiers()
+                        
+                        # Allow Page Up/Down for scrolling
+                        if key == QtCore.Qt.Key.Key_PageUp:
+                            terminalWidget.autoScroll = False
+                            return False
+                        elif key == QtCore.Qt.Key.Key_PageDown:
+                            scrollbar = terminalWidget.verticalScrollBar()
+                            if scrollbar.value() + scrollbar.pageStep() >= scrollbar.maximum():
+                                terminalWidget.autoScroll = True
+                            return False
+                        
+                        terminalWidget.autoScroll = True
+                        
+                        try:
+                            # Handle Ctrl+key combinations
+                            if modifiers & QtCore.Qt.KeyboardModifier.ControlModifier:
+                                if key == QtCore.Qt.Key.Key_C:
+                                    if terminalWidget.textCursor().hasSelection():
+                                        terminalWidget.copy()
+                                        return True
+                                    os.write(master_fd, b"\x03")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_V:
+                                    clipboard = QtWidgets.QApplication.clipboard()
+                                    text = clipboard.text()
+                                    if text:
+                                        os.write(master_fd, text.encode('utf-8'))
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_D:
+                                    os.write(master_fd, b"\x04")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_Z:
+                                    os.write(master_fd, b"\x1a")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_L:
+                                    os.write(master_fd, b"\x0c")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_A:
+                                    os.write(master_fd, b"\x01")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_E:
+                                    os.write(master_fd, b"\x05")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_K:
+                                    os.write(master_fd, b"\x0b")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_U:
+                                    os.write(master_fd, b"\x15")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_W:
+                                    os.write(master_fd, b"\x17")
+                                    return True
+                                elif key == QtCore.Qt.Key.Key_R:
+                                    os.write(master_fd, b"\x12")
+                                    return True
+                            
+                            # Handle special keys
+                            if key == QtCore.Qt.Key.Key_Return or key == QtCore.Qt.Key.Key_Enter:
+                                os.write(master_fd, b"\r")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Backspace:
+                                os.write(master_fd, b"\x7f")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Tab:
+                                os.write(master_fd, b"\t")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Up:
+                                os.write(master_fd, b"\x1b[A")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Down:
+                                os.write(master_fd, b"\x1b[B")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Right:
+                                os.write(master_fd, b"\x1b[C")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Left:
+                                os.write(master_fd, b"\x1b[D")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Home:
+                                os.write(master_fd, b"\x1b[H")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_End:
+                                os.write(master_fd, b"\x1b[F")
+                                return True
+                            elif key == QtCore.Qt.Key.Key_Delete:
+                                os.write(master_fd, b"\x1b[3~")
+                                return True
+                            elif text:
+                                os.write(master_fd, text.encode('utf-8'))
+                                return True
+                        except OSError:
+                            terminalWidget.processRunning = False
+                        except Exception as e:
+                            log.error(f"Error writing to terminal: {e}")
+                        
+                        return True
+                    
+                    return False
+            
+            # Install event filter
+            eventFilter = TerminalEventFilter(terminalWidget)
+            terminalWidget.installEventFilter(eventFilter)
+            terminalWidget.eventFilter = eventFilter
+            
+            # Call updateDisplay immediately
+            updateDisplay()
+            
+            # Send command if provided
+            if command:
+                def sendCommand():
+                    if terminalWidget.processRunning:
+                        try:
+                            log.info(f"Executing command in terminal: {command}")
+                            os.write(master_fd, (command + "\n").encode())
+                        except Exception as e:
+                            log.error(f"Error sending command: {e}")
+                
+                QTimer.singleShot(500, sendCommand)
+            
+            log.info(f"Started interactive terminal")
+            
+        except Exception as e:
+            log.error(f"Failed to start interactive terminal: {e}")
+            terminalWidget.setPlainText(f"Failed to start terminal: {e}")
 

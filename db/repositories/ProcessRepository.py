@@ -508,3 +508,11 @@ class ProcessRepository:
         finally:
             session.close()
 
+    def storeProcessInteractiveStatus(self, processId: str):
+        session = self.dbAdapter.session()
+        proc = session.query(process).filter_by(id=processId).first()
+        if proc:
+            proc.status = 'Interactive'
+            session.add(proc)
+            session.commit()
+        session.close()
