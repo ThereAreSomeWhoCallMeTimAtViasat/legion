@@ -513,7 +513,7 @@ class Controller:
                 ])
                 command = ' '.join(token for token in command_tokens if token)
                 self.runCommand('nmap', 'nmap (discovery)', target_hosts_str, '', '', command, getTimestamp(True),
-                                outputfile, self.view.createNewTabForHost(str(targetHosts), 'nmap (discovery)', True),
+                                outputfile, self.view.createNewTabForHost(str(targetHosts), 'nmap (discovery)', True, command=command),
                                 enable_ipv6=ipv6_flag)
             else:
                 outputfile = normalize_path(os.path.join(tool_output_dir, f"{getTimestamp()}-nmap-list"))
@@ -527,7 +527,7 @@ class Controller:
                 command = ' '.join(token for token in command_tokens if token)
                 self.runCommand('nmap', 'nmap (list)', target_hosts_str, '', '', command, getTimestamp(True),
                                 outputfile,
-                                self.view.createNewTabForHost(str(targetHosts), 'nmap (list)', True),
+                                self.view.createNewTabForHost(str(targetHosts), 'nmap (list)', True, command=command),
                                 enable_ipv6=ipv6_flag)
         elif scanMode == 'Hard':
             outputfile = normalize_path(os.path.join(tool_output_dir, f"{getTimestamp()}-nmap-custom"))
@@ -546,7 +546,7 @@ class Controller:
             self.runCommand('nmap', 'nmap (custom ' + display_label + ')', target_hosts_str, '', '', command,
                             getTimestamp(True), outputfile,
                             self.view.createNewTabForHost(
-                                str(targetHosts), 'nmap (custom ' + display_label + ')', True),
+                                str(targetHosts), 'nmap (custom ' + display_label + ')', True, command=command),
                             enable_ipv6=ipv6_flag)
 
     #################### CONTEXT MENUS ####################
@@ -1026,7 +1026,7 @@ class Controller:
                 tabTitle = self.settings.hostActions[i][1]
 
                 self.runCommand(name, tabTitle, ip, '', '', command, getTimestamp(True),
-                               outputfile, self.view.createNewTabForHost(ip, tabTitle, invisibleTab))
+                               outputfile, self.view.createNewTabForHost(ip, tabTitle, invisibleTab, command=command))
                 break
 
         if action.text() == "Open Terminal":
@@ -1133,7 +1133,7 @@ class Controller:
                         restoring = True
 
                     self.runCommand(tool, tabTitle, ip[0], ip[1], ip[2], command, getTimestamp(True), outputfile,
-                                    self.view.createNewTabForHost(ip[0], tabTitle, restoring))
+                                    self.view.createNewTabForHost(ip[0], tabTitle, restoring, command=command))
                 break
 
     @timing
@@ -1289,7 +1289,7 @@ class Controller:
                 outputfile = process_details.get('outputfile') or ''
 
                 host_key = host_ip if host_ip else tab_title
-                textbox = self.view.createNewTabForHost(host_key, tab_title, False)
+                textbox = self.view.createNewTabForHost(host_key, tab_title, False, command=command)
 
                 kwargs = {}
                 stage_match = re.search(r'stage\s*(\d+)', tab_title, re.IGNORECASE)
@@ -1536,8 +1536,10 @@ class Controller:
         
         from PyQt6.QtCore import QProcess
         
-        # Count running nmap or other scan processes
-        runningscans = sum(1 for p in self.processes if hasattr(p, 'name') and 'nmap' in str(p.name).lower())
+        # Count running nmap or other scan processes (excluding interactive)
+        runningscans = sum(1 for p in self.processes 
+                          if hasattr(p, 'name') and 'nmap' in str(p.name).lower() 
+                          and (not hasattr(p, 'isInteractive') or not p.isInteractive))
         
         # Allow up to maxconcurrentscans nmap processes, and up to max_fast_processes for others
         while (self.fastProcessesRunning < int(self.settings.general_max_fast_processes) and 
@@ -1558,8 +1560,10 @@ class Controller:
                 log.debug("[Queue] Process was canceled, checking queue again..")
                 continue
             
-            # Check ACTUALLY running processes, not just queue status
-            actuallyrunning = [p for p in self.processes if p.state() == QProcess.ProcessState.Running]
+            # Check ACTUALLY running processes (excluding interactive), not just queue status
+            actuallyrunning = [p for p in self.processes 
+                             if p.state() == QProcess.ProcessState.Running 
+                             and (not hasattr(p, 'isInteractive') or not p.isInteractive)]
             log.debug(f"[Queue] Actually running processes: {len(actuallyrunning)}")
             
             if len(actuallyrunning) == 0 and self.fastProcessQueue.empty():
@@ -1745,10 +1749,25 @@ class Controller:
         outputfile = args[7]
         textbox = args[8]
         
-        log.debug(f"[runCommand] Called with:")
-        log.debug(f"  name={name}, tabTitle={tabTitle}, hostIp={hostIp}, port={port}")
-        log.debug(f"  textbox={textbox}, type={type(textbox)}")
-        
+        log.info(f"[runCommand] Called with:")
+        log.info(f"  name={name}, tabTitle={tabTitle}, hostIp={hostIp}, port={port}, command={command}")
+        log.info(f"  textbox={textbox}, type={type(textbox)}")
+
+        # STORE THE RESOLVED COMMAND ON THE PARENT WIDGET (tempWidget)
+        # The command here is already resolved with actual IP, PORT, OUTPUT values
+        if textbox and hasattr(textbox, 'parent') and textbox.parent():
+            parent_widget = textbox.parent()
+            # Walk up the widget tree to find tempWidget (has stackedWidget)
+            max_levels = 5
+            level = 0
+            while parent_widget and level < max_levels:
+                if hasattr(parent_widget, 'stackedWidget'):
+                    parent_widget.command = command  # Store resolved command
+                    log.info(f"[runCommand] Stored resolved command on tempWidget: {command[:80]}...")
+                    break
+                parent_widget = parent_widget.parent() if hasattr(parent_widget, 'parent') else None
+                level += 1
+
         timer = QElapsedTimer()
         updateElapsed = QTimer()
 
@@ -1835,12 +1854,85 @@ class Controller:
 
         # KEEP YOUR ORIGINAL HANDLER - it already works correctly!
         # insertPlainText preserves existing HTML formatting
-        qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.insertPlainText(
-            str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))))
+        #qProcess.readyReadStandardOutput.connect(lambda: qProcess.display.insertPlainText(
+        #    str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))))
+        
+        # Auto-scroll handler for output
+        def handleOutputAndScroll():
+            output = str(qProcess.readAllStandardOutput().data().decode('ISO-8859-1'))
+            qProcess.display.insertPlainText(output)
+            
+            # Auto-scroll to bottom
+            scrollbar = qProcess.display.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
+        qProcess.readyReadStandardOutput.connect(handleOutputAndScroll)
         qProcess.sigHydra.connect(self.handleHydraFindings)
         qProcess.finished.connect(lambda: self.processFinished(qProcess))
         qProcess.errorOccurred.connect(lambda error, proc=qProcess: self.processCrashed(proc, error))
+        
+        # Check if this is an interactive command (bash or msfconsole) and connect input widget
+        log.info(f"-runCommand - Checking for interactive command: {command}")
+        is_interactive = ('bash' in str(command).lower() or 'msfconsole' in str(command).lower())
+        log.info(f"-runCommand - is_interactive: {is_interactive}")
+
+        # Connect input widget to QProcess stdin for interactive commands
+        if is_interactive and hasattr(textbox, 'inputWidget'):
+            inputWidget = textbox.inputWidget
+            inputWidget.qprocess = qProcess  # Store reference to process
+            
+            # Connect Enter key to send command to process stdin
+            def sendCommandToProcess():
+                if inputWidget.qprocess and inputWidget.qprocess.state() == QtCore.QProcess.ProcessState.Running:
+                    command_text = inputWidget.text()
+                    if command_text:
+                        try:
+                            # Send command to process stdin
+                            inputWidget.qprocess.write((command_text + "\n").encode('utf-8'))
+                            log.info(f"[Input] Sent to {name}: {command_text}")
+                            
+                            # Clear input
+                            inputWidget.clear()
+                        except Exception as e:
+                            log.error(f"Error sending command to process: {e}")
+                else:
+                    log.warning("Process is not running, cannot send command")
+            
+            # Disconnect any previous connections to avoid duplicates
+            try:
+                inputWidget.returnPressed.disconnect()
+            except:
+                pass
+            
+            inputWidget.returnPressed.connect(sendCommandToProcess)
+            log.info(f"[Input] Connected input widget for interactive command: {name}")
+
+        #Mark msfconsole as interactive after initial command runs
+        if 'msfconsole' in str(command).lower() and 'run -j' in str(command).lower():
+
+            def markAsInteractive():
+                qProcess.isInteractive = True
+                log.info(f"[Interactive] Marked msfconsole as interactive (no longer counts against process limits)")
+                
+                # Update the status in the database
+                processRepository = self.logic.activeProject.repositoryContainer.processRepository
+                processRepository.storeProcessInteractiveStatus(str(qProcess.id))
+                log.info(f"[Interactive] Updated database status to 'Interactive' for process {qProcess.id}")
+
+
+            # Wait 10 seconds for exploit to complete, then mark as interactive
+            QTimer.singleShot(10000, markAsInteractive)
+            log.info(f"[Interactive] Will mark msfconsole as interactive in 10 seconds")
+
+
+        flag1 = hasattr(textbox, 'terminalWidget')
+        flag2 = flag1 and textbox.terminalWidget is not None
+        log.info(f"-runCommand - textbox has terminalWidget attribute: {flag1}, is not None: {flag2}")     
+        if is_interactive and hasattr(textbox, 'terminalWidget'):
+            terminalWidget = textbox.terminalWidget
+            # Check if it's a real QTerminalWidget (not a placeholder label)
+            if hasattr(terminalWidget, 'sendText'):
+                log.debug(f"Terminal widget available for command: {command}")
 
         log.info(f"runCommand called for stage {str(stage)}")
         
@@ -1860,6 +1952,7 @@ class Controller:
             )
 
         return getPid(qProcess)
+
 
 
 
@@ -1923,7 +2016,7 @@ class Controller:
         # Use the tool output directory directly, not a subdirectory
         tool_output_dir = session_dir
         if not stop:
-            textbox = self.view.createNewTabForHost(host_arg, 'nmap (stage ' + str(stage) + ')', True)
+            textbox = self.view.createNewTabForHost(host_arg, 'nmap (stage ' + str(stage) + ')', True, command='')
             outputfile = os.path.join(tool_output_dir, f"{getTimestamp()}-nmapstage{str(stage)}")
 
             if stage == 1:
@@ -2395,7 +2488,7 @@ class Controller:
                                         else:
                                             log.error(f"[runToolsFor] Could not find textbox, creating new tab")
                                             tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
-                                            textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"))
+                                            textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"), command=command)
                                     
                                     else:  # new_tab
                                         highest_run = self.getHighestRunNumber(self.view.ui.ServicesTabWidget, tabTitle)
@@ -2408,7 +2501,7 @@ class Controller:
                                         tabTitle = self.formatTabTitleWithRunNumber(tabTitle, new_run_number)
                                         log.info(f"Creating new tab '{tabTitle}' (run #{new_run_number})")
                                         tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
-                                        textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"))
+                                        textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"), command=command)
                                         
                                         if textbox and hasattr(textbox, 'append'):
                                             textbox.append(f"[Run #{new_run_number} - {getTimestamp()}]")
@@ -2416,7 +2509,7 @@ class Controller:
                                 else:
                                     log.debug(f"[runToolsFor] No existing tab, creating new")
                                     tab = self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex())
-                                    textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"))
+                                    textbox = self.view.createNewTabForHost(ip, tabTitle, not (tab == "Hosts"), command=a[2])
                             
                             # Prepare command
                             outputfile = os.path.join(
@@ -2432,12 +2525,11 @@ class Controller:
                             log.debug(f"[runToolsFor]   Textbox: {textbox}")
                             log.info(f"[runToolsFor]   Command: {command}")
                             
-                            # Check if command contains bash or msfconsole for interactive terminal
-                            if ("bash" in command.lower() or "msfconsole" in command.lower()):
-                                log.info(f"Creating interactive terminal for automated tool {tool[0]}")
-                                self.view.createTerminalTabForCommand(ip, tabTitle, command)
-                            else:
-                                self.runCommand(tool[0], tabTitle, ip, port, protocol, command, getTimestamp(True), outputfile, textbox)
+                            # Run command
+                            self.runCommand(tool[0], tabTitle, ip, port, protocol, command,
+                                            getTimestamp(True),
+                                            outputfile,
+                                            textbox)
                             
                             log.debug(f"[runToolsFor] runCommand called successfully")
                             break

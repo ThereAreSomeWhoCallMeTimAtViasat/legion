@@ -229,6 +229,7 @@ class MyQProcess(QProcess):
         self.elapsed = -1
         self.settings = settings
         self.matches = set()
+        self.isInteractive = False 
 
         if settings:
             from ui.gui import MatchHighlighter
@@ -330,48 +331,48 @@ class MyQProcess(QProcess):
         output = str(self.readAllStandardOutput(), 'utf-8')
         #print(f"DEBUG: Got output length: {len(output)}")
 
-
         try:
-            #print(f"DEBUG("DEBUG: Starting ANSI conversion")
+            #print(f"DEBUG: Starting ANSI conversion")
             from ansi2html import Ansi2HTMLConverter
             conv = Ansi2HTMLConverter(inline=True, linkify=True)
             html = conv.convert(output, full=False)
             #print(f"DEBUG: HTML conversion successful, length: {len(html)}")
             #print(f"DEBUG: HTML preview: {html[:200]}")
 
-
-            #print(f"DEBUG("DEBUG: Getting text cursor")
+            #print(f"DEBUG: Getting text cursor")
             cursor = self.display.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
-            #print(f"DEBUG("DEBUG: Inserting HTML")
+            #print(f"DEBUG: Inserting HTML")
             cursor.insertHtml('<pre>' + html + ' < /pre>')  #spaces matter
-            #print(f"DEBUG("DEBUG: HTML inserted successfully")
-
+            #print(f"DEBUG: HTML inserted successfully")
 
             doc = QTextDocument()
             doc.setHtml(html)
             plain_text = doc.toPlainText()
             #print(f"DEBUG: Plain text extracted, length: {len(plain_text)}")
 
-
             self.handleMatches(plain_text)
-            #print(f"DEBUG("DEBUG: handleMatches completed")
+            #print(f"DEBUG: handleMatches completed")
             
         except ImportError as e:
             #print(f"DEBUG: ImportError - ansi2html not available: {e}")
             self.display.insertPlainText(unicode(output).strip())
+            self.handleMatches(output)
+        except (IndexError, KeyError, ValueError) as e:
+            #print(f"DEBUG: ANSI conversion error - falling back to plain text: {e}")
+            self.display.insertPlainText(unicode(output).strip())
+            self.handleMatches(output)
         except Exception as e:
             #print(f"DEBUG: Exception in readStdOutput: {e}")
             import traceback
             traceback.print_exc()
             self.display.insertPlainText(unicode(output).strip())
-
+            self.handleMatches(output)
 
         if self.name == 'hydra':
             found, userlist, passlist = checkHydraResults(output)
             if found:
                 self.sigHydra.emit(self.display.parentWidget(), userlist, passlist)
-
 
         # Note: stderr is merged with stdout via MergedChannels in QProcess setup
         # Both stdout and stderr are already included in readAllStandardOutput() above
