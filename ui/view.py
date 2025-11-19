@@ -3109,6 +3109,7 @@ class View(QtCore.QObject):
                 # Create checkbox for interactive mode
                 interactiveCheckbox = QtWidgets.QCheckBox("Interactive")
                 interactiveCheckbox.setChecked(False)
+                interactiveCheckbox.setVisible(False)  # Hide interactive mode checkbox (terminal not fully implemented)
                 
                 # Create stacked widget to hold both QTextEdit and QTerminal
                 stackedWidget = QtWidgets.QStackedWidget()
