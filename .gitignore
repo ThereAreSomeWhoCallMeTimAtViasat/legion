@@ -136,3 +136,4 @@ backup/
 legion_verify.py
 launch.json
 firstMultiRun*
+.github/copilot-instructions.md
