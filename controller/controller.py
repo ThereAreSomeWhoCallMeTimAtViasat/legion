@@ -2219,7 +2219,7 @@ class Controller:
                 log.info(f"Process {qProcess.id} is done!")
 
             try:
-                processRepository.storeProcessOutput(str(qProcess.id), qProcess.display.toPlainText())
+                processRepository.storeProcessOutput(str(qProcess.id), qProcess.display.toHtml())
             except Exception:
                 log.exception(f"Error storing process output for {qProcess.id}")
 

@@ -3533,9 +3533,153 @@ class View(QtCore.QObject):
                     # True means we are restoring tabs. Set the widget's object name to the DB id of the process
                     tab_widget = self.createNewTabForHost(host_ip, tab_title, True, output_content)
                     tab_widget.setProperty('dbId', str(process_id))
+                    
+                    # ONE-TIME ONLY: Re-check matches after restoring tab from database
+                    # This only runs during project load, NOT during normal tab reordering
+                    from app.logging.legionLog import getAppLogger
+                    log = getAppLogger()
+                    log.debug(f"[RESTORE] Calling _recheckMatchesForRestoredTab for '{tab_title}' on host {host_ip}")
+                    self._recheckMatchesForRestoredTab(tab_widget, host_ip, tab_title)
 
             totalprogress += progress                                   # update the progress bar
             self.tick.emit(int(totalprogress))
+    
+    def _recheckMatchesForRestoredTab(self, tab_widget, host_ip, tab_title):
+        """
+        Re-check the content of a restored tab against matchSettings and apply highlighting.
+        This is called after restoring tabs from database to re-apply match highlighting
+        that was lost when saving as HTML.
+        """
+        from app.logging.legionLog import getAppLogger
+        log = getAppLogger()
+        
+        try:
+            log.debug(f"[MATCH RECHECK] Starting for tab '{tab_title}' on host {host_ip}")
+            
+            # createNewTabForHost() returns the QTextEdit directly, not the parent container
+            from PyQt6.QtWidgets import QTextEdit
+            
+            # The returned value IS the QTextEdit
+            text_edit = tab_widget
+            
+            log.debug(f"[MATCH RECHECK] Returned widget type: {type(text_edit)}")
+            
+            if not text_edit or not isinstance(text_edit, QTextEdit):
+                log.debug(f"[MATCH RECHECK] Returned widget is not a QTextEdit for tab '{tab_title}'")
+                return
+            
+            # Get plain text content to check for matches
+            plain_text = text_edit.toPlainText()
+            log.debug(f"[MATCH RECHECK] Plain text length: {len(plain_text)} chars")
+            
+            if not plain_text:
+                log.debug(f"[MATCH RECHECK] No content in tab '{tab_title}'")
+                return
+            
+            # Get matchSettings from controller
+            settings = self.controller.getSettings()
+            if not settings or not hasattr(settings, 'matchSettings'):
+                log.debug(f"[MATCH RECHECK] No matchSettings available")
+                return
+            
+            matchSettings = settings.matchSettings
+            log.debug(f"[MATCH RECHECK] matchSettings keys: {list(matchSettings.keys())}")
+            
+            # Show what patterns we're looking for
+            if 'global' in matchSettings:
+                global_patterns = matchSettings['global']
+                log.debug(f"[MATCH RECHECK] Global patterns: {global_patterns}")
+            
+            # Extract tool name for tool-specific matches
+            tool_name = tab_title.split('-')[0].lower() if '-' in tab_title else tab_title.lower()
+            # For tabs like "nmap (stage 1)", extract just "nmap"
+            if '(' in tool_name:
+                tool_name = tool_name.split('(')[0].strip()
+            
+            log.info(f"[MATCH RECHECK] Extracted tool name: '{tool_name}'")
+            if tool_name in matchSettings:
+                log.info(f"[MATCH RECHECK] Tool-specific patterns for '{tool_name}': {matchSettings[tool_name]}")
+            else:
+                log.info(f"[MATCH RECHECK] No tool-specific patterns for '{tool_name}'")
+            
+            matches = set()
+            
+            # Check each line for matches (exact same logic as MyQProcess.getMatches/handleMatches)
+            for line in plain_text.split('\n'):
+                # Check global matches
+                if 'global' in matchSettings:
+                    global_settings = matchSettings['global']
+                    
+                    # Check negative patterns first (block if found)
+                    if 'negative' in global_settings:
+                        skip_line = False
+                        for neg_match in global_settings['negative']:
+                            if neg_match in line:
+                                skip_line = True
+                                break
+                        if skip_line:
+                            continue
+                    
+                    # Check positive patterns
+                    if 'positive' in global_settings:
+                        for pos_match in global_settings['positive']:
+                            if pos_match in line:
+                                matches.add(pos_match)
+                                log.debug(f"[MATCH RECHECK] Found global match: '{pos_match}'")
+                
+                # Check tool-specific matches
+                if tool_name in matchSettings:
+                    tool_settings = matchSettings[tool_name]
+                    
+                    # Check negative patterns first
+                    if 'negative' in tool_settings:
+                        skip_line = False
+                        for neg_match in tool_settings['negative']:
+                            if neg_match in line:
+                                skip_line = True
+                                break
+                        if skip_line:
+                            continue
+                    
+                    # Check positive patterns
+                    if 'positive' in tool_settings:
+                        for pos_match in tool_settings['positive']:
+                            if pos_match in line:
+                                matches.add(pos_match)
+                                log.debug(f"[MATCH RECHECK] Found tool-specific match: '{pos_match}'")
+            
+            log.debug(f"[MATCH RECHECK] Total matches found: {len(matches)}")
+            
+            # If matches found, set property and apply highlighting
+            if matches:
+                matchStr = ', '.join(matches)
+                log.debug(f"[MATCH RECHECK] Setting matches property: '{matchStr}'")
+                
+                # Get the parent container widget (tempWidget from createNewTabForHost)
+                # This is the actual tab widget that needs the 'matches' property
+                tab_container_widget = text_edit.parent()
+                
+                if tab_container_widget:
+                    tab_container_widget.setProperty('matches', matchStr)
+                    log.debug(f"[MATCH RECHECK] Property set on container widget")
+                
+                # Create and attach MatchHighlighter to apply visual highlighting
+                from ui.gui import MatchHighlighter
+                highlighter = MatchHighlighter(text_edit.document())
+                highlighter.updateMatches(matches)
+                log.debug(f"[MATCH RECHECK] MatchHighlighter created and applied")
+                
+                # Store highlighter reference to prevent garbage collection
+                text_edit.matchHighlighter = highlighter
+                
+                # Update tab highlight (yellow label, red tab text)
+                self.updateTabHighlight(host_ip, tab_title)
+                log.debug(f"[MATCH RECHECK] Tab highlight updated for '{tab_title}'")
+            else:
+                log.debug(f"[MATCH RECHECK] No matches found for tab '{tab_title}'")
+                
+        except Exception as e:
+            log.debug(f"Error re-checking matches for restored tab '{tab_title}': {e}")
         
     def restoreToolTabsForHost(self, ip):
         log.debug("========== restoreToolTabsForHost START ==========")
