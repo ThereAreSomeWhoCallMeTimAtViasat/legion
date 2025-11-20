@@ -3101,9 +3101,9 @@ class View(QtCore.QObject):
             tempMatches.setVisible(True)
             
             # Check if this is an interactive command (bash or msfconsole)
-            log.info(f"-createNewTabForHost- Checking if command '{command}' is interactive...")
+            log.debug(f"-createNewTabForHost- Checking if command '{command}' is interactive...")
             is_interactive_command = ('bash' in str(command).lower() or 'msfconsole' in str(command).lower())
-            log.info(f"-createNewTabForHost- is_interactive_command: {is_interactive_command}")
+            log.debug(f"-createNewTabForHost- is_interactive_command: {is_interactive_command}")
 
             if is_interactive_command:
                 # Create checkbox for interactive mode
@@ -3597,11 +3597,11 @@ class View(QtCore.QObject):
             if '(' in tool_name:
                 tool_name = tool_name.split('(')[0].strip()
             
-            log.info(f"[MATCH RECHECK] Extracted tool name: '{tool_name}'")
+            log.debug(f"[MATCH RECHECK] Extracted tool name: '{tool_name}'")
             if tool_name in matchSettings:
-                log.info(f"[MATCH RECHECK] Tool-specific patterns for '{tool_name}': {matchSettings[tool_name]}")
+                log.debug(f"[MATCH RECHECK] Tool-specific patterns for '{tool_name}': {matchSettings[tool_name]}")
             else:
-                log.info(f"[MATCH RECHECK] No tool-specific patterns for '{tool_name}'")
+                log.debug(f"[MATCH RECHECK] No tool-specific patterns for '{tool_name}'")
             
             matches = set()
             

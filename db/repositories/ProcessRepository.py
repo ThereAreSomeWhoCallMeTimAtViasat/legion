@@ -234,7 +234,7 @@ class ProcessRepository:
         session.close()
         return proc.id
 
-    def storeProcessOutput(self, process_id: str, output: str):
+    def storeProcessOutput(self, process_id: str, output: str, preserve_status: bool = False):
         session = self.dbAdapter.session()
         proc = session.query(process).filter_by(id=process_id).first()
 
@@ -248,15 +248,19 @@ class ProcessRepository:
             proc_output.output = unicode(output)
             session.add(proc_output)
 
-        proc.endTime = getTimestamp(True)
+        # Only update endTime if we're marking as finished
+        if not preserve_status:
+            proc.endTime = getTimestamp(True)
 
         if proc.status == "Killed" or proc.status == "Cancelled" or proc.status == "Crashed":
             #session.commit() # Needed?
             session.close()
             return True
         else:
-            proc.status = 'Finished'
-            session.add(proc)
+            # Only change status to Finished if preserve_status is False
+            if not preserve_status:
+                proc.status = 'Finished'
+                session.add(proc)
             session.commit()
         session.close()
 

@@ -388,6 +388,9 @@ class Controller:
 
 
     def saveProjectAs(self, filename, replace=0):
+        # Save output from any running/interactive processes before saving the project
+        self.saveRunningProcessOutputs()
+        
         try:
             success = self.logic.saveProjectAs(filename, replace)
         except DatabaseIntegrityError as exc:
@@ -2248,6 +2251,36 @@ class Controller:
         except Exception:
             log.exception("Process Finished Exception")
             raise
+
+    def saveRunningProcessOutputs(self):
+        """
+        Save output from all running/interactive processes before project save.
+        This ensures bash/msfconsole and other long-running interactive processes
+        have their output persisted even if they haven't finished.
+        """
+        processRepository = self.logic.activeProject.repositoryContainer.processRepository
+        saved_count = 0
+        
+        for qProcess in self.processes:
+            try:
+                # Check if process is still running or marked as interactive
+                if qProcess.state() == QtCore.QProcess.ProcessState.Running or \
+                   (hasattr(qProcess, 'isInteractive') and qProcess.isInteractive):
+                    
+                    # Get current output from the display widget
+                    current_output = qProcess.display.toHtml()
+                    
+                    if current_output and current_output.strip():
+                        log.info(f"Saving output for running process: {qProcess.name} (ID: {qProcess.id})")
+                        # preserve_status=True keeps the process as Running/Interactive
+                        processRepository.storeProcessOutput(str(qProcess.id), current_output, preserve_status=True)
+                        saved_count += 1
+                        
+            except Exception as e:
+                log.error(f"Error saving output for process {getattr(qProcess, 'id', '?')}: {e}")
+        
+        if saved_count > 0:
+            log.info(f"Saved output for {saved_count} running/interactive process(es)")
 
     # when hydra finds valid credentials we need to save them and change the brute tab title to red
     def handleHydraFindings(self, bWidget, userlist, passlist):
