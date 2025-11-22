@@ -126,6 +126,9 @@ class View(QtCore.QObject):
         self.toolsTableViewSortColumn = 'id'
         self.shell = shell
         self.viewState = viewState
+        
+        # Connect Ctrl+B signal ONCE in __init__ (not in start() which runs multiple times)
+        self.ui.actionNoteSelection.triggered.connect(self.sendSelectionToNotes)
         self._os_selection_model = None
         self.processStatusFilter = None
         # Flag to prevent double close confirmation
@@ -465,7 +468,7 @@ class View(QtCore.QObject):
 
         self.ui.ServicesTabWidget.setTabsClosable(True)  # hide the close button (cross) from the fixed tabs
 
-        self.ui.actionNoteSelection.triggered.connect(self.sendSelectionToNotes)
+        # Signal connection moved to __init__ to prevent double connections
 
         self.ui.ServicesTabWidget.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
         self.ui.ServicesTabWidget.tabBar().setTabButton(1, QTabBar.ButtonPosition.RightSide, None)
@@ -888,8 +891,8 @@ class View(QtCore.QObject):
         else:
             log.info("Saving project..")
             
-            # Get notes content
-            notes = self.ui.NotesTextEdit.toPlainText()
+            # Get notes content as HTML to preserve formatting
+            notes = self.ui.NotesTextEdit.toHtml()
             
             # Convert IP to host ID if needed
             if self.viewState.lastHostIdClicked:
@@ -929,8 +932,8 @@ class View(QtCore.QObject):
         self.ui.statusbar.showMessage("Saving..")
         log.info("Saving project..")
         
-        # Get notes content
-        notes = self.ui.NotesTextEdit.toPlainText()
+        # Get notes content as HTML to preserve formatting
+        notes = self.ui.NotesTextEdit.toHtml()
         
         # Convert IP to host ID if needed
         hostId = None
@@ -4213,21 +4216,32 @@ class View(QtCore.QObject):
             if currentIndex <= 3:
                 return
             widget = self.ui.ServicesTabWidget.widget(currentIndex)
-            textEdit = widget.findChild(QtWidgets.QTextEdit)
-            if not textEdit:
-                return
+            
+            # Check if this is an interactive tab (bash/msfconsole with QStackedWidget)
+            stackedWidget = widget.findChild(QtWidgets.QStackedWidget)
+            if stackedWidget:
+                # Get the currently visible widget from the stacked widget
+                textEdit = stackedWidget.currentWidget()
+                if not isinstance(textEdit, QtWidgets.QTextEdit):
+                    return
+            else:
+                # Normal tab - just find the QTextEdit
+                textEdit = widget.findChild(QtWidgets.QTextEdit)
+                if not textEdit:
+                    return
+            
             title = self.ui.ServicesTabWidget.tabText(currentIndex)
         
         cursor = textEdit.textCursor()
         if not cursor.hasSelection():
             return
         
-        # Flash effect - save original stylesheet
-        originalStyle = textEdit.styleSheet()
-        # Set orange background
-        textEdit.setStyleSheet("QTextEdit { background-color: rgba(255, 165, 0, 180); }")
-        # Create timer to restore original background after 200ms
-        QtCore.QTimer.singleShot(200, lambda: textEdit.setStyleSheet(originalStyle))
+        # Flash effect - Use viewport stylesheet to work with both fresh and restored tabs
+        # Restored tabs have HTML with inline background-color that overrides widget stylesheets
+        viewport = textEdit.viewport()
+        originalViewportStyle = viewport.styleSheet()
+        viewport.setStyleSheet("QWidget { background-color: rgba(255, 165, 0, 180); }")
+        QtCore.QTimer.singleShot(200, lambda: viewport.setStyleSheet(originalViewportStyle))
         
         # Get selection boundaries
         selectionStart = cursor.selectionStart()

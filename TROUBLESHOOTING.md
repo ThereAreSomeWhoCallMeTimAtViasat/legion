@@ -2,6 +2,15 @@
 
 ## Current Tasks
 
+- [ ] add opened to global negative
+- [ ] add Command shell session 1 to global positive
+- [x] inconsistant note taking with ctrl+B.  is it different for tabs restored from file->open?
+- [ ]
+- [ ]
+- [ ]
+- [ ]
+- [ ]
+
 - [x] output from tool tabs that run with bash or msfconsole is not saved to database
 
 - [x] on save and reload of data, the reloaded data in the qtextedit is formated as text, not the html that was presented.  do we need to save the data to the db differently?
@@ -12,13 +21,15 @@
 
 - [x] script data is not being reloaded from a db save
 
-- [ ] notes need to be saved in the db and restored from the db as html
+- [x] notes need to be saved in the db and restored from the db as html
 
-- [ ] file->open seeing some errors:  Error creating proxy: Unknown or unsupported transport “disabled” for address “disabled:” (g-io-error-quark, 13)
+- [x] file->open seeing some errors:  Error creating proxy: Unknown or unsupported transport “disabled” for address “disabled:” (g-io-error-quark, 13)
 
 (python:6298): dconf-WARNING **: 08:48:30.044: failed to commit changes to dconf: Unknown or unsupported transport “disabled” for address “disabled:”
 
-- [ ] orange flash from ctrl+B does not return the background to default in msfconsole...background stays orange now...
+- [x] orange flash from ctrl+B does not return the background to default in...background stays orange now...
+
+- [x] no orange flash from ctrl+B or note taking in msfconsole...
 
 - [ ] stty: 'standard input': Inappropriate ioctl for device from the msfconsole now?
 
