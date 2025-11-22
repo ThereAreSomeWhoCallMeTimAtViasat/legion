@@ -4,9 +4,27 @@
 - [ ]
 - [ ]
 - [ ]
+- [ ] make resetDisplayStatusForOpenProcesses behavior (show cleared processes on project reopen) an option in legion.conf settings
+
+- [x] killed processes tabs are shown like they should but the tab data is not being saved or restored
+
+- [x] clear should only clear the selected process, not the entire table
+
+- [ ] add history (up arrow) to interactive
+
+- [ ] changing the matchsettings in a profile and then saving the profile and the activating the profile does not capture a positive match
+
+- [x] retry of an interactive tab does not add the matching label or change the tab font to matching
+
+- [x] retry of an interactive tab does not change the process tag to interactive
+
+- [x] retry should append the tab title with -retryX where X is the number of retries
+
+- [ ] should a right click kill give a process crashed error?
+
 - [x] tab reordering seems to be slower 
 
-- [ ] cant kill interactive processes with right click
+- [x] cant kill interactive processes with right click
 
 - [x] add opened to global negative
 
@@ -17,6 +35,8 @@
 - [ ] right click run does not put msfconsole in a terminal...still qtextedit
 
 - [ ] terminal portactions are not added to tools tab table list
+
+===============================================================================
 
 - [ ] lets be smarter on the service and the version before running a port action
 
