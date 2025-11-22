@@ -587,18 +587,42 @@ class MatchHighlighter(QtGui.QSyntaxHighlighter):
     def __init__(self, parent=None):
         super(MatchHighlighter, self).__init__(parent)
         self.matchPatterns = []
+        self.negativePatterns = []
         self.matchFormat = QtGui.QTextCharFormat()
         self.matchFormat.setBackground(QtGui.QColor(255, 255, 0))
         self.matchFormat.setForeground(QtGui.QColor(255, 0, 0))
         
-    def updateMatches(self, matches):
+    def updateMatches(self, matches, negativePatterns=None):
         self.matchPatterns = list(matches)
+        self.negativePatterns = negativePatterns if negativePatterns else []
         self.rehighlight()
     
     def highlightBlock(self, text):
+        # Find all negative pattern ranges in this line
+        negativeRanges = []
+        for negPattern in self.negativePatterns:
+            index = text.find(negPattern)
+            while index >= 0:
+                negativeRanges.append((index, index + len(negPattern)))
+                index = text.find(negPattern, index + len(negPattern))
+        
+        # Highlight match patterns, but skip if they overlap with negative ranges
         for pattern in self.matchPatterns:
             index = text.find(pattern)
             while index >= 0:
                 length = len(pattern)
-                self.setFormat(index, length, self.matchFormat)
+                patternEnd = index + length
+                
+                # Check if this match overlaps with any negative range
+                overlaps = False
+                for negStart, negEnd in negativeRanges:
+                    # Check if ranges overlap
+                    if not (patternEnd <= negStart or index >= negEnd):
+                        overlaps = True
+                        break
+                
+                # Only highlight if it doesn't overlap with a negative pattern
+                if not overlaps:
+                    self.setFormat(index, length, self.matchFormat)
+                
                 index = text.find(pattern, index + length)
