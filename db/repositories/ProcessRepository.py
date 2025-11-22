@@ -253,7 +253,7 @@ class ProcessRepository:
             proc.endTime = getTimestamp(True)
 
         if proc.status == "Killed" or proc.status == "Cancelled" or proc.status == "Crashed":
-            #session.commit() # Needed?
+            session.commit()  # YES, this is needed to save the output!
             session.close()
             return True
         else:
@@ -520,3 +520,22 @@ class ProcessRepository:
             session.add(proc)
             session.commit()
         session.close()
+
+    def hideProcesses(self, processIds: list):
+        """Hide specific processes by setting their display status to False."""
+        session = self.dbAdapter.session()
+        try:
+            for proc_id in processIds:
+                proc = session.query(process).filter_by(id=proc_id).first()
+                if proc:
+                    proc.display = 'False'
+                    session.add(proc)
+            session.commit()
+            self.log.info(f"Hidden {len(processIds)} processes")
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to hide processes: {e}")
+            raise
+        finally:
+            session.close()
+

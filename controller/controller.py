@@ -1251,7 +1251,7 @@ class Controller:
         if action.text() == 'Kill':
             if self.view.killProcessConfirmation():
                 for p in selectedProcesses:
-                    if p[1] != "Running":
+                    if p[1] not in ("Running", "Interactive"):
                         if p[1] == "Waiting":
                             if str(self.logic.activeProject.repositoryContainer.processRepository.getStatusByProcessId(
                                     p[2])) == 'Running':
@@ -1265,17 +1265,29 @@ class Controller:
                 self.view.updateProcessesTableView()
             return
 
-        if action.text() == 'Clear':  # hide all the processes that are not running
-            self.logic.activeProject.repositoryContainer.processRepository.toggleProcessDisplayStatus()
+        if action.text() == 'Clear':  # hide the selected processes
+            process_ids = [p[2] for p in selectedProcesses]  # p[2] is the process ID
+            self.logic.activeProject.repositoryContainer.processRepository.hideProcesses(process_ids)
+            log.info(f"Cleared {len(process_ids)} selected process(es) from view")
             self.view.updateProcessesTableView()
             return
 
         if action.text() == 'Retry':
             process_repo = self.logic.activeProject.repositoryContainer.processRepository
             for pid, status, proc_id in selectedProcesses:
-                if status in ('Running', 'Waiting'):
-                    log.info(f"Process {proc_id} is currently {status}; skipping retry.")
-                    continue
+                # Kill the process first if it's still running
+                if status in ('Running', 'Waiting', 'Interactive'):
+                    log.info(f"Process {proc_id} is currently {status}; killing before retry.")
+                    if status == 'Waiting':
+                        # Cancel waiting processes
+                        process_repo.storeProcessCancelStatus(str(proc_id))
+                    else:
+                        # Kill running/interactive processes
+                        self.killProcess(pid, proc_id)
+                    # Brief pause to allow process termination
+                    import time
+                    time.sleep(0.5)
+                
                 process_details = process_repo.getProcessById(proc_id)
                 if not process_details:
                     log.warning(f"Unable to locate process details for id {proc_id}; skipping retry.")
@@ -1290,6 +1302,31 @@ class Controller:
                 port = process_details.get('port') or ''
                 protocol = process_details.get('protocol') or ''
                 outputfile = process_details.get('outputfile') or ''
+                original_status = process_details.get('status') or ''
+
+                # Append retry counter to tab title before (port/protocol)
+                # Match existing retry counter before the port/protocol part
+                retry_match = re.search(r'-retry(\d+)\s*(\([^)]+\))\s*$', tab_title, re.IGNORECASE)
+                if retry_match:
+                    # Increment existing retry counter
+                    current_retry = int(retry_match.group(1))
+                    new_retry = current_retry + 1
+                    port_part = retry_match.group(2)
+                    tab_title = re.sub(r'-retry\d+\s*(\([^)]+\))\s*$', f'-retry{new_retry} \\1', tab_title, flags=re.IGNORECASE)
+                    log.info(f"[Retry] Incrementing retry counter: {current_retry} -> {new_retry}")
+                else:
+                    # First retry, add -retry1 before (port/protocol)
+                    port_match = re.search(r'\s*(\([^)]+\))\s*$', tab_title)
+                    if port_match:
+                        # Has (port/protocol) part - insert retry before it
+                        port_part = port_match.group(1)
+                        base_title = tab_title[:port_match.start()]
+                        tab_title = f"{base_title}-retry1 {port_part}"
+                        log.info(f"[Retry] Adding first retry counter to tab title: {tab_title}")
+                    else:
+                        # No (port/protocol) part - append to end
+                        tab_title = f"{tab_title}-retry1"
+                        log.info(f"[Retry] Adding first retry counter to tab title (no port): {tab_title}")
 
                 host_key = host_ip if host_ip else tab_title
                 textbox = self.view.createNewTabForHost(host_key, tab_title, False, command=command)
@@ -1310,6 +1347,11 @@ class Controller:
                     kwargs['stage'] = stage_number
                     kwargs['discovery'] = discovery_flag
                     kwargs['enable_ipv6'] = enable_ipv6_flag
+                
+                # If the original process was Interactive, force the retry to be Interactive too
+                if original_status == 'Interactive':
+                    kwargs['force_interactive'] = True
+                    log.info(f"[Retry] Process {proc_id} was Interactive, will mark retry as Interactive")
 
                 self.runCommand(
                     name,
@@ -1730,7 +1772,7 @@ class Controller:
 
     # this function creates a new process, runs the command and takes care of displaying the ouput. returns the PID
     # the last 3 parameters are only used when the command is a staged nmap
-    def runCommand(self, *args, discovery=True, stage=0, stop=False, enable_ipv6=False):
+    def runCommand(self, *args, discovery=True, stage=0, stop=False, enable_ipv6=False, force_interactive=False):
         def handleProcStop(*vargs):
             updateElapsed.stop()
             self.processTimers[qProcess.id] = None
@@ -1926,6 +1968,14 @@ class Controller:
             # Wait 10 seconds for exploit to complete, then mark as interactive
             QTimer.singleShot(10000, markAsInteractive)
             log.info(f"[Interactive] Will mark msfconsole as interactive in 10 seconds")
+        
+        # If retrying an interactive process, mark it immediately
+        if force_interactive:
+            qProcess.isInteractive = True
+            log.info(f"[Interactive Retry] Marked process as interactive immediately (retry of interactive process)")
+            processRepository = self.logic.activeProject.repositoryContainer.processRepository
+            processRepository.storeProcessInteractiveStatus(str(qProcess.id))
+            log.info(f"[Interactive Retry] Updated database status to 'Interactive' for process {qProcess.id}")
 
 
         flag1 = hasattr(textbox, 'terminalWidget')
