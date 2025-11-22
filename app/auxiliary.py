@@ -252,76 +252,72 @@ class MyQProcess(QProcess):
     def getMatches(self, line, settings, name):
         matches = set()
         
-        #print(f"DEBUG getMatches: name={name}, line={repr(line[:100])}")
-        
         if name not in settings:
-            #print(f"DEBUG getMatches: '{name}' not in settings, returning empty")
             return matches
         
         currentSettings = settings[name]
-        #print(f"DEBUG getMatches: currentSettings keys={list(currentSettings.keys())}")
         
         # Check negative patterns FIRST
         if 'negative' in currentSettings:
-            #print(f"DEBUG getMatches: Checking {len(currentSettings['negative'])} negative patterns")
             for match in currentSettings['negative']:
-                #print(f"DEBUG getMatches: Testing negative pattern {repr(match)} in line")
                 if match in line:
-                    #print(f"DEBUG getMatches: NEGATIVE MATCH '{match}' - blocking all matches!")
                     return matches
         
         # Check positive patterns
         if 'positive' in currentSettings:
-            #print(f"DEBUG getMatches: Checking {len(currentSettings['positive'])} positive patterns")
             for match in currentSettings['positive']:
                 if match in line:
-                    #print(f"DEBUG getMatches: POSITIVE MATCH '{match}' found!")
                     matches.add(match)
-                #else:
-                #    print(f"DEBUG getMatches: Pattern {repr(match)} NOT in line")
         
-        #print(f"DEBUG getMatches: Returning matches={matches}")
         return matches
 
 
     def handleMatches(self, output):
         if not self.settings or not hasattr(self.settings, 'matchSettings'):
-            #print(f"DEBUG("DEBUG: No settings or matchSettings available")
             return '<br />'.join(output.split('\n'))
-        
-        #print(f"DEBUG: handleMatches called for tool: {self.name}")
-        #print(f"DEBUG: matchSettings structure:")
-        #for key, value in self.settings.matchSettings.items():
-            #print(f"DEBUG(f"  [{key}]: {value}")
-        #print(f"DEBUG: Output to be checked (length={len(output)}):")
-        #print(f"DEBUG(f"  First 200 chars: {repr(output[:200])}")
         
         matchSettings = self.settings.matchSettings
         hlOutput = []
+        lines = output.split('\n')
         
-        for line in output.split('\n'):
-            #if line.strip():  # Only #print(f"DEBUG non-empty lines
-                #print(f"DEBUG: Checking line: {repr(line[:100])}")
+        # Collect negative patterns for the highlighter
+        negativePatterns = []
+        if 'global' in matchSettings and 'negative' in matchSettings['global']:
+            negativePatterns.extend(matchSettings['global']['negative'])
+        if self.name in matchSettings and 'negative' in matchSettings[self.name]:
+            negativePatterns.extend(matchSettings[self.name]['negative'])
+        
+        for line in lines:
             globalMatches = self.getMatches(line, matchSettings, 'global')
             toolMatches = self.getMatches(line, matchSettings, self.name)
             matches = globalMatches.union(toolMatches)
-            #print(f"DEBUG:   globalMatches={globalMatches}, toolMatches={toolMatches}, combined={matches}")
             
             if matches:
                 self.matches.update(matches)
-                #print(f"DEBUG: MATCH FOUND! Matches: {matches}")
-                self.sigHasMatch.emit(', '.join(self.matches))
             
             hlOutput.append(line)
         
+        # Filter out matches that are substrings of negative patterns
+        # If a positive pattern appears within a negative pattern string, remove it
+        filteredMatches = set(self.matches)
+        patternsToRemove = set()
+        
+        for pattern in filteredMatches:
+            for negPattern in negativePatterns:
+                if pattern in negPattern and pattern != negPattern:
+                    # This positive pattern is a substring of a negative pattern
+                    patternsToRemove.add(pattern)
+                    break
+        
+        # Remove substring patterns from matches
+        filteredMatches = filteredMatches - patternsToRemove
+        
+        if filteredMatches:
+            self.sigHasMatch.emit(', '.join(filteredMatches))
+        
         if self.highlighter:
-            self.highlighter.updateMatches(self.matches)
+            self.highlighter.updateMatches(self.matches, negativePatterns)
         
-        if self.matches:
-            # Connect the signals
-            pass
-        
-        #print(f"DEBUG("DEBUG: handleMatches completed")
         return '<br />'.join(hlOutput)
 
 

@@ -4,44 +4,19 @@
 - [ ]
 - [ ]
 - [ ]
-- [ ]
-- [ ]
-- [ ] add opened to global negative
-- [ ] add Command shell session 1 to global positive
-- [x] inconsistant note taking with ctrl+B.  is it different for tabs restored from file->open?
+- [ ] tab reordering seems to be slower 
 
-- [x] output from tool tabs that run with bash or msfconsole is not saved to database
+- [ ] cant kill interactive processes with right click
 
-- [x] on save and reload of data, the reloaded data in the qtextedit is formated as text, not the html that was presented.  do we need to save the data to the db differently?
+- [x] add opened to global negative
+
+- [x] add Command shell session 1 opened to global positive
 
 - [ ] window resize is not being saved
-
-- [x] cve data is not being reloaded from a db save
-
-- [x] script data is not being reloaded from a db save
-
-- [x] notes need to be saved in the db and restored from the db as html
-
-- [x] file->open seeing some errors:  Error creating proxy: Unknown or unsupported transport “disabled” for address “disabled:” (g-io-error-quark, 13)
-
-    (python:6298): dconf-WARNING **: 08:48:30.044: failed to commit changes to dconf: Unknown or unsupported transport “disabled” for address “disabled:”
-
-- [x] orange flash from ctrl+B does not return the background to default in...background stays orange now...
-
-- [x] no orange flash from ctrl+B or note taking in msfconsole...
-
-- [x] stty: 'standard input': Inappropriate ioctl for device from the msfconsole now?
-  - **Fixed**: Added proper PTY terminal attribute configuration before starting bash
-  - Issue: Commands like msfconsole that query terminal settings via `stty` were failing because the PTY wasn't properly initialized with canonical mode flags (ECHO, ICANON, ISIG, etc.)
-  - Solution: Configure termios attributes on the slave PTY before spawning the bash process
 
 - [ ] right click run does not put msfconsole in a terminal...still qtextedit
 
 - [ ] terminal portactions are not added to tools tab table list
-
-- [x] blinking cursor in terminal does not allow scroll
-
-- [x] double terminaltabs one blank one with data  WARNING  No dbId found for tab being closed; skipping DB status update.
 
 - [ ] lets be smarter on the service and the version before running a port action
 
@@ -70,6 +45,35 @@
 - [ ] move vulners to a script that runs in another process, not the nmap process, so nmap can continue.  or put vulners to the end?
 
 ## Completed Tasks
+
+- [x] inconsistant note taking with ctrl+B.  is it different for tabs restored from file->open?
+
+- [x] output from tool tabs that run with bash or msfconsole is not saved to database
+
+- [x] on save and reload of data, the reloaded data in the qtextedit is formated as text, not the html that was presented.  do we need to save the data to the db differently?
+
+- [x] cve data is not being reloaded from a db save
+
+- [x] script data is not being reloaded from a db save
+
+- [x] notes need to be saved in the db and restored from the db as html
+
+- [x] file->open seeing some errors:  Error creating proxy: Unknown or unsupported transport “disabled” for address “disabled:” (g-io-error-quark, 13)
+
+    (python:6298): dconf-WARNING **: 08:48:30.044: failed to commit changes to dconf: Unknown or unsupported transport “disabled” for address “disabled:”
+
+- [x] orange flash from ctrl+B does not return the background to default in...background stays orange now...
+
+- [x] no orange flash from ctrl+B or note taking in msfconsole...
+
+- [x] stty: 'standard input': Inappropriate ioctl for device from the msfconsole now?
+  - **Fixed**: Added proper PTY terminal attribute configuration before starting bash
+  - Issue: Commands like msfconsole that query terminal settings via `stty` were failing because the PTY wasn't properly initialized with canonical mode flags (ECHO, ICANON, ISIG, etc.)
+  - Solution: Configure termios attributes on the slave PTY before spawning the bash process
+
+- [x] blinking cursor in terminal does not allow scroll
+
+- [x] double terminaltabs one blank one with data  WARNING  No dbId found for tab being closed; skipping DB status update.
 
 - [x] moved time-legion.conf to backup folder
 
