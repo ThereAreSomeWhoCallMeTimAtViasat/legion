@@ -2606,6 +2606,35 @@ class Controller:
                     if tab.objectName() == tabTitle:
                         tab.setProperty('matches', matchStr)
                         self.view.updateTabHighlight(hostIp, tabTitle)
+                        
+                        # IMMEDIATE TAB REORDERING: If this host is currently selected, reorder tabs now
+                        # Check if we're on the Hosts tab and this is the currently selected host
+                        if (hasattr(self.view, 'ui') and 
+                            hasattr(self.view.ui, 'HostsTabWidget') and
+                            self.view.ui.HostsTabWidget.tabText(self.view.ui.HostsTabWidget.currentIndex()) == 'Hosts'):
+                            
+                            # Check if this is the currently selected host
+                            if hasattr(self.view.viewState, 'ip_clicked') and self.view.viewState.ip_clicked == hostIp:
+                                log.info(f"[IMMEDIATE REORDER] Match found in tab '{tabTitle}' for currently selected host {hostIp}, reordering tabs now")
+                                
+                                # Save the currently selected tab name before reordering
+                                currentTabIndex = self.view.ui.ServicesTabWidget.currentIndex()
+                                currentTabName = self.view.ui.ServicesTabWidget.tabText(currentTabIndex) if currentTabIndex >= 0 else None
+                                log.debug(f"[IMMEDIATE REORDER] Currently viewing tab: '{currentTabName}' at index {currentTabIndex}")
+                                
+                                # Reorder tabs immediately for the current host
+                                self.view.removeToolTabs()
+                                self.view.restoreToolTabsForHost(hostIp)
+                                
+                                # Restore the user's tab selection after reordering
+                                if currentTabName:
+                                    # Find the tab with the same name after reordering
+                                    for i in range(self.view.ui.ServicesTabWidget.count()):
+                                        if self.view.ui.ServicesTabWidget.tabText(i) == currentTabName:
+                                            log.debug(f"[IMMEDIATE REORDER] Restoring tab selection to '{currentTabName}' at new index {i}")
+                                            self.view.ui.ServicesTabWidget.setCurrentIndex(i)
+                                            break
+                        
                         break
 
 

@@ -4,7 +4,7 @@
 - [ ]
 - [ ]
 - [ ]
-- [ ] tab reordering seems to be slower 
+- [x] tab reordering seems to be slower 
 
 - [ ] cant kill interactive processes with right click
 
