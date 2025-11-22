@@ -5746,6 +5746,20 @@ class View(QtCore.QObject):
             # Create PTY
             master_fd, slave_fd = pty.openpty()
             
+            # Configure slave PTY to avoid "stty: Inappropriate ioctl for device" errors
+            # This ensures commands like msfconsole can properly query terminal settings
+            import termios
+            import tty
+            try:
+                attrs = termios.tcgetattr(slave_fd)
+                # Set proper terminal mode flags
+                attrs[0] = attrs[0] | termios.BRKINT | termios.ICRNL | termios.IXON
+                attrs[1] = attrs[1] | termios.OPOST
+                attrs[3] = attrs[3] | termios.ECHO | termios.ECHOE | termios.ECHOK | termios.ECHOCTL | termios.ECHOKE | termios.ICANON | termios.ISIG
+                termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+            except Exception as e:
+                log.debug(f"Could not configure PTY attributes (non-fatal): {e}")
+            
             # Start bash
             bash_env = os.environ.copy()
             bash_env['TERM'] = 'xterm-256color'

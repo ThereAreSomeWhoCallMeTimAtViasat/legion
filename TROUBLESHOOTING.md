@@ -1,15 +1,14 @@
 # Troubleshooting Checklist
 
 ## Current Tasks
-
+- [ ]
+- [ ]
+- [ ]
+- [ ]
+- [ ]
 - [ ] add opened to global negative
 - [ ] add Command shell session 1 to global positive
 - [x] inconsistant note taking with ctrl+B.  is it different for tabs restored from file->open?
-- [ ]
-- [ ]
-- [ ]
-- [ ]
-- [ ]
 
 - [x] output from tool tabs that run with bash or msfconsole is not saved to database
 
@@ -25,13 +24,16 @@
 
 - [x] file->open seeing some errors:  Error creating proxy: Unknown or unsupported transport “disabled” for address “disabled:” (g-io-error-quark, 13)
 
-(python:6298): dconf-WARNING **: 08:48:30.044: failed to commit changes to dconf: Unknown or unsupported transport “disabled” for address “disabled:”
+    (python:6298): dconf-WARNING **: 08:48:30.044: failed to commit changes to dconf: Unknown or unsupported transport “disabled” for address “disabled:”
 
 - [x] orange flash from ctrl+B does not return the background to default in...background stays orange now...
 
 - [x] no orange flash from ctrl+B or note taking in msfconsole...
 
-- [ ] stty: 'standard input': Inappropriate ioctl for device from the msfconsole now?
+- [x] stty: 'standard input': Inappropriate ioctl for device from the msfconsole now?
+  - **Fixed**: Added proper PTY terminal attribute configuration before starting bash
+  - Issue: Commands like msfconsole that query terminal settings via `stty` were failing because the PTY wasn't properly initialized with canonical mode flags (ECHO, ICANON, ISIG, etc.)
+  - Solution: Configure termios attributes on the slave PTY before spawning the bash process
 
 - [ ] right click run does not put msfconsole in a terminal...still qtextedit
 
