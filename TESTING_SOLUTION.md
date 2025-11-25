@@ -198,7 +198,24 @@ You now have:
 - ✅ 120 total tests (99% passing)
 - ✅ Simple command to run before commits
 - ✅ Framework to add more tests as needed
+- ✅ Feature analysis mapped to TROUBLESHOOTING.md
 
 **Your workflow**: Make changes → `./run_smoke_tests.sh` → Commit if passing
 
 This prevents "change breaks something else" issues automatically.
+
+---
+
+## Important: Testing Uncertain Features
+
+See `FEATURES_TO_TEST.md` for detailed analysis of which features are:
+- ✅ **KNOWN WORKING** - Test to prevent regression
+- 🐛 **TESTING WILL HELP** - Tests document current behavior
+- ⚠️ **UNCERTAIN** - Fix bugs first, then test
+
+**Smart Testing Approach**:
+1. Test working features (prevent regression)
+2. Use @expectedFailure for uncertain parts (document behavior)
+3. Fix bugs → remove @expectedFailure → tests pass
+
+This way tests help you understand what works WITHOUT creating false confidence.
