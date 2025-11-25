@@ -24,30 +24,34 @@ from tests.db.helpers.db_helpers import mockQueryWithFilterBy, mockFirstByReturn
 
 class NoteRepositoryTest(unittest.TestCase):
     def setUp(self) -> None:
+        from unittest import mock
         from db.entities.note import note
         self.mockDbAdapter = MagicMock()
         self.mockDbSession = MagicMock()
+        # session is a property - use PropertyMock to mock it properly
+        type(self.mockDbAdapter).session = mock.PropertyMock(return_value=self.mockDbSession)
         self.someNote: note = MagicMock()
         self.mockLog = MagicMock()
         self.noteRepository: NoteRepository = NoteRepository(self.mockDbAdapter, self.mockLog)
 
     def test_getNoteByHostId_WhenProvidedHostId_ReturnsNote(self):
-        self.mockDbAdapter.session.return_value = self.mockDbSession
-        self.mockDbSession.query.return_value = mockQueryWithFilterBy(mockFirstByReturnValue("some-note"))
+        # Create a mock note object with .text attribute (needed for debug logging)
+        mock_note = MagicMock()
+        mock_note.text = "some-note-text"
+        self.mockDbSession.query.return_value = mockQueryWithFilterBy(mockFirstByReturnValue(mock_note))
 
-        note = self.noteRepository.getNoteByHostId("some-host-id")
-        self.assertEqual("some-note", note)
+        note = self.noteRepository.getNoteByHostId("123")  # Use numeric string since impl converts to int
+        self.assertEqual(mock_note, note)
 
     def test_storeNotes_WhenProvidedHostIdAndNoteAndNoteAlreadyExists_UpdatesNote(self):
-        self.mockDbAdapter.session.return_value = self.mockDbSession
         self.mockDbSession.query.return_value = mockQueryWithFilterBy(mockFirstByReturnValue(self.someNote))
-        self.noteRepository.storeNotes("some-host-id", "some-note")
-        self.mockDbSession.add.assert_called_once_with(self.someNote)
-        self.mockDbAdapter.commit.assert_called_once()
+        self.noteRepository.storeNotes("123", "some-note")  # Use numeric string
+        # When note exists, implementation uses setattr (not add) since object is already in session
+        self.mockDbSession.add.assert_not_called()
+        self.mockDbSession.commit.assert_called_once()
 
     def test_storeNotes_WhenProvidedHostIdAndNoteAndNoteDoesNotExist_SavesNewNote(self):
-        self.mockDbAdapter.session.return_value = self.mockDbSession
         self.mockDbSession.query.return_value = mockQueryWithFilterBy(mockFirstByReturnValue(None))
-        self.noteRepository.storeNotes("some-host-id", "some-note")
+        self.noteRepository.storeNotes("456", "some-note")  # Use numeric string
         self.mockDbSession.add.assert_called_once()
-        self.mockDbAdapter.commit.assert_called_once()
+        self.mockDbSession.commit.assert_called_once()

@@ -28,6 +28,8 @@ from ui.eventfilter import MyEventFilter
 class MyEventFilterTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_view = MagicMock()
+        # Ensure _exiting attribute is False or doesn't exist for normal test flow
+        self.mock_view._exiting = False
         self.mock_main_window = MagicMock()
         self.mock_event = MagicMock()
         self.mock_receiver = MagicMock()

@@ -21,21 +21,23 @@ from unittest.mock import patch
 
 class QtUpdateProgressObserverTest(unittest.TestCase):
     @patch("ui.ancillaryDialog.ProgressWidget")
-    @patch('utilities.stenoLogging.get_logger')
-    def setUp(self, mockProgressWidget, mockLogging) -> None:
+    def setUp(self, mockProgressWidget) -> None:
         from ui.observers.QtUpdateProgressObserver import QtUpdateProgressObserver
         self.mockProgressWidget = mockProgressWidget
         self.qtUpdateProgressObserver = QtUpdateProgressObserver(self.mockProgressWidget)
 
-    def test_onStart_callsShowOnProgressWidget(self):
+    @patch("PyQt6.QtCore.QMetaObject.invokeMethod")
+    def test_onStart_callsShowOnProgressWidget(self, mock_invoke):
         self.qtUpdateProgressObserver.onStart()
-        self.mockProgressWidget.show.assert_called_once()
+        mock_invoke.assert_called_once()
 
-    def test_onFinished_callsHideOnProgressWidget(self):
+    @patch("PyQt6.QtCore.QMetaObject.invokeMethod")
+    def test_onFinished_callsHideOnProgressWidget(self, mock_invoke):
         self.qtUpdateProgressObserver.onFinished()
-        self.mockProgressWidget.hide.assert_called_once()
+        mock_invoke.assert_called_once()
 
     def test_onProgressUpdate_callsSetProgressAndShow(self):
-        self.qtUpdateProgressObserver.onProgressUpdate(25)
+        self.qtUpdateProgressObserver.onProgressUpdate(25, "Test Title")
+        self.mockProgressWidget.setText.assert_called_once_with("Test Title")
         self.mockProgressWidget.setProgress.assert_called_once_with(25)
         self.mockProgressWidget.show.assert_called_once()

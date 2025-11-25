@@ -3,7 +3,8 @@
 ## Current Tasks
 - [ ]
 - [ ]
-- [ ]
+- [ ] determine if unit tests are valuable and then run or fix the current ones and make new ones.
+
 - [ ] make resetDisplayStatusForOpenProcesses behavior (show cleared processes on project reopen) an option in legion.conf settings
 
 - [x] killed processes tabs are shown like they should but the tab data is not being saved or restored
