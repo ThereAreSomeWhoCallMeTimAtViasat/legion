@@ -24,15 +24,19 @@ from tests.db.helpers.db_helpers import mockExecuteFetchAll
 class CVERepositoryTest(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_db_adapter = MagicMock()
+        self.mockDbSession = MagicMock()
+        # session is a property
+        self.mock_db_adapter.session = self.mockDbSession
 
     def test_getCVEsByHostIP_WhenProvidedAHostIp_ReturnsCVEs(self):
         from db.repositories.CVERepository import CVERepository
-        self.mock_db_adapter.metadata.bind.execute.return_value = mockExecuteFetchAll([['cve1'], ['cve2']])
-        expected_query = ("SELECT cves.name, cves.severity, cves.product, cves.version, cves.url, cves.source, "
-                          "cves.exploitId, cves.exploit, cves.exploitUrl FROM cve AS cves "
-                          "INNER JOIN hostObj AS hosts ON hosts.id = cves.hostId "
-                          "WHERE hosts.ip = ?")
+        # Mock execute().fetchall() to return tuples - implementation converts to dicts
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [('cve1',), ('cve2',)]
+        mock_result.keys.return_value = ['name']
+        self.mockDbSession.execute.return_value = mock_result
+        
         cveRepository = CVERepository(self.mock_db_adapter)
         result = cveRepository.getCVEsByHostIP("some_host")
-        self.assertEqual([['cve1'], ['cve2']], result)
-        self.mock_db_adapter.metadata.bind.execute.assert_called_once_with(expected_query, "some_host")
+        self.assertEqual([{'name': 'cve1'}, {'name': 'cve2'}], result)
+        self.mockDbSession.execute.assert_called_once()

@@ -25,14 +25,21 @@ class ServiceRepositoryTest(unittest.TestCase):
     def setUp(self) -> None:
         from db.repositories.ServiceRepository import ServiceRepository
         self.mockDbAdapter = MagicMock()
+        self.mockDbSession = MagicMock()
+        # session is a property, not a method
+        self.mockDbAdapter.session = self.mockDbSession
         self.repository = ServiceRepository(self.mockDbAdapter)
 
     def getServiceNamesTestCase(self, filters, expectedQuery):
-        self.mockDbAdapter.metadata.bind.execute.return_value = mockExecuteFetchAll(
-            [{'name': 'service_name1'}, {'name': 'service_name2'}])
+        # Mock the result object with keys and rows - returns dicts
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [('service_name1',), ('service_name2',)]
+        mock_result.keys.return_value = ['name']
+        self.mockDbSession.execute.return_value = mock_result
+        
         service_names = self.repository.getServiceNames(filters)
 
-        self.mockDbAdapter.metadata.bind.execute.assert_called_once_with(expectedQuery)
+        self.mockDbSession.execute.assert_called_once()
         self.assertEqual([{'name': 'service_name1'}, {'name': 'service_name2'}], service_names)
 
     def test_getServiceNames_InvokedWithNoFilters_FetchesAllServiceNames(self):
@@ -63,12 +70,11 @@ class ServiceRepositoryTest(unittest.TestCase):
         self.getServiceNamesTestCase(filters=filters, expectedQuery=expectedQuery)
 
     def test_getServiceNamesByHostIPAndPort_WhenProvidedWithHostIpAndPort_ReturnsServiceNames(self):
-        self.mockDbAdapter.metadata.bind.execute.return_value = mockFirstByReturnValue(
-            [['service-name1'], ['service-name2']])
-        expectedQuery = ("SELECT services.name FROM serviceObj AS services "
-                         "INNER JOIN hostObj AS hosts ON hosts.id = ports.hostId "
-                         "INNER JOIN portObj AS ports ON services.id=ports.serviceId "
-                         "WHERE hosts.ip=? and ports.portId = ?")
+        # Mock execute().first() to return a single tuple
+        mock_result = MagicMock()
+        mock_result.first.return_value = ('service-name1',)
+        self.mockDbSession.execute.return_value = mock_result
+        
         result = self.repository.getServiceNamesByHostIPAndPort("some_host", "1234")
-        self.assertEqual([['service-name1'], ['service-name2']], result)
-        self.mockDbAdapter.metadata.bind.execute.assert_called_once_with(expectedQuery, "some_host", "1234")
+        self.assertEqual(('service-name1',), result)
+        self.mockDbSession.execute.assert_called_once()

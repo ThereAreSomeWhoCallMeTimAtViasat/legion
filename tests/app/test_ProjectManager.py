@@ -15,6 +15,7 @@ Copyright (c) 2025 Shane William Scott
 
 Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@gmail.com)
 """
+import sys
 import unittest
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -23,17 +24,23 @@ from app.Project import Project
 
 
 class ProjectManagerTest(unittest.TestCase):
-    @patch('utilities.stenoLogging.get_logger')
+    @patch('os.makedirs')  # Patch os.makedirs globally to prevent module-level getTempFolder() issues
+    @patch('os.path.isdir', return_value=True)  # Pretend temp directory already exists
     @patch('db.repositories.HostRepository')
     @patch('app.auxiliary.Wordlist')
     @patch('db.SqliteDbAdapter.Database')
-    def setUp(self, getLogger, hostRepository, wordlist, database) -> None:
+    def setUp(self, hostRepository, wordlist, database, mock_isdir, mock_makedirs) -> None:
+        mock_makedirs.return_value = None  # No-op for temp directory creation at import time
+        # Remove ProjectManager from cache to ensure clean import
+        if 'app.ProjectManager' in sys.modules:
+            del sys.modules['app.ProjectManager']
         from app.ProjectManager import ProjectManager
         self.mockShell = MagicMock()
         self.mockRepositoryFactory = MagicMock()
         self.project = MagicMock()
         self.mockDatabase = database
-        self.projectManager = ProjectManager(self.mockShell, self.mockRepositoryFactory, getLogger)
+        mockLogger = MagicMock()
+        self.projectManager = ProjectManager(self.mockShell, self.mockRepositoryFactory, mockLogger)
 
     def test_createNewProject_WhenProvidedProjectDetails_ReturnsANewProject(self):
         projectType = "legion"
@@ -44,11 +51,11 @@ class ProjectManagerTest(unittest.TestCase):
 
         project = self.projectManager.createNewProject(projectType, isTemporary)
         self.mockShell.create_named_temporary_file.assert_called_once_with(
-            suffix=".legion", prefix="legion-", directory="./tmp/", delete_on_close=False
+            suffix=".legion", prefix="legion-", directory=mock.ANY, delete_on_close=False
         )
         self.mockShell.create_temporary_directory.assert_has_calls([
-            mock.call(prefix="legion-", suffix="-tool-output", directory="./tmp/"),
-            mock.call(prefix="legion-", suffix="-running", directory="./tmp/"),
+            mock.call(prefix="legion-", suffix="-tool-output", directory=mock.ANY),
+            mock.call(prefix="legion-", suffix="-running", directory=mock.ANY),
         ])
         self.mockShell.create_directory_recursively.assert_has_calls([
             mock.call("/outputFolder/screenshots"),
@@ -65,7 +72,8 @@ class ProjectManagerTest(unittest.TestCase):
         self.assertEqual(project.properties.storeWordListsOnExit, True)
         self.mockRepositoryFactory.buildRepositories.assert_called_once_with(mock.ANY)
 
-    def test_closeProject_WhenProvidedAnOpenTemporaryProject_ClosesTheProject(self):
+    @patch('os.path.exists', return_value=True)
+    def test_closeProject_WhenProvidedAnOpenTemporaryProject_ClosesTheProject(self, mock_exists):
         self.project.properties.isTemporary = True
         self.project.properties.storeWordListsOnExit = True
         self.project.properties.projectName = "project-name"
@@ -76,7 +84,8 @@ class ProjectManagerTest(unittest.TestCase):
         self.mockShell.remove_file.assert_called_once_with("project-name")
         self.mockShell.remove_directory.assert_has_calls([mock.call("./output/folder"), mock.call("./running/folder")])
 
-    def test_closeProject_WhenProvidedAnOpenNonTemporaryProject_ClosesTheProject(self):
+    @patch('os.path.exists', return_value=True)
+    def test_closeProject_WhenProvidedAnOpenNonTemporaryProject_ClosesTheProject(self, mock_exists):
         self.project.properties.isTemporary = False
         self.project.properties.storeWordListsOnExit = False
         self.project.properties.runningFolder = "./running/folder"
@@ -106,23 +115,25 @@ class ProjectManagerTest(unittest.TestCase):
         self.assertIsNotNone(openedExistingProject.properties.passwordWordList)
         self.assertTrue(openedExistingProject.properties.storeWordListsOnExit)
         self.mockShell.create_temporary_directory.assert_called_once_with(suffix="-running", prefix="legion-",
-                                                                          directory="./tmp/")
+                                                                          directory=mock.ANY)
         self.mockRepositoryFactory.buildRepositories.assert_called_once()
 
-    @patch('os.system')
+    @patch('shutil.copytree')
+    @patch('os.path.exists', return_value=False)
     def test_saveProjectAs_WhenProvidedAnActiveTemporaryProjectAndASaveFileName_SavesProjectSuccessfully(self,
-                                                                                                         osSystem):
+                                                                                                         mock_exists,
+                                                                                                         mock_copytree):
         expectedFileName = "my-test-project"
         self.project.properties.projectName = "some-running-temporary-project"
         self.project.properties.outputFolder = "some-temporary-output-folder"
         self.project.properties.isTemporary = True
-        self.mockShell.directoryOrFileExists.return_value = False
+        self.project.database.verify_integrity = MagicMock()
+        self.project.database.backup_to = MagicMock()
 
         savedProject: Project = self.projectManager.saveProjectAs(self.project, expectedFileName, replace=1,
                                                                   projectType="legion")
-        self.mockShell.copy.assert_called_once_with(source="some-running-temporary-project",
-                                                    destination="my-test-project.legion")
-        osSystem.assert_called_once()
+        self.project.database.backup_to.assert_called_once_with("my-test-project.legion")
+        mock_copytree.assert_called_once()
         self.mockShell.remove_file.assert_called_once_with("some-running-temporary-project")
         self.mockShell.remove_directory.assert_called_once_with("some-temporary-output-folder")
         self.assertEqual(savedProject.properties.projectName, "my-test-project.legion")

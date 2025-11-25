@@ -24,14 +24,12 @@ from app.timing import getTimestamp
 
 
 class TimingTest(unittest.TestCase):
-    @patch('utilities.stenoLogging.get_logger')
-    def test_getTimestamp_WhenInvokedWithNoParameters_ReturnsStandardFormattedTimestamp(self, getLogger):
+    def test_getTimestamp_WhenInvokedWithNoParameters_ReturnsStandardFormattedTimestamp(self):
         expectedStandardTimestampFormat = "%Y%m%d%H%M%S%f"
         currentTime = datetime.fromtimestamp(time())
         self.assertEqual(getTimestamp()[:-3], currentTime.strftime(expectedStandardTimestampFormat)[:-3])
 
-    @patch('utilities.stenoLogging.get_logger')
-    def test_getTimestamp_WhenInvokedWithHumanParameter_ReturnsHumanFormattedTimestamp(self, getLogger):
+    def test_getTimestamp_WhenInvokedWithHumanParameter_ReturnsHumanFormattedTimestamp(self):
         expectedHumanTimestampFormat = "%d %b %Y %H:%M:%S.%f"
         currentTime = datetime.fromtimestamp(time())
         self.assertEqual(getTimestamp(human=True)[:-3], currentTime.strftime(expectedHumanTimestampFormat)[:-3])

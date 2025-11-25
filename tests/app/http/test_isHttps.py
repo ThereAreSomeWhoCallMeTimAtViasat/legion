@@ -27,5 +27,6 @@ class isHttpsTest(unittest.TestCase):
             mockOpenedUrl = MagicMock()
             Request.return_value = MagicMock()
             urlopen.return_value.read.return_value = mockOpenedUrl
-            self.assertTrue(isHttps("some-ip", "8080"))
-            Request.assert_called_with("https://some-ip:8080", headers={"User-Agent": expectedUserAgent})
+            # Use a valid IP address format instead of "some-ip"
+            self.assertTrue(isHttps("192.168.1.1", "8080"))
+            Request.assert_called_with("https://192.168.1.1:8080", headers={"User-Agent": expectedUserAgent})
