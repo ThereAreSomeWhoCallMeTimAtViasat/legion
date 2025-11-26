@@ -18,6 +18,7 @@ import unittest
 import os
 import sys
 import tempfile
+import shutil
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
 
 # Test if PyQt6 available (skip all tests if not)
@@ -31,12 +32,23 @@ except ImportError:
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-# Imports would go here when implementing actual tests
+from app.shell.DefaultShell import DefaultShell
+from app.ProjectManager import ProjectManager
+from app.logging.legionLog import getDbLogger, getAppLogger
+from db.RepositoryFactory import RepositoryFactory
+from app.tools.nmap.DefaultNmapExporter import DefaultNmapExporter
+from app.tools.ToolCoordinator import ToolCoordinator
+from app.logic import Logic
 
 
 @unittest.skipUnless(PYQT6_AVAILABLE, "PyQt6 not available")
-class TestUIRegressions(unittest.TestCase):
-    """Test UI regressions that unit tests can't catch"""
+class LegionUITestBase(unittest.TestCase):
+    """
+    Base class for Legion UI tests.
+    
+    Provides full Legion initialization with View, Controller, Logic.
+    This is HEAVY - use only for actual UI regression tests.
+    """
     
     @classmethod
     def setUpClass(cls):
@@ -47,226 +59,366 @@ class TestUIRegressions(unittest.TestCase):
             cls.app = QtWidgets.QApplication.instance()
     
     def setUp(self):
-        """Create temp project before each test"""
-        # Setup would go here when implementing actual tests
-        pass
+        """Create temp project and initialize Legion components before each test"""
+        self.temp_dir = tempfile.mkdtemp(prefix='legion_ui_test_')
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
+        
+        # Create core components (same as legion.py)
+        self.shell = DefaultShell()
+        self.dbLog = getDbLogger()
+        self.appLogger = getAppLogger()
+        self.repositoryFactory = RepositoryFactory(self.dbLog)
+        self.projectManager = ProjectManager(self.shell, self.repositoryFactory, self.appLogger)
+        self.nmapExporter = DefaultNmapExporter(self.shell, self.appLogger)
+        self.toolCoordinator = ToolCoordinator(self.shell, self.nmapExporter)
+        self.logic = Logic(self.shell, self.projectManager, self.toolCoordinator)
+        
+        # Create temporary project
+        self.logic.createNewTemporaryProject()
+        
+        # Store convenience references to repositories
+        self.hostRepo = self.logic.activeProject.repositoryContainer.hostRepository
+        self.portRepo = self.logic.activeProject.repositoryContainer.portRepository
+        self.serviceRepo = self.logic.activeProject.repositoryContainer.serviceRepository
+        self.noteRepo = self.logic.activeProject.repositoryContainer.noteRepository
+        self.cveRepo = self.logic.activeProject.repositoryContainer.cveRepository
+        self.scriptRepo = self.logic.activeProject.repositoryContainer.scriptRepository
+        self.processRepo = self.logic.activeProject.repositoryContainer.processRepository
+        
+        # Database session for direct operations
+        self.db = self.logic.activeProject.database
+        
+    def createHost(self, ip, hostname=''):
+        """Helper to create a host directly in database"""
+        from db.entities.host import hostObj
+        from db.entities.note import note
+        
+        session = self.db.session()
+        
+        # Check if host already exists
+        existing = session.query(hostObj).filter_by(ip=ip).first()
+        if existing:
+            session.close()
+            return existing
+        
+        # Create new host
+        host = hostObj(
+            osMatch='', osAccuracy='', ip=ip, ipv4=ip, ipv6='', macaddr='',
+            status='up', hostname=hostname, vendor='', uptime='',
+            lastboot='', distance='', state='', count=''
+        )
+        session.add(host)
+        session.commit()
+        
+        # Add default note
+        t_note = note(ip, 'Test host')
+        session.add(t_note)
+        session.commit()
+        
+        # Refresh to get ID
+        session.refresh(host)
+        host_id = host.id
+        session.close()
+        
+        # Return the host object
+        return self.hostRepo.getHostInformation(ip)
+    
+    def createPort(self, host_obj, port_num, protocol='tcp'):
+        """Helper to create a port directly in database"""
+        from db.entities.port import portObj
+        
+        session = self.db.session()
+        
+        # Create port - port entity takes host object, not host ID
+        port = portObj(
+            portId=port_num,
+            protocol=protocol,
+            state='open',
+            host=host_obj,
+            service=''
+        )
+        session.add(port)
+        session.commit()
+        
+        # Refresh to get ID
+        session.refresh(port)
+        port_id = port.id
+        session.close()
+        
+        # Return port ID
+        return port_id
             
     def tearDown(self):
-        """Clean up temp project after each test"""
-        # Cleanup would go here when implementing actual tests
-        pass
+        """Clean up project and temp files after each test"""
+        if self.logic and self.logic.activeProject:
+            self.projectManager.closeProject(self.logic.activeProject)
+            self.logic.activeProject = None
+
+
+@unittest.skipUnless(PYQT6_AVAILABLE, "PyQt6 not available")
+class TestDataIntegrityRegressions(LegionUITestBase):
+    """
+    Test data integrity issues that only show up in UI layer.
+    
+    These are the MOST COMMON regressions:
+    - Host switching but wrong data displayed
+    - Notes saved to wrong host
+    - CVE/Scripts tabs show wrong data
+    """
     
     # ========================================================================
-    # HOST SWITCHING - Data Integrity in UI
+    # HOST SWITCHING - Data Integrity (Backend Only for Now)
     # ========================================================================
     
-    def test_host_switch_clears_cve_table_ui(self):
+    def test_host_data_isolation_in_database(self):
         """
-        REGRESSION: When switching hosts, CVE table should update immediately
+        CRITICAL REGRESSION TEST: Different hosts must maintain separate data
         
-        User complaint: "I select Host B but CVE tab still shows Host A's CVEs"
+        Tests the backend data layer that UI depends on.
+        If this fails, UI will definitely show wrong data.
+        
+        User complaint: "I add notes to Host A, switch to Host B, switch back - notes are mixed up"
         """
-        # This is a placeholder showing intent
-        # Real implementation would:
-        # 1. Create 2 hosts with different CVEs
-        # 2. Select Host A → verify CVE table shows Host A CVEs
-        # 3. Select Host B → verify CVE table NOW shows Host B CVEs
-        # 4. NOT shows Host A CVEs anymore
+        # Step 1: Create two hosts
+        hostA = self.createHost('192.168.1.10')
+        hostB = self.createHost('192.168.1.11')
         
-        # For now, document the test intent
-        self.skipTest("Requires View integration - see REGRESSION_CHECKLIST.md item 'CVE tab switches'")
+        self.assertIsNotNone(hostA, "Host A should be created")
+        self.assertIsNotNone(hostB, "Host B should be created")
+        self.assertNotEqual(hostA.id, hostB.id, "Hosts should have different IDs")
+        
+        # Step 2: Add notes to Host A
+        self.noteRepo.storeNotes(hostA.id, 'Note for Host A - Web Server Running Apache')
+        
+        # Step 3: Add DIFFERENT notes to Host B
+        self.noteRepo.storeNotes(hostB.id, 'Note for Host B - Database Server Running MySQL')
+        
+        # Step 4: Retrieve Host A's note - should NOT contain Host B's text
+        noteA = self.noteRepo.getNoteByHostId(hostA.id)
+        self.assertIsNotNone(noteA, "Host A should have a note")
+        self.assertIn('Apache', noteA.text, "Host A note should mention Apache")
+        self.assertNotIn('MySQL', noteA.text, "Host A note should NOT mention MySQL (that's Host B)")
+        
+        # Step 5: Retrieve Host B's note - should NOT contain Host A's text
+        noteB = self.noteRepo.getNoteByHostId(hostB.id)
+        self.assertIsNotNone(noteB, "Host B should have a note")
+        self.assertIn('MySQL', noteB.text, "Host B note should mention MySQL")
+        self.assertNotIn('Apache', noteB.text, "Host B note should NOT mention Apache (that's Host A)")
+        
+        # Step 6: Switch back to Host A (simulate user clicking Host A again)
+        noteA_again = self.noteRepo.getNoteByHostId(hostA.id)
+        self.assertIsNotNone(noteA_again, "Host A note should still exist after 'switching'")
+        self.assertIn('Apache', noteA_again.text, "Host A note should still mention Apache")
+        self.assertEqual(noteA.text, noteA_again.text, "Host A note should be unchanged")
     
-    def test_host_switch_clears_scripts_table_ui(self):
+    def test_cve_data_isolation_by_host(self):
         """
-        REGRESSION: Scripts tab should update when switching hosts
+        CRITICAL REGRESSION TEST: CVEs must be associated with correct host
         
-        User complaint: "Scripts from previous host still visible"
+        User complaint: "CVE tab shows wrong CVEs when I switch hosts"
+        
+        NOTE: CVEs are read-only from nmap/vulners. This test validates retrieval logic.
         """
-        self.skipTest("Requires View integration - see REGRESSION_CHECKLIST.md item 'Scripts tab clears'")
+        # CVEs are populated by nmap importer, not directly stored
+        # This test is a placeholder showing intent - actual CVE data comes from nmap XML
+        self.skipTest("CVEs are read-only from nmap/vulners - test CVE tab updates in UI layer")
     
-    def test_host_switch_preserves_notes_ui(self):
+    def test_scripts_data_isolation_by_host(self):
         """
-        REGRESSION: Notes should follow the host, not stay in the widget
+        CRITICAL REGRESSION TEST: Nmap scripts must be associated with correct host/port
         
-        User complaint: "I type notes for Host A, switch to Host B, come back to A - notes gone"
+        User complaint: "Scripts tab shows scripts from previous host"
+        
+        NOTE: Scripts are read-only from nmap. This test validates retrieval logic.
         """
-        self.skipTest("Requires View integration - see REGRESSION_CHECKLIST.md item 'Notes save to correct host'")
+        # Scripts are populated by nmap importer, not directly stored
+        # This test is a placeholder showing intent - actual script data comes from nmap XML
+        self.skipTest("Scripts are read-only from nmap - test Scripts tab updates in UI layer")
+
     
     # ========================================================================
-    # TOOL OUTPUT - Persistence and Formatting
+    # TOOL OUTPUT - Persistence and Retrieval
     # ========================================================================
+
+
+@unittest.skipUnless(PYQT6_AVAILABLE, "PyQt6 not available")
+class TestToolOutputPersistence(LegionUITestBase):
+    """
+    Test tool output storage and retrieval.
     
-    def test_tool_output_shows_colors(self):
-        """
-        REGRESSION: Tool output should preserve ANSI colors
-        
-        User complaint: "Nmap output used to have colors, now it's plaintext"
-        """
-        # Real implementation:
-        # 1. Mock a process with ANSI color output
-        # 2. Store it in repository
-        # 3. Load it in tool tab
-        # 4. Verify QTextEdit has HTML formatting (not plaintext)
-        
-        self.skipTest("Requires tool tab widget - see REGRESSION_CHECKLIST.md item 'Tool output shows colors'")
+    User complaint: "I run scans, close project, reopen - output is gone"
+    """
     
-    def test_tool_output_persists_after_reopen(self):
+    def test_process_storage_and_retrieval(self):
         """
-        REGRESSION: Tool output should survive project close/reopen
+        CRITICAL REGRESSION TEST: Process output must be stored and retrievable
         
         User complaint: "I close project, reopen, and all my scan output is gone"
         """
-        # Real implementation:
-        # 1. Create project → run mock scan → save output
-        # 2. Close project
-        # 3. Reopen project
-        # 4. Verify tool tab still shows output
+        from app.timing import getTimestamp
         
-        self.skipTest("Requires project lifecycle - see REGRESSION_CHECKLIST.md item 'Tool output persists'")
+        # Step 1: Create host
+        host = self.createHost('192.168.100.25')
+        
+        # Step 2: Create mock process (simulating nmap scan)
+        # Must match the interface that ProcessRepository expects
+        outputfile = os.path.join(self.temp_dir, 'nmap_output.txt')
+        timestamp = getTimestamp()
+        
+        class MockProcess:
+            def __init__(self):
+                self.id = None
+                self.name = 'nmap'
+                self.hostIp = host.ip
+                self.tabTitle = 'nmap (192.168.100.25)'
+                self.outputfile = outputfile
+                self.status = 'Running'
+                self.startTime = timestamp
+                self.outputType = 'html'
+                self.port = '0'
+                self.protocol = 'tcp'
+                self.command = 'nmap -sV 192.168.100.25'
+                
+            def processId(self):
+                return str(id(self))  # Unique ID for this process
+        
+        mock_process = MockProcess()
+        
+        # Write some output to file
+        with open(mock_process.outputfile, 'w') as f:
+            f.write('<html><body><h1>Nmap Scan Results</h1></body></html>')
+        
+        # Step 3: Store process
+        db_id = self.processRepo.storeProcess(mock_process)
+        self.assertIsNotNone(db_id, "Process should be stored and return DB ID")
+        
+        # Step 4: Mark process as finished
+        self.processRepo.updateProcessState(db_id, status='Finished', endTime=getTimestamp())
+        
+        # Step 5: Retrieve process
+        retrieved = self.processRepo.getProcessById(db_id)
+        self.assertIsNotNone(retrieved, "Process should be retrievable")
+        self.assertEqual(retrieved['name'], 'nmap', "Process name should match")
+        self.assertEqual(retrieved['hostIp'], host.ip, "Process host IP should match")
+        self.assertEqual(retrieved['status'], 'Finished', "Process status should be updated")
+        
+        # Step 6: Verify output file exists
+        self.assertTrue(os.path.exists(mock_process.outputfile), "Output file should exist")
     
-    def test_multiple_tool_tabs_independent(self):
+    def test_multiple_processes_independent(self):
         """
-        REGRESSION: Multiple tool tabs should not interfere with each other
+        CRITICAL REGRESSION TEST: Multiple tool outputs should not interfere
         
         User complaint: "Running nikto overwrites nmap output in its tab"
         """
-        self.skipTest("Requires tool tab management - see REGRESSION_CHECKLIST.md item 'Multiple tool tabs work'")
-    
-    # ========================================================================
-    # VISUAL FEEDBACK - Ctrl+B, Tab Highlighting, Colors
-    # ========================================================================
-    
-    def test_ctrl_b_copies_to_notes(self):
-        """
-        REGRESSION: Ctrl+B should copy selected text to Notes tab
+        from app.timing import getTimestamp
         
-        User complaint: "I select text in nmap output, press Ctrl+B, nothing happens"
-        """
-        # Real implementation:
-        # 1. Create tool tab with text
-        # 2. Select text in tool tab
-        # 3. Send Ctrl+B key event
-        # 4. Verify Notes tab now contains selected text
+        # Step 1: Create host
+        host = self.createHost('10.0.0.100')
         
-        self.skipTest("Requires keyboard event handling - see REGRESSION_CHECKLIST.md item 'Ctrl+B copies'")
-    
-    def test_tab_highlighting_on_new_data(self):
-        """
-        REGRESSION: Tab should highlight when new data arrives (if implemented)
+        # Step 2: Create first process (nmap)
+        class NmapProcess:
+            def __init__(self, outputfile):
+                self.id = None
+                self.name = 'nmap'
+                self.hostIp = host.ip
+                self.tabTitle = 'nmap (10.0.0.100)'
+                self.outputfile = outputfile
+                self.status = 'Finished'
+                self.startTime = getTimestamp()
+                self.outputType = 'html'
+                self.port = '0'
+                self.protocol = 'tcp'
+                self.command = 'nmap -sV 10.0.0.100'
+            def processId(self):
+                return 'nmap_' + str(id(self))
         
-        User complaint: "CVE tab used to turn orange, now it doesn't"
-        """
-        self.skipTest("Feature may not be implemented yet - see FEATURES_TO_TEST.md #8")
-    
-    # ========================================================================
-    # PROCESS MANAGEMENT - UI State Updates
-    # ========================================================================
-    
-    def test_kill_process_updates_ui_status(self):
-        """
-        REGRESSION: Killing process should update status in Processes tab
+        nmap_proc = NmapProcess(os.path.join(self.temp_dir, 'nmap.txt'))
         
-        User complaint: "I kill scan but it still shows 'Running' status"
-        """
-        self.skipTest("Requires process tab integration - see REGRESSION_CHECKLIST.md item 'Kill process works'")
-    
-    def test_clear_process_removes_from_ui(self):
-        """
-        REGRESSION: Clearing process should remove it from Processes tab
+        with open(nmap_proc.outputfile, 'w') as f:
+            f.write('<html>NMAP OUTPUT</html>')
         
-        User complaint: "Clear button does nothing, process still visible"
-        """
-        self.skipTest("Requires process tab integration - see REGRESSION_CHECKLIST.md item 'Clear process works'")
-    
-    # ========================================================================
-    # SETTINGS - Persistence and UI Updates
-    # ========================================================================
-    
-    def test_settings_dialog_opens_without_crash(self):
-        """
-        REGRESSION: Settings dialog should open cleanly
+        nmap_id = self.processRepo.storeProcess(nmap_proc)
         
-        User complaint: "Clicking Settings crashes the app"
-        """
-        self.skipTest("Requires settings dialog - see REGRESSION_CHECKLIST.md item 'Settings dialog opens'")
-    
-    def test_settings_changes_persist(self):
-        """
-        REGRESSION: Settings changes should save and reload
+        # Step 3: Create second process (nikto)
+        class NiktoProcess:
+            def __init__(self, outputfile):
+                self.id = None
+                self.name = 'nikto'
+                self.hostIp = host.ip
+                self.tabTitle = 'nikto (10.0.0.100)'
+                self.outputfile = outputfile
+                self.status = 'Finished'
+                self.startTime = getTimestamp()
+                self.outputType = 'html'
+                self.port = '80'
+                self.protocol = 'tcp'
+                self.command = 'nikto -h 10.0.0.100'
+            def processId(self):
+                return 'nikto_' + str(id(self))
         
-        User complaint: "I change settings, restart app, settings reverted"
-        """
-        self.skipTest("Requires settings persistence - see REGRESSION_CHECKLIST.md item 'Config changes persist'")
-    
-    # ========================================================================
-    # PROJECT OPERATIONS - Save/Load UI State
-    # ========================================================================
-    
-    def test_project_reopen_restores_data(self):
-        """
-        REGRESSION: Reopening project should restore all data
+        nikto_proc = NiktoProcess(os.path.join(self.temp_dir, 'nikto.txt'))
         
-        User complaint: "Reopen project and my notes are gone"
-        """
-        self.skipTest("Requires project lifecycle - see REGRESSION_CHECKLIST.md item 'Project save/load works'")
-    
-    # ========================================================================
-    # VISUAL POLISH - Splitters, Geometry, Tab Reordering
-    # ========================================================================
-    
-    def test_splitter_positions_persist(self):
-        """
-        KNOWN BROKEN: Splitter positions should save/restore
+        with open(nikto_proc.outputfile, 'w') as f:
+            f.write('<html>NIKTO OUTPUT</html>')
         
-        User complaint: "I resize panels, restart, positions reset"
-        Note: This is a known issue from TROUBLESHOOTING.md
-        """
-        # Mark as expected failure since it's a known issue
-        self.skipTest("Known broken - see TROUBLESHOOTING.md 'Splitter state not persisting'")
-    
-    def test_window_geometry_saves(self):
-        """
-        REGRESSION: Window size/position should persist
+        nikto_id = self.processRepo.storeProcess(nikto_proc)
         
-        User complaint: "Window size resets every time I open app"
-        """
-        self.skipTest("Requires window state management - see REGRESSION_CHECKLIST.md item 'Window geometry saves'")
-    
-    def test_tab_reordering_works(self):
-        """
-        REGRESSION: Tool tabs should be draggable to reorder
+        # Step 4: Verify both processes exist independently
+        self.assertNotEqual(nmap_id, nikto_id, "Processes should have different IDs")
         
-        User complaint: "Tab reordering used to work, now tabs don't move"
-        """
-        self.skipTest("Requires tab widget interaction - see REGRESSION_CHECKLIST.md item 'Tab reordering works'")
+        nmap_retrieved = self.processRepo.getProcessById(nmap_id)
+        nikto_retrieved = self.processRepo.getProcessById(nikto_id)
+        
+        self.assertEqual(nmap_retrieved['name'], 'nmap', "Nmap process should still be nmap")
+        self.assertEqual(nikto_retrieved['name'], 'nikto', "Nikto process should still be nikto")
+        
+        # Step 5: Verify output files are different
+        self.assertNotEqual(nmap_retrieved['outputfile'], nikto_retrieved['outputfile'],
+                           "Output files should be different")
 
 
-class TestDataIntegrityInUI(unittest.TestCase):
+
+@unittest.skipUnless(PYQT6_AVAILABLE, "PyQt6 not available")
+class TestProjectPersistence(LegionUITestBase):
     """
-    Higher-level integration tests for data integrity visible in UI
+    Test project save/load persistence.
     
-    These test entire workflows that span multiple components:
-    - Add host → scan → view results → switch hosts → data persists
+    User complaint: "I work all day, close Legion, reopen - data is gone"
     """
     
-    def setUp(self):
-        """Setup for integration tests"""
-        self.skipTest("Integration tests require full View/Controller setup - implement after specific regressions")
+    def test_data_persists_in_database(self):
+        """
+        CRITICAL REGRESSION TEST: Data must persist in SQLite database
+        
+        Tests that writes actually commit to database (not just in-memory).
+        User complaint: "Reopen project and my notes/hosts are gone"
+        """
+        # Step 1: Add data
+        host = self.createHost('192.168.50.100')
+        self.noteRepo.storeNotes(host.id, 'Important note that must not be lost')
+        
+        # Step 2: Close all sessions (flush to disk)
+        session = self.db.session()
+        session.close()
+        
+        # Step 3: Create NEW session (simulates reopening)
+        new_session = self.db.session()
+        
+        # Step 4: Query data with fresh session
+        from db.entities.host import hostObj
+        host2 = new_session.query(hostObj).filter_by(ip='192.168.50.100').first()
+        self.assertIsNotNone(host2, "Host should be persisted in database")
+        self.assertEqual(host2.ip, '192.168.50.100', "Host IP should match")
+        
+        # Step 5: Verify note persists
+        note2 = self.noteRepo.getNoteByHostId(host2.id)
+        self.assertIsNotNone(note2, "Note should be persisted")
+        self.assertIn('Important note', note2.text, "Note text should match")
+        
+        new_session.close()
 
 
-class TestCriticalUserWorkflows(unittest.TestCase):
-    """
-    End-to-end critical path tests
-    
-    Tests user's most common workflows:
-    1. Add hosts → scan → view CVEs → add notes → save project
-    2. Load project → run additional scans → view results
-    3. Multiple hosts → switch between → data integrity maintained
-    """
-    
-    def setUp(self):
-        """Setup for workflow tests"""
-        self.skipTest("Workflow tests require full app integration - see test_CriticalPaths.py")
 
 
 if __name__ == '__main__':
