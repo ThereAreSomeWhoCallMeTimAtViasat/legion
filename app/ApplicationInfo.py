@@ -18,13 +18,13 @@ Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@
 
 applicationInfo = {
     "name": "TIMS_LEGION",
-    "version": "0.5.X",
-    "build": '1760322071',
-    "author": "Shane Scott",
+    "version": "0.6.X",
+    "build": '1764209279',
+    "author": "Tim McLean, Shane Scott",
     "copyright": "2025",
     "links": ["http://github.com/Hackman238/legion/issues"],
     "emails": [],
-    "update": '10/12/2025',
+    "update": '11/26/2025',
     "license": "GPL v3",
     "desc": "Legion is a fork of SECFORCE's Sparta, Legion is an open source, easy-to-use, \n" +
             "super-extensible and semi-automated network penetration testing tool that aids in " +
