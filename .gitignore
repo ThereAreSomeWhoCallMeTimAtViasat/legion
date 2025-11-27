@@ -139,3 +139,8 @@ firstMultiRun*
 .github/copilot-instructions.md
 dbTest*
 deTest*
+restore_chat_index.py
+restore_chats_after_close.sh
+restore_from_backup_properly.py
+fix_chat_locations.py
+export_chats.py

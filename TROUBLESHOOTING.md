@@ -3,7 +3,46 @@
 ## Current Tasks
 - [ ]
 - [ ]
-- [ ] determine if unit tests are valuable and then run or fix the current ones and make new ones.
+- [ ]
+- [ ] make the mcp server work with a local llm
+
+- [ ] make the python as memory safe and efficient as we can
+
+- [ ] make a test for dedupe rules
+
+- [ ] why did screenshot 8080 run twice on 85.111? does screenshot not abide by dedupe rules?
+
+- [ ] figure out why this is showing back up again  stty: 'standard input': Inappropriate ioctl for device.  it was ok for one vstfpd but showed up again on another vsftpd and both ccproxy
+
+- [ ] figure out why OS is not populating with the OS in the hosts or os tab
+
+- [ ] when a tool is selected in the tools tab, and the same tool was run on multiple hosts, the first populated host in the list does not turn red if there was a match (thought i fixed this once before.  maybe have to fix for a reload as well...check for this on a normal run)
+
+- [ ] only stage 6 shows up from nmap on db reload from open in tools tab.  should have all stages show back up.
+
+- [ ] fix interactive gifs (broken ones show up after a db reload from open in processtable)
+
+- [ ] make more tests for UI (add checks to UI checklist too)
+
+- [ ] clean up log.info and change to log.debug
+
+- [ ] notes and services tabs switches back to orange from white between host changes
+
+- [ ] clicking on port in tools tab does not sort the column
+
+- [ ] retry1 process on an interactive process does not switch from running to interactive in the processtable
+
+- [ ] need to deal with third panel view in tools because the interactive view does not show up when an interactive tool is selected.  data will show up after a db reload from open
+
+- [ ] interactive does not follow dedup rules.  showed up twice with the same title when it should have skipped.  one of them has  stty: 'standard input': Inappropriate ioctl for device and the other tab does not.
+
+- [ ] sort by host by default in tools tab
+
+- [ ] get better default splitter and splitter3 positions for tools tab
+
+- [ ] orage colors are not tied to the host, only to the tab.  they should change when the host changes if they should be colored or not.
+
+- [x] determine if unit tests are valuable and then run or fix the current ones and make new ones.
 
 - [ ] make resetDisplayStatusForOpenProcesses behavior (show cleared processes on project reopen) an option in legion.conf settings
 
