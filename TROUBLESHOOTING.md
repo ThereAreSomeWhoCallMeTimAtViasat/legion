@@ -14,7 +14,7 @@
 
 - [ ] figure out why this is showing back up again  stty: 'standard input': Inappropriate ioctl for device.  it was ok for one vstfpd but showed up again on another vsftpd and both ccproxy
 
-- [ ] figure out why OS is not populating with the OS in the hosts or os tab
+- [x] figure out why OS is not populating with the OS in the hosts or os tab
 
 - [ ] when a tool is selected in the tools tab, and the same tool was run on multiple hosts, the first populated host in the list does not turn red if there was a match (thought i fixed this once before.  maybe have to fix for a reload as well...check for this on a normal run)
 
