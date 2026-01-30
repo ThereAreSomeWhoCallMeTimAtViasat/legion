@@ -71,6 +71,10 @@ class ScriptsTableModel(QtCore.QAbstractTableModel):
                     
 
     def sort(self, Ncol, order):
+        # Store persistent indices before sorting
+        oldIndexList = self.persistentIndexList()
+        oldIds = [self.__scripts[idx.row()].get('id') if idx.row() < len(self.__scripts) else None for idx in oldIndexList]
+        
         self.layoutAboutToBeChanged.emit()
         array=[]
         
@@ -85,7 +89,21 @@ class ScriptsTableModel(QtCore.QAbstractTableModel):
 
         if order == Qt.SortOrder.AscendingOrder:                                  # reverse if needed
             self.__scripts.reverse()
-            
+        
+        # Update persistent indices after sorting
+        newIndexList = []
+        for oldIdx, oldId in zip(oldIndexList, oldIds):
+            if oldId is not None:
+                for newRow, script in enumerate(self.__scripts):
+                    if script.get('id') == oldId:
+                        newIndexList.append(self.index(newRow, oldIdx.column()))
+                        break
+                else:
+                    newIndexList.append(QtCore.QModelIndex())
+            else:
+                newIndexList.append(QtCore.QModelIndex())
+        
+        self.changePersistentIndexList(oldIndexList, newIndexList)
         self.layoutChanged.emit()
 
     # method that allows views to know how to treat each item, eg: if it should be enabled, editable, selectable etc

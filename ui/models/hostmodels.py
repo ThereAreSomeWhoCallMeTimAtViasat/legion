@@ -111,6 +111,9 @@ class HostsTableModel(QtCore.QAbstractTableModel):
 
     # sort function called when the user clicks on a header
     def sort(self, Ncol, order):
+        # Store persistent indices before sorting
+        oldIndexList = self.persistentIndexList()
+        oldIds = [self.__hosts[idx.row()].get('id') if idx.row() < len(self.__hosts) else None for idx in oldIndexList]
         
         self.layoutAboutToBeChanged.emit()
         array = []
@@ -130,7 +133,21 @@ class HostsTableModel(QtCore.QAbstractTableModel):
 
         if order == Qt.SortOrder.AscendingOrder:                                  # reverse if needed
             self.__hosts.reverse()
-
+        
+        # Update persistent indices after sorting
+        newIndexList = []
+        for oldIdx, oldId in zip(oldIndexList, oldIds):
+            if oldId is not None:
+                for newRow, host in enumerate(self.__hosts):
+                    if host.get('id') == oldId:
+                        newIndexList.append(self.index(newRow, oldIdx.column()))
+                        break
+                else:
+                    newIndexList.append(QtCore.QModelIndex())
+            else:
+                newIndexList.append(QtCore.QModelIndex())
+        
+        self.changePersistentIndexList(oldIndexList, newIndexList)
         self.layoutChanged.emit()                            # update the UI (built-in signal)
 
     ### getter functions ###
