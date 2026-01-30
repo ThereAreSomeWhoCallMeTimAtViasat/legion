@@ -77,6 +77,10 @@ class CvesTableModel(QtCore.QAbstractTableModel):
 
 
     def sort(self, Ncol, order):
+        # Store persistent indices before sorting
+        oldIndexList = self.persistentIndexList()
+        oldIds = [self.__cves[idx.row()].get('id') if idx.row() < len(self.__cves) else None for idx in oldIndexList]
+        
         self.layoutAboutToBeChanged.emit()
 
         array = []
@@ -87,7 +91,21 @@ class CvesTableModel(QtCore.QAbstractTableModel):
 
         if order == Qt.SortOrder.AscendingOrder:                                  # reverse if needed
             self.__cves.reverse()
-            
+        
+        # Update persistent indices after sorting
+        newIndexList = []
+        for oldIdx, oldId in zip(oldIndexList, oldIds):
+            if oldId is not None:
+                for newRow, cve in enumerate(self.__cves):
+                    if cve.get('id') == oldId:
+                        newIndexList.append(self.index(newRow, oldIdx.column()))
+                        break
+                else:
+                    newIndexList.append(QtCore.QModelIndex())
+            else:
+                newIndexList.append(QtCore.QModelIndex())
+        
+        self.changePersistentIndexList(oldIndexList, newIndexList)
         self.layoutChanged.emit()
 
     # method that allows views to know how to treat each item, eg: if it should be enabled, editable, selectable etc

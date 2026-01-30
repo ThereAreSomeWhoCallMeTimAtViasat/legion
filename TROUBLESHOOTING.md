@@ -1,12 +1,22 @@
 # Troubleshooting Checklist
 
 ## Current Tasks
-- [ ]
-- [ ]
-- [ ]
-- [ ] make the mcp server work with a local llm
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] 
+- [ ] timer is not counting up anymore in the processtable
 
-- [ ] make the python as memory safe and efficient as we can
+- [ ] need to understand when processes are started after ports are discovered.  stage 1 port 80 found but no processes start until after nmap is complete?  
+
+- [ ] sorted list does not honor selection.  it seems cells are selected instead of the entire row as well.
+
+- [ ] make the mcp server work with a local llm
 
 - [ ] make a test for dedupe rules
 
@@ -21,10 +31,6 @@
 - [ ] only stage 6 shows up from nmap on db reload from open in tools tab.  should have all stages show back up.
 
 - [ ] fix interactive gifs (broken ones show up after a db reload from open in processtable)
-
-- [ ] make more tests for UI (add checks to UI checklist too)
-
-- [ ] clean up log.info and change to log.debug
 
 - [ ] notes and services tabs switches back to orange from white between host changes
 
@@ -77,6 +83,12 @@
 - [ ] terminal portactions are not added to tools tab table list
 
 ===============================================================================
+
+- [ ] make more tests for UI (add checks to UI checklist too)
+
+- [ ] clean up log.info and change to log.debug
+
+- [ ] make the python as memory safe and efficient as we can
 
 - [ ] lets be smarter on the service and the version before running a port action
 

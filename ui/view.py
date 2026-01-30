@@ -428,6 +428,19 @@ class View(QtCore.QObject):
         self.ui.ToolHostsTableView.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.ui.OsListTableView.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.ui.OsHostsTableView.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        
+        # Set selection behavior to select entire rows, not individual cells
+        self.ui.HostsTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.ServiceNamesTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.ServicesTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.CvesTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.ToolsTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.ScriptsTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.ToolHostsTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.ProcessesTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.OsListTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.ui.OsHostsTableView.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        
         self.connectOsHostsClick()
         status_combo = self.ui.ProcessStatusFilterComboBox
         status_combo.setItemData(0, None)
@@ -647,6 +660,7 @@ class View(QtCore.QObject):
         # service names table (left)
         headers = ["Name"]
         setTableProperties(self.ui.ServiceNamesTableView, len(headers))
+        self.ui.ServiceNamesTableView.setSortingEnabled(True)
 
         # cves table (right)
         headers = ["CVE Id", "Severity", "Product", "Version", "CVE URL", "Source", "ExploitDb ID", "ExploitDb",
@@ -659,11 +673,13 @@ class View(QtCore.QObject):
                    "OutputFile", "Output", "Status"]
         setTableProperties(self.ui.ToolsTableView, len(headers),
                            [i for i in range(len(headers)) if i != 5])
+        self.ui.ToolsTableView.setSortingEnabled(True)
 
         # service table (right)
         headers = ["Host", "Port", "Port", "Protocol", "State", "HostId", "ServiceId", "Name", "Product", "Version",
                    "Extrainfo", "Fingerprint"]
         setTableProperties(self.ui.ServicesTableView, len(headers), [0, 1, 5, 6, 8, 10, 11])
+        self.ui.ServicesTableView.setSortingEnabled(True)
 
         # ports by service (right)
         headers = ["Host", "Port", "Port", "Protocol", "State", "HostId", "ServiceId", "Name", "Product", "Version",
@@ -674,6 +690,7 @@ class View(QtCore.QObject):
         # scripts table (right)
         headers = ["Id", "Script", "Port", "Protocol"]
         setTableProperties(self.ui.ScriptsTableView, len(headers), [0, 3])
+        self.ui.ScriptsTableView.setSortingEnabled(True)
 
         # tool hosts table (right)
         headers = ["Progress", "Display", "Pid", "Name", "Action", "Target", "Port", "Protocol", "Command",
@@ -689,6 +706,7 @@ class View(QtCore.QObject):
         # os hosts table (right)
         headers = ["IP", "Hostname", "OS", "Status"]
         setTableProperties(self.ui.OsHostsTableView, len(headers))
+        self.ui.OsHostsTableView.setSortingEnabled(True)
 
         # process table
         headers = ["Progress", "Display", "Run time", "Percent Complete", "Pid", "Name", "Tool", "Host", "Port",
@@ -2723,6 +2741,7 @@ class View(QtCore.QObject):
         
         self.ToolHostsTableModel = ProcessesTableModel(self, final_processes, headers)
         self.ui.ToolHostsTableView.setModel(self.ToolHostsTableModel)
+        self.ui.ToolHostsTableView.setSortingEnabled(True)  # Re-enable sorting after setting model
         for i in [0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15]:
             self.ui.ToolHostsTableView.setColumnHidden(i, True)
         self.ui.ToolHostsTableView.horizontalHeader().resizeSection(7, 150)

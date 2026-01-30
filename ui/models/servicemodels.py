@@ -105,6 +105,10 @@ class ServicesTableModel(QtCore.QAbstractTableModel):
 
     # sort function called when the user clicks on a header
     def sort(self, Ncol, order):
+        # Store persistent indices before sorting
+        oldIndexList = self.persistentIndexList()
+        oldIds = [self.__services[idx.row()].get('id') if idx.row() < len(self.__services) else None for idx in oldIndexList]
+        
         self.layoutAboutToBeChanged.emit()
         array = []
         
@@ -150,7 +154,21 @@ class ServicesTableModel(QtCore.QAbstractTableModel):
         
         if order == Qt.SortOrder.AscendingOrder:                                  # reverse if needed
             self.__services.reverse()
-            
+        
+        # Update persistent indices after sorting
+        newIndexList = []
+        for oldIdx, oldId in zip(oldIndexList, oldIds):
+            if oldId is not None:
+                for newRow, service in enumerate(self.__services):
+                    if service.get('id') == oldId:
+                        newIndexList.append(self.index(newRow, oldIdx.column()))
+                        break
+                else:
+                    newIndexList.append(QtCore.QModelIndex())
+            else:
+                newIndexList.append(QtCore.QModelIndex())
+        
+        self.changePersistentIndexList(oldIndexList, newIndexList)
         self.layoutChanged.emit()                           # update the UI (built-in signal)
 
     ### getter functions ###
@@ -210,6 +228,10 @@ class ServiceNamesTableModel(QtCore.QAbstractTableModel):
 
     # sort function called when the user clicks on a header
     def sort(self, Ncol, order):
+        # Store persistent indices before sorting
+        oldIndexList = self.persistentIndexList()
+        oldNames = [self.__serviceNames[idx.row()].get('name') if idx.row() < len(self.__serviceNames) else None for idx in oldIndexList]
+        
         self.layoutAboutToBeChanged.emit()
         array = []
         
@@ -226,6 +248,20 @@ class ServiceNamesTableModel(QtCore.QAbstractTableModel):
         if order == Qt.SortOrder.AscendingOrder:  # reverse if needed
             self.__serviceNames.reverse()
         
+        # Update persistent indices after sorting
+        newIndexList = []
+        for oldIdx, oldName in zip(oldIndexList, oldNames):
+            if oldName is not None:
+                for newRow, serviceName in enumerate(self.__serviceNames):
+                    if serviceName.get('name') == oldName:
+                        newIndexList.append(self.index(newRow, oldIdx.column()))
+                        break
+                else:
+                    newIndexList.append(QtCore.QModelIndex())
+            else:
+                newIndexList.append(QtCore.QModelIndex())
+        
+        self.changePersistentIndexList(oldIndexList, newIndexList)
         self.layoutChanged.emit()  # update the UI (built-in signal)
 
 

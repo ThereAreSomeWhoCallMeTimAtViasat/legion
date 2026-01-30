@@ -222,6 +222,10 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
 
 
     def sort(self, Ncol, order):
+        # Store persistent indices before sorting
+        oldIndexList = self.persistentIndexList()
+        oldIds = [self.__processes[idx.row()].get('id') if idx.row() < len(self.__processes) else None for idx in oldIndexList]
+        
         self.layoutAboutToBeChanged.emit()
         array=[]
 
@@ -235,10 +239,50 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
 
             elif Ncol == 8:
                 for i in range(len(self.__processes)):
-                    if self.__processes[i]['port'] == '':
-                        return
+                    port_value = self.__processes[i].get('port', '')
+                    protocol = self.__processes[i].get('protocol', '')
+                    
+                    # Determine the display value (same logic as in data method)
+                    if port_value and protocol:
+                        display_value = f"{port_value}/{protocol}"
+                    elif port_value:
+                        display_value = port_value
                     else:
-                        array.append(int(self.__processes[i]['port']))
+                        # Extract from tabTitle parentheses
+                        tab_title = self.__processes[i].get('tabTitle', '')
+                        if tab_title and '(' in tab_title and ')' in tab_title:
+                            import re
+                            paren_match = re.search(r'\(([^)]+)\)', tab_title)
+                            display_value = paren_match.group(1) if paren_match else ''
+                        else:
+                            display_value = ''
+                    
+                    # Try to extract numeric port for sorting
+                    if '/' in str(display_value):
+                        # Format: "80/tcp" - extract the port number
+                        try:
+                            array.append(int(display_value.split('/')[0]))
+                            continue
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    # Try to extract stage number for "stage N" format
+                    if 'stage' in str(display_value).lower():
+                        import re
+                        stage_match = re.search(r'stage\s+(\d+)', str(display_value), re.IGNORECASE)
+                        if stage_match:
+                            array.append(int(stage_match.group(1)))
+                            continue
+                    
+                    # Try as plain integer
+                    try:
+                        array.append(int(display_value))
+                        continue
+                    except (ValueError, TypeError):
+                        pass
+                    
+                    # Fall back to string value
+                    array.append(display_value if display_value else '')
             else:
                 for i in range(len(self.__processes)):
                     value = self.__processes[i].get(field)
@@ -249,7 +293,18 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
                             value = 0.0
                     array.append(value)
         
+            # Debug logging
+            if Ncol == 8:  # Port column
+                log.debug(f"BEFORE SORT - First 3 processes:")
+                for i in range(min(3, len(self.__processes))):
+                    log.debug(f"  [{i}] tool={self.__processes[i].get('name')}, port={self.__processes[i].get('port')}, sortkey={array[i]}")
+            
             sortArrayWithArray(array, self.__processes)  # sort the services based on the values in the array
+
+            if Ncol == 8:  # Port column
+                log.debug(f"AFTER SORT - First 3 processes:")
+                for i in range(min(3, len(self.__processes))):
+                    log.debug(f"  [{i}] tool={self.__processes[i].get('name')}, port={self.__processes[i].get('port')}, sortkey={array[i]}")
 
             if order == Qt.SortOrder.AscendingOrder:                                  # reverse if needed
                 self.__processes.reverse()
@@ -261,6 +316,21 @@ class ProcessesTableModel(QtCore.QAbstractTableModel):
 
         ## Extra?
         #self.__controller.updateProcessesIcon()  # to make sure the progress GIF is displayed in the right place
+            
+            # Update persistent indices after sorting
+            newIndexList = []
+            for oldIdx, oldId in zip(oldIndexList, oldIds):
+                if oldId is not None:
+                    for newRow, process in enumerate(self.__processes):
+                        if process.get('id') == oldId:
+                            newIndexList.append(self.index(newRow, oldIdx.column()))
+                            break
+                    else:
+                        newIndexList.append(QtCore.QModelIndex())
+                else:
+                    newIndexList.append(QtCore.QModelIndex())
+            
+            self.changePersistentIndexList(oldIndexList, newIndexList)
             self.layoutChanged.emit()
         except:
             log.error("Failed to sort")

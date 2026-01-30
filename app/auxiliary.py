@@ -114,7 +114,17 @@ def formatCommandQProcess(inputCommand):
 @timing
 def sortArrayWithArray(array, arrayToSort):
     # Sorts array and arrayToSort in place based on the values in array
-    combined = sorted(zip(array, arrayToSort), key=lambda x: x[0])
+    # Handle None values and mixed types by converting to comparable format
+    def sort_key(x):
+        val = x[0]
+        if val is None:
+            return (0, '')  # None values first
+        elif isinstance(val, (int, float)):
+            return (1, val)  # Numbers second, sorted numerically
+        else:
+            return (2, str(val))  # Strings last, sorted alphabetically
+    
+    combined = sorted(zip(array, arrayToSort), key=sort_key)
     if combined:
         array[:], arrayToSort[:] = zip(*combined)
     else:
