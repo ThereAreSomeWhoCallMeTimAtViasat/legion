@@ -89,6 +89,60 @@
 - Most are Qt6 GUI bugs - NOT worth fixing if moving to Flask
 - Some process/DB issues may still apply to Flask
 
+## Flask Migration Session Plan
+
+### Session 1: Get Flask Running (Do First)
+**Goal:** `python3 legion.py --web` starts and shows UI in browser
+
+Steps:
+1. Install deps: `pip install flask flask-sock`
+2. Try `python3 legion.py --web` - expect import failures
+3. Fix likely issues:
+   - Add `--web` flag to legion.py argparse if missing
+   - runtime.py may import from upstream's refactored settings.py - fix compatibility
+   - SqliteDbAdapter.py uses QSemaphore - add `threading.Semaphore` fallback for non-Qt mode
+4. Verify: page loads at http://127.0.0.1:5000 with dark purple theme
+5. Test: run a scan, verify processes/hosts/services populate
+6. Test: open an existing .legion file, verify data loads
+
+### Session 2: Match Detection
+**Goal:** Tool output highlights matches based on legion.conf MatchSettings
+
+Steps:
+1. Add pattern matching to runtime.py process output handling
+2. Add match CSS classes to legion.js ANSI output renderer
+3. Add match badge counts to workspace panels
+4. Test: run a scan, verify positive matches highlight, negatives are excluded
+
+### Session 3: Dedup + Purge
+**Goal:** Prevent duplicate tool runs, enable host data purge
+
+Steps:
+1. Add dedup check to runtime._run_manual_tool() and scheduler
+2. Add confirmation modal to index.html (append/new/skip)
+3. Add purge_host() method to runtime.py
+4. Add /api/workspace/hosts/<id>/purge endpoint to routes.py
+5. Test: run same tool twice, verify dedup prompt appears
+
+### Session 4: Quick Notes + Indicators
+**Goal:** Ctrl+B captures text to notes, panels show unread data badges
+
+Steps:
+1. Add JS keyboard handler for Ctrl+B in process output modal
+2. Capture selected text, POST to /api/workspace/hosts/<id>/note
+3. Track "last seen" timestamps in JS state for unread indicators
+4. Add badge counts to panel headers when new data arrives
+
+### Session 5: Interactive Terminal
+**Goal:** Run msfconsole/bash interactively in the browser
+
+Steps:
+1. Add xterm.js library to static assets
+2. Add WebSocket PTY proxy endpoint to ws.py
+3. Port termios/pyte logic to server-side PTY management
+4. Add terminal tab/modal to index.html
+5. Test: open terminal to host, run commands interactively
+
 ## Key Files for Flask Work
 | File | Lines | Purpose |
 |------|-------|---------|
