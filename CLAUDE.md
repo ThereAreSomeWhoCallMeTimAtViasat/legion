@@ -29,17 +29,17 @@ YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
 ```
 
 ## Current State (2026-03-17)
-- **Branch:** `flask-clean` (last commit: 0ab5d04) — built from `visualUpgrades`, zero upstream
-- **Tests:** 164/164 passing across 5 test files, zero failures
-- **WebController:** `controller/web_controller.py` (990 lines)
-  - ALL 43 Qt-dependent methods ported — wraps your 3956-line controller.py
+- **Branch:** `flask-clean` (last commit: 940bc44) — v2.6-flask
+- **Tests:** 241/242 passing across 7 test files (1 intentional skip)
+- **WebController:** `controller/web_controller.py` (1060 lines)
+  - ALL 43 Qt methods + match detection + deduplication
   - QProcess → subprocess.Popen, QMenu → JSON, QTimer → threading, self.view → no-op
-- **Routes:** 6 new routes wired: context menus + host/service actions
-- **Frontend:** Rewritten from scratch (Qt6 Fusion Dark 1:1 replica)
-  - `legion.css` — QPalette colors (#353535/#191919/#2a82da), monospace 10pt
-  - `index.html` — Qt6 layout (gui.py replica) + upstream modals preserved
-  - `legion.js` — fresh JS: host-click, tab switch, ANSI render, polling
-- **Backend:** routes.py for API endpoints, WebController replaces runtime.py for logic
+- **Routes:** `app/web/routes.py` (~400 lines) — calls WebController directly, no runtime.py
+- **Frontend:** Qt6 Fusion Dark 1:1 replica with all visualUpgrades features
+  - `legion.css` — QPalette + match highlighting + tab-unread + blink animations
+  - `index.html` — Qt6 layout + Add Hosts/Port/Filters/Help/Brute/Config dialogs
+  - `legion.js` (~1500 lines) — all interactions, match rendering, tab colors, localStorage, file browser
+- **visualUpgrades features:** ALL ported except interactive terminal (xterm.js)
 
 ## Branch History
 - `flask-clean` — **CURRENT** — built from visualUpgrades, 164/164 tests, zero upstream
@@ -180,12 +180,14 @@ self.view.createNewTabForHost() → return None
 # Start Flask
 sudo python3 legion.py --web          # http://127.0.0.1:5000
 
-# Run ALL 164 tests
+# Run ALL 242 tests
 sudo python3 tests/test_webcontroller.py && \
 sudo python3 tests/test_webcontroller_remaining.py && \
 sudo python3 tests/test_routes_webcontroller.py && \
 sudo python3 tests/test_ui_wiring.py && \
-sudo python3 tests/test_flask_integration.py
+sudo python3 tests/test_flask_integration.py && \
+sudo python3 tests/test_new_dialogs.py && \
+sudo python3 tests/test_visualupgrades_features.py
 
 # Individual suites
 sudo python3 tests/test_webcontroller.py           # 28 — core WebController
@@ -193,6 +195,8 @@ sudo python3 tests/test_webcontroller_remaining.py  # 31 — all methods
 sudo python3 tests/test_routes_webcontroller.py     # 21 — route wiring
 sudo python3 tests/test_ui_wiring.py                # 42 — every button/menu
 sudo python3 tests/test_flask_integration.py        # 42 — end-to-end
+sudo python3 tests/test_new_dialogs.py              # 55 — dialogs + routes
+sudo python3 tests/test_visualupgrades_features.py  # 23 — match/tabs/dedup
 ```
 
 ## Commit Authors
