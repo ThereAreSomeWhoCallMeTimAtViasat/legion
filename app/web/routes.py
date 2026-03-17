@@ -347,6 +347,15 @@ def host_action(host_id):
         return _err("action required")
     if action == 'host-action':
         result = wc.handleHostToolAction(ip, int(payload.get("action_index", -1)))
+    elif action == 'add-port':
+        port_data = {
+            'port': str(payload.get('port', '')),
+            'state': str(payload.get('state', 'open')),
+            'protocol': str(payload.get('protocol', 'tcp')),
+            'service': str(payload.get('service', '')),
+        }
+        wc.addPortToHost(ip, port_data)
+        result = {'action': 'add-port', 'port': port_data}
     else:
         result = wc.handleHostAction(ip, host_id, action)
     return jsonify({"status": "ok", "result": result})
@@ -364,10 +373,7 @@ def host_add_script(host_id):
         from db.entities.l1script import l1ScriptObj
         session = logic.activeProject.database.session()
         try:
-            script = l1ScriptObj()
-            script.scriptId = script_id
-            script.output = output
-            script.hostId = host_id
+            script = l1ScriptObj(scriptId=script_id, output=output, portId=port, hostId=host_id)
             session.add(script)
             session.commit()
         finally:
@@ -386,12 +392,12 @@ def host_add_cve(host_id):
         return _err("name required")
     try:
         from db.entities.cve import cve as cveObj
+        product = str(payload.get("product", ""))
+        url = str(payload.get("url", ""))
         session = logic.activeProject.database.session()
         try:
-            c = cveObj()
-            c.name = name
+            c = cveObj(name=name, url=url, product=product, hostId=host_id)
             c.severity = severity
-            c.hostId = host_id
             session.add(c)
             session.commit()
         finally:

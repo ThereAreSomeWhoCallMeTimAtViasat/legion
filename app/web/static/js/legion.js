@@ -1112,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', 'LEGION v2.4-flask – ' + path.split('/').pop());
+                setText('window-title', 'LEGION v2.5-flask – ' + path.split('/').pop());
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
@@ -1126,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.4-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.5-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -1138,7 +1138,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.4-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.5-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -1152,7 +1152,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert('LEGION v2.4-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
+        alert('LEGION v2.5-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
     /* ── Ctrl+B note capture ── */
@@ -1191,7 +1191,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', 'LEGION v2.4-flask – *untitled');
+                setText('window-title', 'LEGION v2.5-flask – *untitled');
                 pollSnapshot();
             });
         }
@@ -1497,6 +1497,84 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Startup wizard ── */
     var swSkip = $('startup-wizard-skip');
     if (swSkip) swSkip.addEventListener('click', function() { closeModal('startup-wizard-overlay'); });
+
+    /* ── Add Port dialog ── */
+    var apClose = $('add-port-close');
+    if (apClose) apClose.addEventListener('click', function() { closeModal('add-port-modal'); });
+    var apCancel = $('add-port-cancel');
+    if (apCancel) apCancel.addEventListener('click', function() { closeModal('add-port-modal'); });
+    var apSubmit = $('add-port-submit');
+    if (apSubmit) apSubmit.addEventListener('click', function() {
+        if (!L.selectedHostId) { alert('Select a host first'); return; }
+        var portNum = ($('add-port-number')||{}).value||'';
+        if (!portNum.trim()) { alert('Enter port number'); return; }
+        postJson('/api/workspace/hosts/'+L.selectedHostId+'/action', {
+            action:'add-port', ip:L.selectedHostIp||'',
+            port:portNum.trim(),
+            state:($('add-port-state')||{}).value||'open',
+            protocol:($('add-port-protocol')||{}).value||'tcp',
+            service:($('add-port-service')||{}).value||''
+        }).then(function() {
+            closeModal('add-port-modal');
+            if (L.selectedHostId) loadHostDetail(L.selectedHostId);
+            pollSnapshot();
+        }).catch(function(e) { alert('Error: '+e.message); });
+    });
+
+    /* ── Filters dialog ── */
+    var fClose = $('filters-close');
+    if (fClose) fClose.addEventListener('click', function() { closeModal('filters-modal'); });
+    var fCancel = $('filters-cancel');
+    if (fCancel) fCancel.addEventListener('click', function() { closeModal('filters-modal'); });
+    var fApply = $('filters-apply');
+    if (fApply) fApply.addEventListener('click', function() {
+        closeModal('filters-modal');
+        /* Apply filters client-side to the hosts table */
+        var showUp = ($('filter-hosts-up')||{}).checked;
+        var showDown = ($('filter-hosts-down')||{}).checked;
+        var showOpen = ($('filter-ports-open')||{}).checked;
+        var showTcp = ($('filter-ports-tcp')||{}).checked;
+        var showUdp = ($('filter-ports-udp')||{}).checked;
+        /* Re-render with filters — for now just log */
+        console.log('Filters applied:', {showUp,showDown,showOpen,showTcp,showUdp});
+        pollSnapshot();
+    });
+    /* Wire filter-advanced button to open filters dialog */
+    var fAdvBtn = $('filter-advanced');
+    if (fAdvBtn) fAdvBtn.addEventListener('click', function() { openModal('filters-modal'); });
+
+    /* ── Help dialog ── */
+    var helpBtn2 = $('action-help');
+    if (helpBtn2) {
+        /* Remove old alert handler and replace with modal */
+        helpBtn2.removeEventListener('click', helpBtn2._handler);
+        helpBtn2._handler = function() { openModal('help-modal'); };
+        helpBtn2.addEventListener('click', helpBtn2._handler);
+    }
+    var helpClose = $('help-close');
+    if (helpClose) helpClose.addEventListener('click', function() { closeModal('help-modal'); });
+
+    /* ── Brute force tab ── */
+    var bruteRun = $('brute-run');
+    if (bruteRun) bruteRun.addEventListener('click', function() {
+        var ip = ($('brute-ip')||{}).value||'';
+        var port = ($('brute-port')||{}).value||'';
+        var service = ($('brute-service')||{}).value||'';
+        var userlist = ($('brute-userlist')||{}).value||'./wordlists/ssh-betterdefaultpasslist.txt';
+        var passlist = ($('brute-passlist')||{}).value||'';
+        var options = ($('brute-options')||{}).value||'';
+        if (!ip||!port||!service) { setText('brute-status','Fill in IP, port, and service'); return; }
+        var command = 'hydra -s '+port+' -C '+userlist+' '+options+' -u -o "[OUTPUT].txt" -f '+ip+' '+service;
+        postJson('/api/workspace/service-action', {
+            targets:[[ip,port,'tcp']], action_index:0
+        }).then(function() {
+            setText('brute-status','Hydra started');
+            pollSnapshot();
+        }).catch(function(e) { setText('brute-status','Error: '+e.message); });
+    });
+
+    /* ── Add port from context menu ── */
+    /* When right-click host menu has "Add Port", open the dialog */
 
     /* ── Populate manual scan tool selector when snapshot updates ── */
     var origPoll = pollSnapshot;

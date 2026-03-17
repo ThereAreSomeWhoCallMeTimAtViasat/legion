@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v2.4-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v2.5-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -236,7 +236,25 @@
 
 <!-- ══ BRUTE TAB ══ -->
 <div class="tab-content" id="brute-tab">
-    <div style="padding:12px;color:var(--disabled)">Brute force tab — coming soon</div>
+    <div style="padding:12px">
+        <div class="action-block" style="max-width:700px">
+            <h3>Brute Force</h3>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                <label style="flex:1;min-width:120px">IP<input id="brute-ip" type="text" placeholder="10.0.0.1" style="width:100%"></label>
+                <label style="width:80px">Port<input id="brute-port" type="text" placeholder="22" style="width:100%"></label>
+                <label style="width:120px">Service<input id="brute-service" type="text" placeholder="ssh" style="width:100%"></label>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                <label style="flex:1">Username wordlist<input id="brute-userlist" type="text" placeholder="/usr/share/wordlists/..." style="width:100%"></label>
+                <label style="flex:1">Password wordlist<input id="brute-passlist" type="text" placeholder="/usr/share/wordlists/..." style="width:100%"></label>
+            </div>
+            <label style="margin-bottom:8px;display:block">Additional hydra options<input id="brute-options" type="text" placeholder="-t 4 -f" style="width:100%"></label>
+            <div class="scheduler-actions">
+                <button id="brute-run" type="button">Run Hydra</button>
+            </div>
+            <p id="brute-status" class="meta-note"></p>
+        </div>
+    </div>
 </div>
 
 </div><!-- end main-tabs -->
@@ -412,6 +430,79 @@
             <button id="add-hosts-cancel" type="button">Cancel</button>
             <p id="add-hosts-status" class="meta-note" style="margin:0;margin-left:8px"></p>
         </div>
+    </div>
+</div>
+
+<!-- ========== ADD PORT DIALOG (from ui/AddPortDialog.py) ========== -->
+<div id="add-port-modal" class="legion-modal-overlay">
+    <div class="legion-modal" style="width:min(380px,94vw)">
+        <div class="panel-header modal-header">
+            <h2>Add Port to Host</h2>
+            <button id="add-port-close" class="modal-close-btn" type="button"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="action-block">
+            <label>Port Number<input id="add-port-number" type="text" placeholder="e.g. 22"></label>
+            <label>State<select id="add-port-state">
+                <option>open</option><option>closed</option><option>filtered</option>
+                <option>unfiltered</option><option>open|filtered</option><option>closed|filtered</option>
+            </select></label>
+            <label>Protocol<select id="add-port-protocol">
+                <option>tcp</option><option>udp</option><option>sctp</option><option>icmp</option>
+            </select></label>
+            <label>Service<input id="add-port-service" type="text" placeholder="e.g. http"></label>
+            <div class="scheduler-actions" style="margin-top:8px">
+                <button id="add-port-submit" type="button">Submit</button>
+                <button id="add-port-cancel" type="button">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ========== FILTERS DIALOG (from ui/dialogs.py:430) ========== -->
+<div id="filters-modal" class="legion-modal-overlay">
+    <div class="legion-modal" style="width:min(450px,94vw)">
+        <div class="panel-header modal-header">
+            <h2>Advanced Filters</h2>
+            <button id="filters-close" class="modal-close-btn" type="button"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <fieldset style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px">
+            <legend>Host Filters</legend>
+            <label class="checkbox"><input id="filter-hosts-up" type="checkbox" checked> Show up hosts</label>
+            <label class="checkbox"><input id="filter-hosts-down" type="checkbox"> Show down hosts</label>
+            <label class="checkbox"><input id="filter-hosts-checked" type="checkbox" checked> Show checked hosts</label>
+        </fieldset>
+        <fieldset style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px">
+            <legend>Port Filters</legend>
+            <label class="checkbox"><input id="filter-ports-open" type="checkbox" checked> Show open ports</label>
+            <label class="checkbox"><input id="filter-ports-filtered" type="checkbox"> Show filtered ports</label>
+            <label class="checkbox"><input id="filter-ports-closed" type="checkbox"> Show closed ports</label>
+            <label class="checkbox"><input id="filter-ports-tcp" type="checkbox" checked> Show TCP</label>
+            <label class="checkbox"><input id="filter-ports-udp" type="checkbox" checked> Show UDP</label>
+        </fieldset>
+        <div class="scheduler-actions">
+            <button id="filters-apply" type="button">Apply</button>
+            <button id="filters-cancel" type="button">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- ========== HELP DIALOG (from ui/helpDialog.py) ========== -->
+<div id="help-modal" class="legion-modal-overlay">
+    <div class="legion-modal" style="width:min(600px,94vw)">
+        <div class="panel-header modal-header">
+            <h2>LEGION</h2>
+            <button id="help-close" class="modal-close-btn" type="button"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <table style="width:100%;margin-bottom:12px">
+            <tr><td style="color:var(--disabled,#808080);width:120px">Version</td><td>v2.5-flask (Web UI)</td></tr>
+            <tr><td style="color:var(--disabled,#808080)">Author</td><td>Shane Scott, Dmitriy Dubson, Tim McLean</td></tr>
+            <tr><td style="color:var(--disabled,#808080)">License</td><td>GNU GPL v3</td></tr>
+            <tr><td style="color:var(--disabled,#808080)">Website</td><td><a href="https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion" style="color:var(--link,#2a82da)">GitHub Repository</a></td></tr>
+            <tr><td style="color:var(--disabled,#808080)">Qt6 Branch</td><td>visualUpgrades (77 commits)</td></tr>
+            <tr><td style="color:var(--disabled,#808080)">Flask Branch</td><td>flask-clean (WebController architecture)</td></tr>
+        </table>
+        <p class="meta-note">Network penetration testing framework. Fork of Sparta/Hackman238 Legion.</p>
+        <p class="meta-note">Keyboard shortcuts: Ctrl+H (add hosts), Ctrl+O (open), Ctrl+S (save), F2 (config), Ctrl+B (notes)</p>
     </div>
 </div>
 
