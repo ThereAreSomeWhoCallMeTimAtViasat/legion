@@ -9,11 +9,11 @@
 
 ## Project Overview
 - **Repo:** https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
-- **Primary Branch:** `flask-rewrite` (branched from `visualUpgradesCC`)
+- **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — your pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (being replaced by Flask), SQLAlchemy ORM, SQLite
 - **Size:** ~18,000 lines across 150 Python files
-- **Tests:** 122/122 passing (run: see "Running" section below)
+- **Tests:** 164/164 passing (run: see "Running" section below)
 
 ## CRITICAL ARCHITECTURE DECISION (2026-03-17)
 **DO NOT USE upstream runtime.py.** The user's logic in controller.py IS the source of truth.
@@ -29,8 +29,8 @@ YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
 ```
 
 ## Current State (2026-03-17)
-- **Branch:** `flask-rewrite` (last commit: 940be3e)
-- **Tests:** 122/122 passing across 4 test files, zero failures
+- **Branch:** `flask-clean` (last commit: 0ab5d04) — built from `visualUpgrades`, zero upstream
+- **Tests:** 164/164 passing across 5 test files, zero failures
 - **WebController:** `controller/web_controller.py` (990 lines)
   - ALL 43 Qt-dependent methods ported — wraps your 3956-line controller.py
   - QProcess → subprocess.Popen, QMenu → JSON, QTimer → threading, self.view → no-op
@@ -42,9 +42,10 @@ YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
 - **Backend:** routes.py for API endpoints, WebController replaces runtime.py for logic
 
 ## Branch History
-- `flask-rewrite` — **CURRENT** fresh branch for Qt6→Flask rewrite
-- `visualUpgradesCC` — has Session 1 bolted-on patches (committed at d94d5af)
-- `visualUpgrades` — 77 commits of custom work by ifly53e/therearesomewhocallmetimatviasat
+- `flask-clean` — **CURRENT** — built from visualUpgrades, 164/164 tests, zero upstream
+- `flask-rewrite` — previous attempt from visualUpgradesCC, archived
+- `visualUpgradesCC` — upstream integration, DO NOT USE for Flask
+- `visualUpgrades` — your pure 77 commits, base for flask-clean
 - `master` — upstream Hackman238 code
 
 ## Test Status — 122/122 PASSING
@@ -179,16 +180,18 @@ self.view.createNewTabForHost() → return None
 # Start Flask
 sudo python3 legion.py --web          # http://127.0.0.1:5000
 
-# Run ALL 122 tests
+# Run ALL 164 tests
 sudo python3 tests/test_webcontroller.py && \
 sudo python3 tests/test_webcontroller_remaining.py && \
 sudo python3 tests/test_routes_webcontroller.py && \
+sudo python3 tests/test_ui_wiring.py && \
 sudo python3 tests/test_flask_integration.py
 
-# Run individual test suites
+# Individual suites
 sudo python3 tests/test_webcontroller.py           # 28 — core WebController
 sudo python3 tests/test_webcontroller_remaining.py  # 31 — all methods
 sudo python3 tests/test_routes_webcontroller.py     # 21 — route wiring
+sudo python3 tests/test_ui_wiring.py                # 42 — every button/menu
 sudo python3 tests/test_flask_integration.py        # 42 — end-to-end
 ```
 
