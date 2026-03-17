@@ -22,6 +22,7 @@ from six import u as unicode
 
 from app.timing import getTimestamp
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from db.SqliteDbAdapter import Database
 from db.entities.process import process
 from db.entities.processOutput import process_output
@@ -211,58 +212,70 @@ class ProcessRepository:
             order_clause = f' ORDER BY {ncol} {sort}'
             query = text(base_query + status_clause + order_clause)
             result = session.execute(query, params)
-        rows = result.fetchall()
-        keys = result.keys()
-        processes = [dict(zip(keys, row)) for row in rows]
-        session.close()
-        return processes
+        try:
+            rows = result.fetchall()
+            keys = result.keys()
+            processes = [dict(zip(keys, row)) for row in rows]
+            return processes
+        except OperationalError:
+            return []
+        finally:
+            session.close()
 
     def storeProcess(self, proc):
         session = self.dbAdapter.session()
-        p_output = process_output()
-       
-        #p = process(str(proc.processId()), str(proc.name), str(proc.tabTitle),
-        p = process(str(proc.processId()), str(proc.name), str(proc.tabTitle),
-                    str(proc.hostIp), str(proc.port), str(proc.protocol),
-                    unicode(proc.command), proc.startTime, "", str(proc.outputfile),
-                    'Waiting', [p_output], 100, 0)
+        try:
+            p_output = process_output()
+            p = process(str(proc.processId()), str(proc.name), str(proc.tabTitle),
+                        str(proc.hostIp), str(proc.port), str(proc.protocol),
+                        unicode(proc.command), proc.startTime, "", str(proc.outputfile),
+                        'Waiting', [p_output], 100, 0)
 
-        self.log.debug(f"Adding process: {p}")
-        session.add(p)
-        session.commit()
-        proc.id = p.id
-        session.close()
-        return proc.id
+            self.log.debug(f"Adding process: {p}")
+            session.add(p)
+            session.commit()
+            proc.id = p.id
+            return proc.id
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to store process: {e}")
+            raise
+        finally:
+            session.close()
 
     def storeProcessOutput(self, process_id: str, output: str, preserve_status: bool = False):
         session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=process_id).first()
+        try:
+            proc = session.query(process).filter_by(id=process_id).first()
 
-        if not proc:
-            session.close()
-            return False
+            if not proc:
+                return False
 
-        proc_output = session.query(process_output).filter_by(id=process_id).first()
-        if proc_output:
-            self.log.debug("Storing process output into db: {0}".format(str(proc_output)))
-            proc_output.output = unicode(output)
-            session.add(proc_output)
+            proc_output = session.query(process_output).filter_by(id=process_id).first()
+            if proc_output:
+                self.log.debug("Storing process output into db: {0}".format(str(proc_output)))
+                proc_output.output = unicode(output)
+                session.add(proc_output)
 
-        # Only update endTime if we're marking as finished
-        if not preserve_status:
-            proc.endTime = getTimestamp(True)
-
-        if proc.status == "Killed" or proc.status == "Cancelled" or proc.status == "Crashed":
-            session.commit()  # YES, this is needed to save the output!
-            session.close()
-            return True
-        else:
-            # Only change status to Finished if preserve_status is False
+            # Only update endTime if we're marking as finished
             if not preserve_status:
-                proc.status = 'Finished'
-                session.add(proc)
-            session.commit()
-        session.close()
+                proc.endTime = getTimestamp(True)
+
+            if proc.status == "Killed" or proc.status == "Cancelled" or proc.status == "Crashed":
+                session.commit()  # YES, this is needed to save the output!
+                return True
+            else:
+                # Only change status to Finished if preserve_status is False
+                if not preserve_status:
+                    proc.status = 'Finished'
+                    session.add(proc)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to store process output for {process_id}: {e}")
+            raise
+        finally:
+            session.close()
 
     def getStatusByProcessId(self, process_id: str):
         return self.getFieldByProcessId("status", process_id)
@@ -280,14 +293,25 @@ class ProcessRepository:
 
     def getFieldByProcessId(self, field_name: str, process_id: str):
         session = self.dbAdapter.session()
-        query = text("SELECT process.{0} FROM process AS process WHERE process.id=:process_id".format(field_name))
-        p = session.execute(query, {'process_id': str(process_id)}).fetchall()
-        result = p[0][0] if p else -1
-        session.close()
-        return result
+        try:
+            query = text("SELECT process.{0} FROM process AS process WHERE process.id=:process_id".format(field_name))
+            p = session.execute(query, {'process_id': str(process_id)}).fetchall()
+            return p[0][0] if p else -1
+        except OperationalError:
+            return -1
+        finally:
+            session.close()
 
     def getHostsByToolName(self, toolName: str, closed: str = "False"):
         session = self.dbAdapter.session()
+        try:
+            return self._getHostsByToolNameQuery(session, toolName, closed)
+        except OperationalError:
+            return []
+        finally:
+            session.close()
+
+    def _getHostsByToolNameQuery(self, session, toolName: str, closed: str):
         if closed == 'FetchAll':
             query = text(
                 'SELECT '
@@ -342,7 +366,6 @@ class ProcessRepository:
             result = session.execute(query, {'toolName': str(toolName), 'closed': str(closed)})
         rows = result.fetchall()
         keys = result.keys()
-        session.close()
         return [dict(zip(keys, row)) for row in rows]
 
     def getProcessById(self, process_id):
@@ -369,33 +392,42 @@ class ProcessRepository:
 
     def getProcessesForRestore(self):
         session = self.dbAdapter.session()
-        query = text(
-            'SELECT '
-            'process.id AS id, '
-            'COALESCE(process.hostIp, "") AS hostIp, '
-            'COALESCE(process.tabTitle, "") AS tabTitle, '
-            'COALESCE(process.outputfile, "") AS outputfile, '
-            'COALESCE(output.output, "") AS output '
-            'FROM process AS process '
-            'LEFT JOIN process_output AS output ON process.id = output.processId '
-            'WHERE process.closed = "False" '
-            'ORDER BY process.id ASC'
-        )
-        result = session.execute(query)
-        rows = result.fetchall()
-        keys = result.keys()
-        session.close()
-        return [dict(zip(keys, row)) for row in rows]
+        try:
+            query = text(
+                'SELECT '
+                'process.id AS id, '
+                'COALESCE(process.hostIp, "") AS hostIp, '
+                'COALESCE(process.tabTitle, "") AS tabTitle, '
+                'COALESCE(process.outputfile, "") AS outputfile, '
+                'COALESCE(output.output, "") AS output '
+                'FROM process AS process '
+                'LEFT JOIN process_output AS output ON process.id = output.processId '
+                'WHERE process.closed = "False" '
+                'ORDER BY process.id ASC'
+            )
+            result = session.execute(query)
+            rows = result.fetchall()
+            keys = result.keys()
+            return [dict(zip(keys, row)) for row in rows]
+        except OperationalError:
+            return []
+        finally:
+            session.close()
 
     def storeProcessCrashStatus(self, processId: str):
         session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc and not proc.status == 'Killed' and not proc.status == 'Cancelled':
-            proc.status = 'Crashed'
-            proc.endTime = getTimestamp(True)
-            session.add(proc)
-            session.commit()
-        session.close()
+        try:
+            proc = session.query(process).filter_by(id=processId).first()
+            if proc and not proc.status == 'Killed' and not proc.status == 'Cancelled':
+                proc.status = 'Crashed'
+                proc.endTime = getTimestamp(True)
+                session.add(proc)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to store crash status for process {processId}: {e}")
+        finally:
+            session.close()
 
     def storeProcessCancelStatus(self, processId: str):
         """Mark process as cancelled. REFACTORED for Phase 2."""
@@ -403,13 +435,18 @@ class ProcessRepository:
 
     def storeProcessKillStatus(self, processId: str):
         session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc and not proc.status == 'Finished':
-            proc.status = 'Killed'
-            proc.endTime = getTimestamp(True)
-            session.add(proc)
-            session.commit()
-        session.close()
+        try:
+            proc = session.query(process).filter_by(id=processId).first()
+            if proc and not proc.status == 'Finished':
+                proc.status = 'Killed'
+                proc.endTime = getTimestamp(True)
+                session.add(proc)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to store kill status for process {processId}: {e}")
+        finally:
+            session.close()
 
     def storeProcessRunningStatus(self, processId: str, pid):
         """Set process status to Running with PID. REFACTORED for Phase 2."""
@@ -429,22 +466,33 @@ class ProcessRepository:
 
     def storeScreenshot(self, ip: str, port: str, filename: str):
         session = self.dbAdapter.session()
-        p = process(0, "screenshooter", "screenshot (" + str(port) + "/tcp)", str(ip), str(port), "tcp", "",
-                    getTimestamp(True), getTimestamp(True), str(filename), "Finished", [process_output()], 2, 0)
-        if p:
-            session.add(p)
-            session.commit()
-            pD = p.id
+        try:
+            p = process(0, "screenshooter", "screenshot (" + str(port) + "/tcp)", str(ip), str(port), "tcp", "",
+                        getTimestamp(True), getTimestamp(True), str(filename), "Finished", [process_output()], 2, 0)
+            if p:
+                session.add(p)
+                session.commit()
+                return p.id
+            return None
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to store screenshot for {ip}:{port}: {e}")
+            raise
+        finally:
             session.close()
-        return pD
 
     def toggleProcessDisplayStatus(self, resetAll=False):
         session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(display='True').all()
-        for p in proc:
-            session.add(self.toggleProcessStatusField(p, resetAll))
-        session.commit()
-        session.close()
+        try:
+            proc = session.query(process).filter_by(display='True').all()
+            for p in proc:
+                session.add(self.toggleProcessStatusField(p, resetAll))
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to toggle process display status: {e}")
+        finally:
+            session.close()
 
     @staticmethod
     def toggleProcessStatusField(p, reset_all):
@@ -514,12 +562,17 @@ class ProcessRepository:
 
     def storeProcessInteractiveStatus(self, processId: str):
         session = self.dbAdapter.session()
-        proc = session.query(process).filter_by(id=processId).first()
-        if proc:
-            proc.status = 'Interactive'
-            session.add(proc)
-            session.commit()
-        session.close()
+        try:
+            proc = session.query(process).filter_by(id=processId).first()
+            if proc:
+                proc.status = 'Interactive'
+                session.add(proc)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            self.log.error(f"Failed to store interactive status for process {processId}: {e}")
+        finally:
+            session.close()
 
     def hideProcesses(self, processIds: list):
         """Hide specific processes by setting their display status to False."""

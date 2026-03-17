@@ -59,6 +59,7 @@ if __name__ == "__main__":
         action="store_true",
         help="Run scripted actions/automated attacks after scan/import"
     )
+    parser.add_argument("--web", action="store_true", help="Start Legion web UI (Flask)")
     args = parser.parse_args()
 
     if args.mcp_server:
@@ -234,6 +235,46 @@ if __name__ == "__main__":
             print("No --output-file specified, skipping export.")
 
         print("Headless Legion run complete.")
+        sys.exit(0)
+
+    if args.web:
+        # --- WEB MODE (uses YOUR controller.py logic via WebController) ---
+        from controller.web_controller import WebController
+        from app.settings import AppSettings, Settings
+        from flask import Flask, jsonify, request, render_template, send_from_directory
+
+        doPathSetup()
+
+        # Create logic (same as Qt6 controller.__init__)
+        shell = DefaultShell()
+        from app.logging.legionLog import getDbLogger, getAppLogger
+        dbLog = getDbLogger()
+        appLogger = getAppLogger()
+        repositoryFactory = RepositoryFactory(dbLog)
+        projectManager = ProjectManager(shell, repositoryFactory, appLogger)
+        nmapExporter = DefaultNmapExporter(shell, appLogger)
+        toolCoordinator = ToolCoordinator(shell, nmapExporter)
+        logic = Logic(shell, projectManager, toolCoordinator)
+        logic.createNewTemporaryProject()
+
+        # Create WebController (YOUR logic, Qt-free)
+        settings = Settings(AppSettings())
+        wc = WebController(logic, settings)
+        wc.start()
+
+        # Create Flask app
+        app = Flask(__name__,
+                    template_folder='app/web/templates',
+                    static_folder='app/web/static')
+        app.config['LEGION_WC'] = wc
+        app.config['LEGION_LOGIC'] = logic
+
+        # Import and register routes
+        from app.web.routes import web_bp
+        app.register_blueprint(web_bp)
+
+        print("Legion web UI starting at http://127.0.0.1:5000")
+        app.run(host="127.0.0.1", port=5000, debug=False)
         sys.exit(0)
 
     # --- GUI MODE ---

@@ -1,0 +1,395 @@
+/* ================================================================
+   LEGION – Qt6 Fusion Dark palette replica
+   Font: monospace 10pt (matches legion.py setStyleSheet)
+   Colors: Qt6 QPalette::Dark fusion scheme
+   Layout: 1:1 match of ui/gui.py widget hierarchy
+   ================================================================ */
+
+:root{
+  /* QPalette::Window */        --window:#353535;
+  /* QPalette::WindowText */    --window-text:#fff;
+  /* QPalette::Base */          --base:#191919;
+  /* QPalette::AlternateBase */ --alt-base:#232323;
+  /* QPalette::Text */          --text:#fff;
+  /* QPalette::Button */        --button:#353535;
+  /* QPalette::ButtonText */    --button-text:#fff;
+  /* QPalette::Highlight */     --highlight:#2a82da;
+  /* QPalette::HighlightedText*/--highlight-text:#fff;
+  /* QPalette::Link */          --link:#2a82da;
+  /* QPalette::Mid */           --mid:#282828;
+  /* QPalette::Dark */          --dark:#232323;
+  /* QPalette::Shadow */        --shadow:#141414;
+  /* QPalette::Light */         --light:#454545;
+  /* QPalette::Midlight */      --midlight:#3e3e3e;
+  /* derived */                 --border:#5a5a5a;
+  /* grid lines */              --grid:#2e2e2e;
+  /* tab inactive */            --tab-inactive:#2d2d2d;
+  /* disabled text */           --disabled:#808080;
+
+  /* layout constants */
+  --menubar-h:25px;
+  --tabbar-h:27px;
+  --statusbar-h:22px;
+  --splitter-w:4px;
+}
+
+/* === RESET === */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+html,body{
+  height:100%;overflow:hidden;
+  background:var(--window);color:var(--text);
+  font-family:"Noto Mono","DejaVu Sans Mono","Liberation Mono","Courier New",monospace;
+  font-size:10pt;line-height:1.35;
+}
+
+/* === APP SHELL === */
+#app{display:flex;flex-direction:column;height:100vh;width:100vw}
+
+/* === MENUBAR (gui.py:setupMenuBar) === */
+#menubar{
+  display:flex;align-items:center;
+  height:var(--menubar-h);
+  background:var(--window);
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;z-index:100;padding:0 2px;
+}
+#menubar .menu-item{
+  position:relative;height:100%;display:flex;align-items:center;
+}
+#menubar .menu-btn{
+  background:none;border:none;color:var(--text);
+  font:inherit;padding:0 10px;height:100%;cursor:pointer;
+}
+#menubar .menu-btn:hover,
+#menubar .menu-item.open .menu-btn{
+  background:var(--highlight);color:var(--highlight-text);
+}
+#menubar .dropdown{
+  display:none;position:absolute;top:100%;left:0;
+  background:var(--midlight);border:1px solid var(--border);
+  min-width:200px;z-index:200;
+  box-shadow:2px 4px 8px rgba(0,0,0,.5);
+}
+#menubar .menu-item.open .dropdown{display:flex;flex-direction:column}
+#menubar .dropdown button{
+  background:none;border:none;color:var(--text);font:inherit;
+  padding:5px 24px 5px 12px;text-align:left;cursor:pointer;white-space:nowrap;
+}
+#menubar .dropdown button:hover{background:var(--highlight);color:var(--highlight-text)}
+#menubar .dropdown .sep{height:1px;background:var(--border);margin:2px 6px}
+#menubar .menu-shortcut{margin-left:auto;padding-left:20px;color:var(--disabled);font-size:9pt}
+#menubar .menu-spacer{flex:1}
+#menubar .title{color:var(--disabled);font-size:9pt;padding:0 8px}
+
+/* === MAIN AREA (splitter_2 vertical: top + bottom) === */
+#main-area{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#top-section{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#bottom-section{display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.hsplitter{height:var(--splitter-w);background:var(--dark);cursor:ns-resize;flex-shrink:0}
+.hsplitter:hover,.hsplitter.dragging{background:var(--highlight)}
+.vsplitter{width:var(--splitter-w);background:var(--dark);cursor:ew-resize;flex-shrink:0}
+.vsplitter:hover,.vsplitter.dragging{background:var(--highlight)}
+
+/* === TABWIDGET (matches QTabWidget) === */
+.tab-widget{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.tab-bar{
+  display:flex;background:var(--dark);
+  border-bottom:1px solid var(--border);flex-shrink:0;
+  overflow-x:auto;overflow-y:hidden;
+}
+.tab-bar::-webkit-scrollbar{height:0}
+.tab-btn{
+  background:var(--tab-inactive);border:1px solid var(--border);
+  border-bottom:none;color:var(--text);font:inherit;
+  padding:3px 14px;cursor:pointer;white-space:nowrap;
+  margin-right:-1px;margin-bottom:-1px;
+}
+.tab-btn:hover{background:var(--midlight)}
+.tab-btn.active{
+  background:var(--window);color:var(--text);
+  border-bottom:1px solid var(--window);
+  position:relative;z-index:1;
+}
+.tab-btn .close-x{
+  margin-left:6px;font-size:9pt;color:var(--disabled);cursor:pointer;
+}
+.tab-btn .close-x:hover{color:#f44}
+.tab-content{display:none;flex:1;min-height:0;overflow:hidden;flex-direction:column}
+.tab-content.active{display:flex}
+
+/* === SCAN TAB LAYOUT (splitter horizontal: left | right) === */
+#scan-layout{display:flex;flex:1;min-height:0;overflow:hidden}
+#left-panel{display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;width:290px;min-width:120px}
+#right-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+
+/* === TABLES (matches QTableView) === */
+.table-wrap{flex:1;overflow:auto;background:var(--base)}
+table{width:100%;border-collapse:collapse;font:inherit}
+th{
+  background:var(--button);color:var(--text);font-weight:normal;
+  text-align:left;padding:3px 6px;
+  border-right:1px solid var(--border);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:1;white-space:nowrap;
+}
+td{
+  padding:2px 6px;
+  border-right:1px solid var(--grid);border-bottom:1px solid var(--grid);
+  color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+tr:nth-child(even) td{background:var(--alt-base)}
+tr:hover td{background:var(--midlight)}
+tr.selected td{background:var(--highlight);color:var(--highlight-text)}
+td button{margin-right:2px}
+
+/* === FILTER BAR (Hosts tab bottom: keyword + buttons) === */
+.filter-bar{
+  display:flex;align-items:center;gap:3px;
+  padding:3px 4px;background:var(--window);
+  border-top:1px solid var(--border);flex-shrink:0;
+}
+.filter-bar input{
+  flex:1;background:var(--base);border:1px solid var(--border);
+  color:var(--text);font:inherit;padding:2px 4px;
+}
+.filter-bar input:focus{border-color:var(--highlight);outline:none}
+.filter-bar button{
+  background:var(--button);border:1px solid var(--border);
+  color:var(--text);font:inherit;padding:2px 8px;cursor:pointer;
+}
+.filter-bar button:hover{background:var(--midlight)}
+
+/* === ADD HOSTS OVERLAY === */
+.add-overlay{
+  display:none;flex:1;align-items:center;justify-content:center;
+  background:var(--base);color:var(--disabled);
+  font-family:Calibri,sans-serif;font-size:12pt;
+  cursor:pointer;text-align:center;
+}
+.add-overlay:hover{color:var(--highlight)}
+.add-overlay.visible{display:flex}
+
+/* === BUTTONS (matches QPushButton) === */
+button{
+  background:var(--button);border:1px solid var(--border);
+  color:var(--button-text);font:inherit;padding:3px 10px;cursor:pointer;
+}
+button:hover{background:var(--midlight)}
+button:disabled{color:var(--disabled);cursor:default;opacity:.6}
+button:active{background:var(--dark)}
+.btn-icon{width:22px;height:20px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+
+/* === PROCESS TABLE FILTER === */
+.process-filter{
+  display:flex;align-items:center;gap:6px;
+  padding:3px 6px;background:var(--window);
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.process-filter select{
+  background:var(--base);border:1px solid var(--border);
+  color:var(--text);font:inherit;padding:1px 4px;
+}
+.process-filter label{color:var(--disabled);font-size:9pt}
+
+/* === PROCESS STATUS === */
+.proc-running{color:#6c3}
+.proc-finished{color:var(--disabled)}
+.proc-crashed{color:#f66}
+.proc-waiting{color:#fc6}
+.spinner{
+  display:inline-block;width:10px;height:10px;
+  border:2px solid rgba(102,204,51,.3);border-top-color:#6c3;
+  border-radius:50%;animation:spin .8s linear infinite;margin-right:4px;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* === SCRIPTS TAB (splitter: table | output) === */
+.scripts-split{display:flex;flex:1;min-height:0;overflow:hidden}
+.scripts-split .table-wrap{flex:1}
+.scripts-split .script-output{
+  flex:1;background:var(--base);color:var(--text);font:inherit;
+  padding:4px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  border-left:1px solid var(--border);
+}
+
+/* === NOTES TAB === */
+.notes-area{
+  flex:1;background:var(--base);color:var(--text);
+  font:inherit;border:none;padding:6px;resize:none;
+}
+.notes-area:focus{outline:none}
+
+/* === TOOL OUTPUT (right panel when Tools tab active) === */
+.tool-output-area{
+  flex:1;background:var(--base);color:var(--text);
+  font:inherit;padding:4px;overflow:auto;
+  white-space:pre-wrap;word-break:break-word;
+}
+
+/* === OS TAB (splitter: os-list | os-hosts) === */
+.os-split{display:flex;flex:1;min-height:0;overflow:hidden}
+.os-split .table-wrap{flex:1}
+.os-split .table-wrap + .vsplitter + .table-wrap{flex:1}
+
+/* === TOOLS PANEL (splitter_3: tool-hosts | tool-output | screenshot) === */
+#tools-panel{display:none;flex:1;min-height:0;overflow:hidden}
+#tools-panel.active{display:flex}
+#tools-panel .table-wrap{width:275px;flex-shrink:0;overflow:auto}
+
+/* === STATUSBAR === */
+#statusbar{
+  height:var(--statusbar-h);
+  background:var(--window);
+  border-top:1px solid var(--border);
+  display:flex;align-items:center;
+  padding:0 8px;font-size:9pt;color:var(--disabled);
+  flex-shrink:0;gap:12px;
+}
+#statusbar .path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#statusbar .right{margin-left:auto;white-space:nowrap}
+
+/* === SCROLLBARS (Qt-style) === */
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-track{background:var(--dark)}
+::-webkit-scrollbar-thumb{background:var(--light);border:2px solid var(--dark)}
+::-webkit-scrollbar-thumb:hover{background:var(--border)}
+::-webkit-scrollbar-corner{background:var(--dark)}
+
+/* === ANSI OUTPUT === */
+.ansi{font:inherit;white-space:pre-wrap;word-break:break-word;tab-size:4}
+.ansi-bold{font-weight:700}
+.ansi-fg-black{color:#555}.ansi-fg-red{color:#f66}.ansi-fg-green{color:#6c6}
+.ansi-fg-yellow{color:#fc6}.ansi-fg-blue{color:#6af}.ansi-fg-magenta{color:#c6f}
+.ansi-fg-cyan{color:#6cf}.ansi-fg-white{color:#eee}
+.ansi-fg-bright-black{color:#888}.ansi-fg-bright-red{color:#f99}
+.ansi-fg-bright-green{color:#9f9}.ansi-fg-bright-yellow{color:#ff9}
+.ansi-fg-bright-blue{color:#9cf}.ansi-fg-bright-magenta{color:#f9f}
+.ansi-fg-bright-cyan{color:#9ff}.ansi-fg-bright-white{color:#fff}
+.ansi-bg-red{background:rgba(255,100,100,.2)}.ansi-bg-green{background:rgba(100,200,100,.2)}
+.ansi-bg-yellow{background:rgba(255,200,100,.2)}.ansi-bg-blue{background:rgba(100,150,255,.2)}
+
+/* === MODALS (kept compatible with upstream legion.js) === */
+.state-cache{display:none}
+.legion-modal-overlay{
+  position:fixed;inset:0;z-index:40;display:none;
+  align-items:center;justify-content:center;padding:1rem;
+  background:rgba(0,0,0,.7);
+}
+.legion-modal-overlay.is-open{display:flex}
+.legion-modal{
+  width:min(980px,96vw);max-height:90vh;position:relative;
+  border:1px solid var(--border);background:var(--window);
+  box-shadow:0 12px 40px rgba(0,0,0,.6);padding:12px;overflow:auto;
+}
+.scheduler-modal{width:min(1180px,97vw)}.report-provider-modal{width:min(1120px,97vw)}
+.settings-modal{width:min(1080px,97vw)}.scan-modal{width:min(1120px,97vw)}
+.manual-scan-modal{width:min(760px,96vw)}.host-selection-modal{width:min(760px,96vw)}
+.script-cve-modal{width:min(820px,96vw)}.screenshot-modal{width:min(1180px,98vw)}
+.provider-logs-modal{width:min(1220px,98vw)}.host-remove-modal{width:min(560px,94vw)}
+
+body.modal-open{overflow:hidden}
+
+.panel-header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px}
+.panel-header h2,.panel-header h3{margin:0;font-size:12pt;font-weight:600}
+.panel-header p{margin:0;color:var(--disabled);font-size:10pt}
+.modal-header{position:relative;padding-right:36px;margin-bottom:10px}
+.modal-close-btn{
+  position:absolute;top:0;right:0;width:24px;height:24px;
+  border:1px solid var(--border);background:var(--button);color:var(--text);
+  display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;
+}
+.modal-close-btn:hover{background:#c00;color:#fff;border-color:#c00}
+.modal-close-btn i{pointer-events:none}
+.modal-actions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.meta-note{color:var(--disabled);font-size:9pt;margin:4px 0}
+
+/* modal form styles */
+.scheduler-form{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:8px;margin-top:10px}
+.scheduler-form label,.action-block label,.startup-step label{
+  display:flex;flex-direction:column;gap:4px;font-size:9pt;color:var(--disabled);
+}
+.scheduler-form .scheduler-provider-field{display:none}
+.scheduler-form .scheduler-provider-field.is-active{display:flex}
+input,select,textarea{
+  background:var(--base);border:1px solid var(--border);
+  color:var(--text);font:inherit;padding:3px 6px;
+}
+input:focus,select:focus,textarea:focus{border-color:var(--highlight);outline:none}
+.checkbox{flex-direction:row!important;align-items:center;gap:6px}
+.checkbox input{width:auto}
+.action-block{border:1px solid var(--border);padding:10px;background:var(--dark)}
+.action-block h3{margin-bottom:8px;font-size:11pt}
+.action-block label{margin-bottom:6px}
+.scheduler-actions{display:flex;align-items:flex-end;gap:6px;flex-wrap:wrap;margin-top:4px}
+.scheduler-actions button{background:var(--highlight);border-color:var(--highlight);color:#fff;font-weight:600}
+.scheduler-actions button:hover{filter:brightness(1.1)}
+.danger-group{grid-column:span 2;border:1px solid var(--border);padding:8px}
+.danger-group legend{color:var(--disabled);font-size:9pt;padding:0 4px}
+.project-report-headers-label{grid-column:span 2}
+#project-report-headers{min-height:80px;font-family:inherit;resize:vertical}
+
+/* nmap wizard */
+.nmap-wizard{border:1px solid var(--border);background:var(--dark);padding:8px;margin-bottom:8px}
+.wizard-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:8px}
+.wizard-step{font-size:9pt;padding:4px 6px;border:1px solid var(--border);background:var(--button)}
+.wizard-step.is-active{border-color:var(--highlight);background:var(--highlight);color:#fff}
+.wizard-page{display:none}.wizard-page.is-active{display:block}
+.wizard-subgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px}
+.mode-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.mode-card{display:flex;flex-direction:column;gap:4px;border:1px solid var(--border);background:var(--dark);padding:6px;cursor:pointer}
+.mode-card span{color:var(--disabled);font-size:9pt}
+.mode-card input{width:auto}
+.mode-options{display:none}.mode-options.is-active{display:block}
+.mode-options h4{margin-bottom:6px}
+.wizard-nav{display:flex;justify-content:space-between;gap:6px;margin-top:8px}
+
+/* ansi output view (modal) */
+.ansi-output-view{
+  width:100%;display:block;border:1px solid var(--border);
+  background:var(--base);color:var(--text);padding:6px;
+  font:inherit;line-height:1.35;white-space:pre-wrap;word-break:break-word;
+  overflow:auto;user-select:text;tab-size:4;
+}
+.process-command-block{margin-bottom:8px}
+.process-command-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;color:var(--disabled);font-size:9pt}
+.process-command-text{
+  width:100%;min-height:24px;border:1px solid var(--border);
+  background:var(--base);color:var(--text);padding:4px 6px;
+  font:inherit;white-space:pre-wrap;word-break:break-all;
+}
+#process-output-command-copy,#script-output-command-copy{width:24px;height:20px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.legion-modal #process-output-text,.legion-modal #script-output-text{min-height:50vh;max-height:68vh}
+
+/* screenshot modal */
+#screenshot-modal-image{display:block;max-width:100%;max-height:68vh;height:auto;margin:0 auto;border:1px solid var(--border);background:var(--base)}
+.screenshot-modal-body{border:1px solid var(--border);padding:8px;background:var(--base);overflow:auto;max-height:72vh}
+.host-screenshot-trigger{border:none;background:none;color:var(--link);text-decoration:underline;padding:0;cursor:pointer;font:inherit}
+
+/* settings modal */
+#settings-config-text{width:100%;border:1px solid var(--border);background:var(--base);color:var(--text);padding:6px;font:inherit;resize:vertical}
+#provider-logs-text{font-size:9pt;min-height:60vh;max-height:72vh}
+
+/* startup wizard */
+.startup-wizard-overlay{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;padding:12px;background:rgba(0,0,0,.78)}
+.startup-wizard-overlay.is-open{display:flex}
+.startup-wizard{width:min(920px,96vw);max-height:92vh;overflow:auto;border:1px solid var(--border);background:var(--window);box-shadow:0 24px 46px rgba(0,0,0,.6);padding:12px}
+.startup-step{display:none}.startup-step.is-active{display:block}
+.startup-step h3{margin:0 0 6px}
+.startup-step input,.startup-step select,.startup-step textarea{border:1px solid var(--border);background:var(--base);color:var(--text);padding:4px 6px}
+.startup-summary{border:1px solid var(--border);background:var(--dark);padding:8px;color:var(--disabled);white-space:pre-line}
+
+/* misc */
+.host-ip-with-icon{display:inline-flex;align-items:center;gap:4px}
+.host-os-icon{color:var(--link);min-width:14px}
+.host-actions{white-space:nowrap}
+.host-ai-report-actions{display:flex;gap:4px;flex-wrap:wrap}
+.screenshot-list{display:flex;flex-direction:column;gap:4px;padding:6px}
+.screenshot-list a{color:var(--link);text-decoration:none;word-break:break-all}
+.screenshot-list a:hover{text-decoration:underline}
+.process-actions{display:flex;gap:2px;flex-wrap:nowrap}
+.icon-btn{width:24px;height:20px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.icon-btn-danger{border-color:rgba(255,80,80,.5);color:#f44}
+.icon-btn-danger:hover{background:rgba(255,80,80,.2)}
+.icon-btn i{pointer-events:none}
+#host-ai-analysis-status{word-break:break-word}
+.stat-card,.chip,.ribbon,.ribbon-group,.ribbon-btn,.ribbon-caret,.ribbon-submenu,.ribbon-submenu-item,.ribbon-menu,.ribbon-btn-menu,.ribbon-panel,.background-glow,.logo-watermark,.shell,.topbar,.eyebrow,.topbar-meta,.grid,.panel,.panel-full,.stat-card p,.table-wrap,.text-muted,.scheduler-meta{/* upstream classes nullified — not used in new layout */}
