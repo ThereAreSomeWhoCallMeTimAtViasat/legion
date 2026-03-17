@@ -15,7 +15,7 @@ Copyright (c) 2025 Shane William Scott
 
 """
 
-from PyQt6.QtCore import QSemaphore
+import threading
 import sqlite3
 from pathlib import Path
 import time
@@ -66,7 +66,7 @@ class Database:
 
     def establishSqliteConnection(self, dbFileName: str):
         self.name = dbFileName
-        self.dbsemaphore = QSemaphore(1)  # to control concurrent write access to db
+        self.dbsemaphore = threading.Semaphore(1)  # to control concurrent write access to db
         self.engine = create_engine(
             'sqlite:///{dbFileName}'.format(dbFileName=dbFileName),
             connect_args={'check_same_thread': False}

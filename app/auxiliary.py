@@ -22,21 +22,41 @@ import os, sys, socket, locale, webbrowser, \
     re, platform  # for webrequests, screenshot timeouts, timestamps, browser stuff and regex
 import tempfile
 import shlex
-from PyQt6 import QtCore, QtWidgets
-from PyQt6.QtCore import QProcess, QObject, pyqtSignal, pyqtSlot, QThread, Qt
 from six import u as unicode
 import ipaddress
+import subprocess
 
 from app.httputil.isHttps import isHttps
 from app.logging.legionLog import getAppLogger
 from app.timing import timing
 
-from PyQt6.QtWidgets import QAbstractItemView
-import subprocess
+# Qt imports — optional. Only needed for Qt GUI mode (MyQProcess, BrowserOpener).
+# Flask --web mode uses Filters, checkHydraResults, sortArrayWithArray etc. which have no Qt dependency.
+try:
+    from PyQt6 import QtCore, QtWidgets
+    from PyQt6.QtCore import QProcess, QObject, pyqtSignal, pyqtSlot, QThread, Qt
+    from PyQt6.QtWidgets import QAbstractItemView
+    from PyQt6.QtGui import QTextDocument, QTextCursor
+    _QT_AVAILABLE = True
+except ImportError:
+    _QT_AVAILABLE = False
+    # Provide stubs so module-level code that references these doesn't crash
+    class _Stub:
+        def __getattr__(self, name): return _Stub()
+        def __call__(self, *a, **k): return _Stub()
+    QtCore = QtWidgets = QProcess = QObject = QThread = Qt = _Stub()
+    QAbstractItemView = QTextDocument = QTextCursor = _Stub()
+    def pyqtSignal(*a, **k): return None
+    def pyqtSlot(*a, **k):
+        def decorator(fn): return fn
+        return decorator
+    QObject = object
 
 #for matching
-from ansi2html import Ansi2HTMLConverter
-from PyQt6.QtGui import QTextDocument, QTextCursor
+try:
+    from ansi2html import Ansi2HTMLConverter
+except ImportError:
+    Ansi2HTMLConverter = None
 
 
 log = getAppLogger()
@@ -218,14 +238,21 @@ class Wordlist():
                 f.write(word + '\n')
 
 
+# Base classes — use Qt types when available, plain object otherwise
+# This lets MyQProcess/BrowserOpener be defined at module level in both modes.
+# Flask only uses Filters and checkHydraResults — never MyQProcess.
+_QProcessBase = QProcess if _QT_AVAILABLE else object
+_QThreadBase = (QtCore.QThread if _QT_AVAILABLE else object)
+
 # Custom QProcess class
-class MyQProcess(QProcess):
+class MyQProcess(_QProcessBase):
     sigHydra = QtCore.pyqtSignal(QObject, list, list, name="hydra")
     sigTooltip = QtCore.pyqtSignal(str)
     sigHasMatch = QtCore.pyqtSignal(str, name="hasMatch")
 
     def __init__(self, name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox, settings=None):
-        QProcess.__init__(self)
+        if _QT_AVAILABLE:
+            QProcess.__init__(self)
         self.id = -1
         self.name = name
         self.tabTitle = tabTitle
@@ -384,12 +411,13 @@ class MyQProcess(QProcess):
         # Both stdout and stderr are already included in readAllStandardOutput() above
 
 # browser opener class with queue and semaphores
-class BrowserOpener(QtCore.QThread):
+class BrowserOpener(_QThreadBase):
     done = QtCore.pyqtSignal(name="done")  # signals that we are done opening urls in browser
     log = QtCore.pyqtSignal(str, name="log")
 
     def __init__(self):
-        QtCore.QThread.__init__(self, parent=None)
+        if _QT_AVAILABLE:
+            QtCore.QThread.__init__(self, parent=None)
         self.urls = []
         self.processing = False
 

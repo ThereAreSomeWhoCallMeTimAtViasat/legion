@@ -25,6 +25,23 @@ import time
 
 from app.auxiliary import *  # for timestamp
 
+# Qt-free INI settings store (replaces QtCore.QSettings)
+# Falls back to QSettings if config_store unavailable and Qt is present
+try:
+    from app.core.ini_settings import IniSettingsStore as _IniSettings
+    _USE_QT_SETTINGS = False
+except ImportError:
+    _USE_QT_SETTINGS = True
+
+if _USE_QT_SETTINGS:
+    try:
+        from PyQt6 import QtCore
+    except ImportError:
+        raise RuntimeError(
+            "Neither app.core.ini_settings nor PyQt6 is available. "
+            "Cannot load settings."
+        )
+
 
 # this class reads and writes application settings
 from app.timing import getTimestamp
@@ -68,8 +85,11 @@ class AppSettings():
         
         # ADD THESE DEBUG LINES
         log.debug(f"DEBUG: Loading QSettings from: {configpath}")
-        self.actions = QtCore.QSettings(configpath, QtCore.QSettings.Format.IniFormat)
-        log.debug(f"DEBUG: QSettings fileName: {self.actions.fileName()}")
+        if _USE_QT_SETTINGS:
+            self.actions = QtCore.QSettings(configpath, QtCore.QSettings.Format.IniFormat)
+        else:
+            self.actions = _IniSettings(configpath)
+        log.debug(f"DEBUG: Settings fileName: {self.actions.fileName()}")
 
 
     #for matching
@@ -389,8 +409,10 @@ class AppSettings():
             
             # Check sync status
             status = self.actions.status()
-            log.info(f"QSettings sync status: {status}") 
-            if status != QtCore.QSettings.Status.NoError:
+            log.info(f"Settings sync status: {status}")
+            NoError = (QtCore.QSettings.Status.NoError if _USE_QT_SETTINGS
+                       else _IniSettings.Status.NoError)
+            if status != NoError:
                 log.error(f"QSettings sync failed with status: {status}")
                 return
             else:
