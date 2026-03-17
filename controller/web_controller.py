@@ -1227,11 +1227,9 @@ class WebController:
                 xml_path = outputfile + '.xml'
                 if os.path.isfile(xml_path):
                     try:
-                        from app.importers.nmap_runner import import_nmap_xml_into_project
-                        import_nmap_xml_into_project(
-                            project=self.logic.activeProject,
-                            xml_path=xml_path, output="",
-                            update_progress_observable=None)
+                        from app.importers.nmap_import import import_nmap_xml
+                        import_nmap_xml(project=self.logic.activeProject,
+                                        xml_path=xml_path, output="")
                         log.info(f"[WebController] Stage {stage} XML imported: {xml_path}")
                     except Exception as e:
                         log.error(f"[WebController] Stage {stage} import error: {e}")

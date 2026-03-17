@@ -339,7 +339,7 @@ def test_c7_chain_imports_xml():
     """runStagedNmap chain imports XML between stages"""
     import inspect
     src = inspect.getsource(wc.runStagedNmap)
-    return ok('import_nmap_xml_into_project' in src, "runStagedNmap must import XML in chain")
+    return ok('import_nmap_xml' in src, "runStagedNmap must import XML in chain")
 test("C7.2: Stage chain imports XML", test_c7_chain_imports_xml)
 
 def test_c7_stage_settings_loaded():
