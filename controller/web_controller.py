@@ -59,12 +59,18 @@ class WebController:
     """
 
     def __init__(self, logic, settings):
+        import queue
         self.logic = logic
         self.settings = settings
         self._active_processes = {}
         self.processes = []
         self.processTimers = {}
         self.processMeasurements = {}
+        self.fastProcessQueue = queue.Queue()
+        self.fastProcessesRunning = 0
+        self.slowProcessesRunning = 0
+        self._state_changed = False
+        self._matches = {}
         log.info("[WebController] initialized")
 
     # ──────────────────────────────────────────────────────────────
@@ -386,28 +392,161 @@ class WebController:
             log.error(f"[WebController] markAsInteractive error: {e}")
 
     def scheduler(self, parser=None, isNmapImport=False):
-        """controller.py:2344 — run automated attacks after nmap import."""
+        """controller.py:2344 — run automated attacks after nmap import.
+        Reads SchedulerSettings from legion.conf and runs configured tools
+        against discovered hosts/ports."""
         try:
-            if isNmapImport and self.settings.general_enable_scheduler_on_import == 'False':
+            if isNmapImport and str(getattr(self.settings, 'general_enable_scheduler_on_import', 'False')) == 'False':
+                log.info('[WebController] Scheduler on import disabled')
                 return
-            if self.settings.general_enable_scheduler == 'True':
-                log.info('[WebController] Scheduler started!')
-                # TODO: port scheduler logic from controller.py:2344-2430
-                # For now, log that it was triggered
+            if str(getattr(self.settings, 'general_enable_scheduler', 'True')) != 'True':
+                log.info('[WebController] Scheduler disabled')
+                return
+
+            log.info('[WebController] Scheduler started — running automated attacks')
+
+            from app.auxiliary import Filters
+            from app.timing import getTimestamp
+            filters = Filters()
+            repo = self.logic.activeProject.repositoryContainer
+            hosts = repo.hostRepository.getHosts(filters)
+            runningFolder = self.logic.activeProject.properties.runningFolder
+
+            # For each host, check each port against SchedulerSettings
+            for host in (hosts or []):
+                hid = host.get('id', '') if isinstance(host, dict) else getattr(host, 'id', '')
+                hip = host.get('ipv4', '') or host.get('ip', '') if isinstance(host, dict) else getattr(host, 'ipv4', '') or getattr(host, 'ip', '')
+                if not hid or not hip:
+                    continue
+
+                ports = repo.portRepository.getPortsByHostId(hid)
+                for port_obj in (ports or []):
+                    port_num = str(getattr(port_obj, 'portId', '') or '')
+                    protocol = str(getattr(port_obj, 'protocol', 'tcp') or 'tcp').lower()
+                    state = str(getattr(port_obj, 'state', '') or '')
+                    if state not in ('open', 'open|filtered'):
+                        continue
+
+                    svc_name = ''
+                    svc_id = getattr(port_obj, 'serviceId', None)
+                    if svc_id:
+                        svc = repo.serviceRepository.getServiceById(svc_id)
+                        if svc:
+                            svc_name = str(getattr(svc, 'name', '') or '').rstrip('?').lower()
+
+                    # Check each SchedulerSettings entry
+                    for auto in (self.settings.automatedAttacks or []):
+                        try:
+                            tool_id = str(auto[0]).strip()
+                            svc_scope_raw = str(auto[1]).strip()
+                            tool_protocol = str(auto[2] if len(auto) > 2 else 'tcp').strip().lower()
+
+                            if tool_protocol != protocol:
+                                continue
+
+                            svc_scope = [s.strip() for s in svc_scope_raw.split(',') if s.strip()]
+                            if svc_name not in svc_scope and '*' not in svc_scope:
+                                continue
+
+                            # Find command from portActions
+                            command_template = ''
+                            for action in (self.settings.portActions or []):
+                                if str(action[1]).strip() == tool_id:
+                                    command_template = str(action[2]) if len(action) > 2 else ''
+                                    break
+
+                            if not command_template:
+                                log.debug(f'[Scheduler] No command template for {tool_id}')
+                                continue
+
+                            outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{tool_id}-{hip}-{port_num}")
+                            command = command_template.replace('[IP]', hip).replace('[PORT]', port_num).replace('[OUTPUT]', outputfile)
+                            if 'nmap' in command and protocol == 'udp':
+                                command = command.replace('-sV', '-sVU')
+
+                            log.info(f'[Scheduler] Running {tool_id} on {hip}:{port_num}')
+                            self.runCommand(command=command, name=tool_id,
+                                            tabTitle=f'{tool_id} ({port_num}/{protocol})',
+                                            hostIp=hip, port=port_num, protocol=protocol,
+                                            outputfile=outputfile, run_actions=False)
+                        except Exception as e:
+                            log.error(f'[Scheduler] Error processing {auto}: {e}')
+
         except Exception as e:
             log.error(f"[WebController] scheduler error: {e}")
 
     def checkProcessQueue(self):
-        """controller.py:1570 — dequeue and start processes. No QProcess state checks."""
-        if not hasattr(self, 'fastProcessQueue'):
+        """controller.py:1570 — dequeue and start processes respecting concurrency limits.
+        Qt6 used QProcess.state() to check running. We use _popen.poll() instead."""
+        if not hasattr(self, 'fastProcessQueue') or self.fastProcessQueue.empty():
             return
-        # Simplified version: just drain the queue
+
+        try:
+            max_fast = int(getattr(self.settings, 'general_max_fast_processes', 5))
+            max_scans = int(getattr(self.settings, 'general_max_concurrent_scans', 3))
+        except Exception:
+            max_fast, max_scans = 5, 3
+
+        # Count currently running processes (excluding interactive)
+        running_all = [p for p in self._active_processes.values()
+                       if p._popen and p._popen.poll() is None
+                       and not getattr(p, 'isInteractive', False)]
+        running_scans = [p for p in running_all if 'nmap' in str(p.name).lower()]
+
+        log.debug(f"[Queue] running={len(running_all)}/{max_fast} scans={len(running_scans)}/{max_scans} queued={self.fastProcessQueue.qsize()}")
+
+        # Start processes while under limits (controller.py:1590-1591)
         while not self.fastProcessQueue.empty():
+            if len(running_all) >= max_fast:
+                break
+            if len(running_scans) >= max_scans and not self.fastProcessQueue.empty():
+                # Peek: if next is a scan, stop
+                try:
+                    next_item = self.fastProcessQueue.queue[0]
+                    if 'nmap' in str(getattr(next_item, 'name', '')).lower():
+                        break
+                except Exception:
+                    pass
+
             try:
                 proc = self.fastProcessQueue.get_nowait()
-                log.info(f"[WebController] checkProcessQueue: would start {getattr(proc, 'name', '?')}")
             except Exception:
                 break
+
+            proc_id = getattr(proc, 'id', None)
+
+            # Skip cancelled processes
+            try:
+                if proc_id and self.logic.activeProject.repositoryContainer.processRepository.isCancelledProcess(str(proc_id)):
+                    log.debug(f"[Queue] Process {proc_id} was cancelled, skipping")
+                    continue
+            except Exception:
+                pass
+
+            # Start the process
+            command = getattr(proc, 'command', '')
+            if not command:
+                continue
+
+            try:
+                popen = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+                proc.pid = popen.pid
+                proc._popen = popen
+                processRepo = self.logic.activeProject.repositoryContainer.processRepository
+                processRepo.storeProcessRunningStatus(str(proc_id), str(popen.pid))
+                self._active_processes[int(proc_id)] = proc
+                self.fastProcessesRunning += 1
+                running_all.append(proc)
+                if 'nmap' in str(proc.name).lower():
+                    running_scans.append(proc)
+
+                t = threading.Thread(target=self._capture_output, args=(proc, processRepo),
+                                      daemon=True, name=f"capture-{proc_id}")
+                t.start()
+                log.info(f"[Queue] Started {proc.name} pid={popen.pid}")
+            except Exception as e:
+                log.error(f"[Queue] Failed to start {getattr(proc, 'name', '?')}: {e}")
 
     # ──────────────────────────────────────────────────────────────
     # Tier 2a: getContextMenuForHost → JSON
@@ -624,7 +763,8 @@ class WebController:
     # Web uses: WebProcessStub + subprocess.Popen
     # ──────────────────────────────────────────────────────────────
     def runCommand(self, command, name='process', tabTitle=None, hostIp='', port='',
-                   protocol='tcp', startTime=None, outputfile=''):
+                   protocol='tcp', startTime=None, outputfile='', run_actions=True,
+                   _is_staged=False):
         """
         Run a system command, store it in the DB, capture output in a background thread.
         Returns dict with process_id and pid.
@@ -659,44 +799,18 @@ class WebController:
         except Exception:
             pass
 
-        # Spawn subprocess (replaces QProcess.start)
-        try:
-            popen = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-            )
-            proc.pid = popen.pid
-            proc._popen = popen
+        # Queue the process (controller.py:1891 — fastProcessQueue.put + checkProcessQueue)
+        # checkProcessQueue() handles actual spawning respecting concurrency limits
+        proc._run_actions = run_actions
+        proc._is_staged = _is_staged
+        if not hasattr(self, '_active_processes'):
+            self._active_processes = {}
 
-            # Store running status + PID (same as controller.py checkProcessQueue does)
-            processRepo.storeProcessRunningStatus(str(dbId), str(popen.pid))
-            log.info(f"[WebController] Process started, pid={popen.pid}")
+        # Add to queue then let checkProcessQueue decide when to start
+        self.fastProcessQueue.put(proc)
+        self.checkProcessQueue()
 
-            # Track it
-            if not hasattr(self, '_active_processes'):
-                self._active_processes = {}
-            self._active_processes[int(dbId)] = proc
-
-            # Background thread to capture output and detect completion
-            # (replaces QProcess.readyReadStandardOutput + finished signals)
-            t = threading.Thread(
-                target=self._capture_output,
-                args=(proc, processRepo),
-                daemon=True,
-                name=f"capture-{dbId}",
-            )
-            t.start()
-
-        except Exception as e:
-            log.error(f"[WebController] Failed to start process: {e}")
-            processRepo.storeProcessCrashStatus(str(dbId))
-            processRepo.storeProcessOutput(str(dbId), f"Error starting process: {e}")
-            return {'process_id': int(dbId), 'pid': None, 'error': str(e)}
-
-        return {'process_id': int(dbId), 'pid': popen.pid}
+        return {'process_id': int(dbId), 'pid': proc.pid}
 
     def _capture_output(self, proc, processRepo):
         """
@@ -745,9 +859,62 @@ class WebController:
             exit_code = proc._popen.returncode
             log.info(f"[WebController] Process {dbId} finished, exit={exit_code}, output={len(combined)} bytes")
 
+            # Hydra credential extraction (auxiliary.py:178-195 + controller.py:2285)
+            if 'hydra' in str(toolName).lower():
+                try:
+                    from app.auxiliary import checkHydraResults
+                    found, userlist, passlist = checkHydraResults(combined)
+                    if found:
+                        self.handleHydraFindings(userlist=userlist, passlist=passlist)
+                        log.info(f"[WebController] Hydra found {len(userlist)} users, {len(passlist)} passwords")
+                except Exception as e:
+                    log.error(f"[WebController] Hydra extraction error: {e}")
+
+            # Call processFinished chain for non-nmap tools
+            if not processRepo.isKilledProcess(str(dbId)):
+                try:
+                    self.processFinished(proc)
+                except Exception:
+                    pass
+
+            # Import nmap XML if this was an nmap process (controller.py:2240-2260)
+            # This is the CRITICAL step that adds hosts/ports/services to the DB
+            # Skip for staged nmap — runStagedNmap() handles its own chained imports
+            outputfile = getattr(proc, 'outputfile', '')
+            is_staged = getattr(proc, '_is_staged', False)
+            if 'nmap' in str(toolName).lower() and outputfile and exit_code == 0 and not is_staged:
+                xml_path = outputfile + '.xml'
+                if not os.path.isfile(xml_path):
+                    # Try without extension
+                    xml_path = outputfile if outputfile.endswith('.xml') else None
+                if xml_path and os.path.isfile(xml_path):
+                    try:
+                        from app.importers.nmap_import import import_nmap_xml
+                        import_nmap_xml(
+                            project=self.logic.activeProject,
+                            xml_path=xml_path,
+                            output=combined,
+                        )
+                        log.info(f"[WebController] Nmap XML imported: {xml_path}")
+                        # Run automated attacks after import (scheduler)
+                        run_actions = getattr(proc, '_run_actions', True)
+                        if run_actions:
+                            self.scheduler(isNmapImport=True)
+                    except Exception as e:
+                        log.error(f"[WebController] Nmap XML import failed: {e}")
+                else:
+                    log.warning(f"[WebController] Nmap XML not found: {outputfile}.xml")
+
             # Clean up tracking
             if hasattr(self, '_active_processes') and int(dbId) in self._active_processes:
                 del self._active_processes[int(dbId)]
+            self.fastProcessesRunning = max(0, self.fastProcessesRunning - 1)
+
+            # Check queue — a slot just freed up, start next process if any waiting
+            try:
+                self.checkProcessQueue()
+            except Exception:
+                pass
 
         except Exception as e:
             log.error(f"[WebController] _capture_output error for {dbId}: {e}")
@@ -1041,7 +1208,7 @@ class WebController:
 
         # Run and chain to next stage on completion
         result = self.runCommand(command=command, name='nmap', tabTitle=f'nmap (stage {stage})',
-                                 hostIp=host_arg, outputfile=outputfile)
+                                 hostIp=host_arg, outputfile=outputfile, _is_staged=True)
 
         # Chain next stage via background thread monitoring
         if stage < 6 and result and result.get('process_id'):

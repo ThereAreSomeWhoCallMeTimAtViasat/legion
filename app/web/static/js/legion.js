@@ -1126,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', 'LEGION v2.6-flask – ' + path.split('/').pop());
+                setText('window-title', 'LEGION v2.8-flask – ' + path.split('/').pop());
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
@@ -1140,7 +1140,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.6-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.8-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -1152,7 +1152,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.6-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.8-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -1166,7 +1166,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert('LEGION v2.6-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
+        alert('LEGION v2.8-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
     /* ── Ctrl+B note capture ── */
@@ -1205,7 +1205,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', 'LEGION v2.6-flask – *untitled');
+                setText('window-title', 'LEGION v2.8-flask – *untitled');
                 pollSnapshot();
             });
         }
