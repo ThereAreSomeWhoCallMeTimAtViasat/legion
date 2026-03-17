@@ -476,6 +476,14 @@ def scheduler_provider_test():
 def scheduler_provider_logs():
     return jsonify({"logs": "No provider logs yet"})
 
+@web_bp.post("/api/shutdown")
+def shutdown():
+    """Graceful shutdown — kill processes, save output, cleanup."""
+    wc = _wc()
+    wc.saveRunningProcessOutputs()
+    wc.killRunningProcesses()
+    return jsonify({"status": "ok", "message": "Shutdown complete"})
+
 @web_bp.get("/api/settings/legion-conf")
 def settings_get():
     s = AppSettings()

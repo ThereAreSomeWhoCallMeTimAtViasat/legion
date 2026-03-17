@@ -41,6 +41,20 @@ function postJson(url, body) {
 }
 
 /* ── ANSI parser (simplified from upstream) ── */
+function highlightMatches(html) {
+    /* P1: Apply match-positive CSS to known positive patterns in rendered output */
+    if (!matchPositive || matchPositive.length === 0) return html;
+    var result = html;
+    matchPositive.forEach(function(pattern) {
+        if (!pattern) return;
+        /* Only highlight if not inside a negative context */
+        var escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var re = new RegExp('(' + escaped + ')', 'gi');
+        result = result.replace(re, '<span class="match-positive">$1</span>');
+    });
+    return result;
+}
+
 function ansiToHtml(raw) {
     var text = String(raw||'');
     var result = '';
@@ -1112,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', 'LEGION v2.5-flask – ' + path.split('/').pop());
+                setText('window-title', 'LEGION v2.6-flask – ' + path.split('/').pop());
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
@@ -1126,7 +1140,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.5-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.6-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -1138,7 +1152,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.5-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.6-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -1152,7 +1166,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert('LEGION v2.5-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
+        alert('LEGION v2.6-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
     /* ── Ctrl+B note capture ── */
@@ -1191,7 +1205,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', 'LEGION v2.5-flask – *untitled');
+                setText('window-title', 'LEGION v2.6-flask – *untitled');
                 pollSnapshot();
             });
         }
@@ -1575,6 +1589,87 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /* ── Add port from context menu ── */
     /* When right-click host menu has "Add Port", open the dialog */
+
+    /* ═══════════════════════════════════════════
+       visualUpgrades features
+       ═══════════════════════════════════════════ */
+
+    /* P1: Match highlighting in ANSI output */
+    /* Matches are detected server-side in WebController._capture_output
+       and stored in wc._matches. The snapshot could include them.
+       For now, we highlight keywords client-side in rendered output. */
+    var matchPositive = [];
+    var matchNegative = [];
+    try {
+        fetchJson('/api/settings/legion-conf').then(function(d) {
+            var text = d.text || '';
+            var inMatch = false;
+            text.split('\n').forEach(function(line) {
+                if (line.trim() === '[MatchSettings]') { inMatch = true; return; }
+                if (line.trim().startsWith('[') && inMatch) { inMatch = false; return; }
+                if (!inMatch) return;
+                var eq = line.indexOf('=');
+                if (eq < 0) return;
+                var key = line.substring(0, eq).trim();
+                var val = line.substring(eq+1).trim().replace(/^"|"$/g, '');
+                if (key.endsWith('-positive')) {
+                    val.split(',').forEach(function(v) { if (v.trim()) matchPositive.push(v.trim()); });
+                } else if (key.endsWith('-negative')) {
+                    val.split(',').forEach(function(v) { if (v.trim()) matchNegative.push(v.trim()); });
+                }
+            });
+        });
+    } catch(e) {}
+
+    /* P2: Tab unread tracking */
+    var lastSeenData = {};
+    function checkTabUnread(tabId, dataHash) {
+        if (lastSeenData[tabId] === undefined) { lastSeenData[tabId] = dataHash; return; }
+        if (lastSeenData[tabId] !== dataHash) {
+            var tabBtn = document.querySelector('[data-tab="' + tabId + '"]');
+            if (tabBtn && !tabBtn.classList.contains('active')) {
+                tabBtn.classList.add('tab-unread');
+            }
+        }
+    }
+    /* Clear unread on tab click */
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('.tab-btn');
+        if (btn) {
+            btn.classList.remove('tab-unread');
+            var tabId = btn.dataset.tab || '';
+            if (tabId && L.snapshot) lastSeenData[tabId] = JSON.stringify(L.snapshot).length;
+        }
+    });
+
+    /* P4: Selection preservation — store selectedHostId for re-highlight */
+    /* Already implemented via L.selectedHostId + MutationObserver */
+
+    /* P7: Splitter position memory via localStorage */
+    function saveSplitterPos(key, el) {
+        if (el) localStorage.setItem('legion-splitter-' + key, el.style.width || el.style.height || '');
+    }
+    function restoreSplitterPos(key, el, prop) {
+        var saved = localStorage.getItem('legion-splitter-' + key);
+        if (saved && el) el.style[prop] = saved;
+    }
+    /* Restore on load */
+    var leftPane = $('left-panel');
+    if (leftPane) restoreSplitterPos('left', leftPane, 'width');
+    var bottomSec = $('bottom-section');
+    if (bottomSec) restoreSplitterPos('bottom', bottomSec, 'height');
+    /* Save on mouseup after drag */
+    document.addEventListener('mouseup', function() {
+        if (leftPane) saveSplitterPos('left', leftPane);
+        if (bottomSec) saveSplitterPos('bottom', bottomSec);
+    });
+
+    /* P8: Graceful shutdown on page unload */
+    window.addEventListener('beforeunload', function() {
+        try {
+            navigator.sendBeacon('/api/shutdown', '{}');
+        } catch(e) {}
+    });
 
     /* ── Populate manual scan tool selector when snapshot updates ── */
     var origPoll = pollSnapshot;

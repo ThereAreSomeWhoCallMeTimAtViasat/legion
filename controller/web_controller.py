@@ -170,6 +170,96 @@ class WebController:
         except Exception as e:
             log.error(f"[WebController] addPortToHost error: {e}")
 
+    # ──────────────────────────────────────────────────────────────
+    # P1: Match Detection (from auxiliary.py:262-331)
+    # Exact port of MyQProcess.getMatches() + handleMatches()
+    # ──────────────────────────────────────────────────────────────
+
+    def detectMatches(self, line, toolName=''):
+        """Port of auxiliary.py:262-323 — detect matches in a line of output.
+        Returns set of matched patterns (empty if negative pattern hit first).
+
+        Substring filtering only applies when the ACTUAL negative pattern
+        text appears in the line. If the line says 'open' and the negative
+        is 'is already open', we only filter if 'is already open' is in the line."""
+        ms = getattr(self.settings, 'matchSettings', {})
+        if not ms:
+            return set()
+
+        # Check global patterns (negative first, then positive)
+        globalMatches = self._getMatches(line, ms, 'global')
+        # Check tool-specific patterns
+        toolMatches = self._getMatches(line, ms, toolName) if toolName else set()
+
+        matches = globalMatches.union(toolMatches)
+
+        # Substring filtering (auxiliary.py:312-323)
+        # Only filter if the negative pattern itself appears in THIS line
+        negativePatterns = []
+        if 'global' in ms and 'negative' in ms['global']:
+            negativePatterns.extend(ms['global']['negative'])
+        if toolName in ms and 'negative' in ms[toolName]:
+            negativePatterns.extend(ms[toolName]['negative'])
+
+        patternsToRemove = set()
+        for pattern in matches:
+            for negPattern in negativePatterns:
+                # Only remove if the negative pattern is actually IN this line
+                if pattern in negPattern and pattern != negPattern and negPattern in line:
+                    patternsToRemove.add(pattern)
+                    break
+
+        return matches - patternsToRemove
+
+    def _getMatches(self, line, settings, name):
+        """Port of auxiliary.py:262-282 — check one line against one settings group.
+        Negative patterns checked FIRST — if any match, return empty."""
+        matches = set()
+        if name not in settings:
+            return matches
+        current = settings[name]
+        # Check negative patterns FIRST
+        if 'negative' in current:
+            for pattern in current['negative']:
+                if pattern in line:
+                    return matches  # Negative hit → no matches for this line
+        # Check positive patterns
+        if 'positive' in current:
+            for pattern in current['positive']:
+                if pattern in line:
+                    matches.add(pattern)
+        return matches
+
+    # ──────────────────────────────────────────────────────────────
+    # P3: Deduplication (from controller.py:3746-3789)
+    # ──────────────────────────────────────────────────────────────
+
+    def checkDuplicate(self, toolName, hostIp, port, protocol='tcp'):
+        """Check if this tool was already run on this host:port.
+        Returns: 'run' | 'skip' | 'newTab' | 'append' | 'askMe'"""
+        mode = getattr(self.settings, 'general_tool_duplication', 'skip')
+        if mode not in ('skip', 'newTab', 'append', 'askMe'):
+            mode = 'skip'
+
+        # Query DB for existing process with same tool+host+port
+        try:
+            from sqlalchemy import text
+            session = self.logic.activeProject.database.session()
+            try:
+                result = session.execute(text(
+                    "SELECT COUNT(*) FROM process WHERE name = :name AND hostIp = :ip AND port = :port "
+                    "AND closed = 'False'"
+                ), {"name": toolName, "ip": hostIp, "port": port}).fetchone()
+                existing = int(result[0]) if result else 0
+            finally:
+                session.close()
+        except Exception:
+            existing = 0
+
+        if existing == 0:
+            return 'run'  # No duplicate, run it
+        return mode  # Return the configured action
+
     def cleanupPurgedHost(self, ip):
         """controller.py:2783 — delayed validation after purge. No QTimer."""
         log.info(f"[WebController] cleanupPurgedHost({ip})")
@@ -618,9 +708,23 @@ class WebController:
         start_time = time.monotonic()
 
         try:
+            toolName = getattr(proc, 'name', '')
+            hostIp = getattr(proc, 'hostIp', '')
+            tabTitle = getattr(proc, 'tabTitle', '')
+            all_matches = set()
+
             for line in iter(proc._popen.stdout.readline, b''):
                 text = line.decode('ISO-8859-1', errors='replace')
                 output_parts.append(text)
+
+                # P1: Match detection on every line (auxiliary.py:285-331)
+                try:
+                    line_matches = self.detectMatches(text, toolName)
+                    if line_matches:
+                        all_matches.update(line_matches)
+                        self.handleMatch(hostIp, tabTitle, ', '.join(line_matches))
+                except Exception:
+                    pass
 
                 # Periodically flush to DB (every ~2 seconds or 50 lines)
                 if len(output_parts) % 50 == 0 or (time.monotonic() - start_time) > 2:
