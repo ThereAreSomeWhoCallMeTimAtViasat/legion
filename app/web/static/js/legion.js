@@ -1112,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', 'LEGION v2.3-flask – ' + path.split('/').pop());
+                setText('window-title', 'LEGION v2.4-flask – ' + path.split('/').pop());
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
@@ -1126,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.3-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.4-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -1138,7 +1138,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.3-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.4-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -1152,7 +1152,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert('LEGION v2.3-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
+        alert('LEGION v2.4-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
     /* ── Ctrl+B note capture ── */
@@ -1191,7 +1191,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', 'LEGION v2.3-flask – *untitled');
+                setText('window-title', 'LEGION v2.4-flask – *untitled');
                 pollSnapshot();
             });
         }
@@ -1341,5 +1341,194 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     });
+
+    /* ═══════════════════════════════════════════
+       Wire ALL upstream modals that exist in HTML
+       Priority 1: blocks testing
+       Priority 2: core workflow
+       ═══════════════════════════════════════════ */
+
+    /* ── Host delete confirmation (host-remove-modal) ── */
+    /* Already handled by right-click context menu with confirm() —
+       but wire the modal close buttons in case it gets opened */
+    var rmClose = $('host-remove-modal-close');
+    if (rmClose) rmClose.addEventListener('click', function() { closeModal('host-remove-modal'); });
+    var rmCancel = $('host-remove-modal-cancel');
+    if (rmCancel) rmCancel.addEventListener('click', function() { closeModal('host-remove-modal'); });
+
+    /* ── Manual scan modal ── */
+    var manClose = $('manual-scan-modal-close');
+    if (manClose) manClose.addEventListener('click', function() { closeModal('manual-scan-modal'); });
+    var manRunTool = $('workspace-run-tool-button');
+    if (manRunTool) manRunTool.addEventListener('click', function() {
+        var ip = ($('workspace-tool-host-ip')||{}).value||'';
+        var port = ($('workspace-tool-port')||{}).value||'';
+        var proto = ($('workspace-tool-protocol')||{}).value||'tcp';
+        var toolSel = $('workspace-tool-select');
+        var toolId = toolSel ? toolSel.value : '';
+        if (!ip||!port||!toolId) { alert('Fill in host, port, and tool'); return; }
+        postJson('/api/workspace/tools/run', {host_ip:ip, port:port, protocol:proto, tool_id:toolId})
+        .then(function() { closeModal('manual-scan-modal'); pollSnapshot(); })
+        .catch(function(e) { alert('Error: '+e.message); });
+    });
+
+    /* ── Script/CVE modal ── */
+    var scClose = $('script-cve-modal-close');
+    if (scClose) scClose.addEventListener('click', function() { closeModal('script-cve-modal'); });
+    var addScriptBtn = $('workspace-add-script-button');
+    if (addScriptBtn) addScriptBtn.addEventListener('click', function() {
+        if (!L.selectedHostId) { alert('Select a host first'); return; }
+        var scriptId = ($('workspace-script-id')||{}).value||'';
+        var port = ($('workspace-script-port')||{}).value||'';
+        var proto = ($('workspace-script-protocol')||{}).value||'tcp';
+        var output = ($('workspace-script-output')||{}).value||'';
+        if (!scriptId) { alert('Enter script ID'); return; }
+        postJson('/api/workspace/hosts/'+L.selectedHostId+'/scripts', {
+            script_id:scriptId, port:port, protocol:proto, output:output
+        }).then(function() { closeModal('script-cve-modal'); pollSnapshot(); })
+        .catch(function(e) { alert('Error: '+e.message); });
+    });
+    var addCveBtn = $('workspace-add-cve-button');
+    if (addCveBtn) addCveBtn.addEventListener('click', function() {
+        if (!L.selectedHostId) { alert('Select a host first'); return; }
+        var name = ($('workspace-cve-name')||{}).value||'';
+        var severity = ($('workspace-cve-severity')||{}).value||'';
+        if (!name) { alert('Enter CVE name'); return; }
+        postJson('/api/workspace/hosts/'+L.selectedHostId+'/cves', {
+            name:name, severity:severity
+        }).then(function() { closeModal('script-cve-modal'); pollSnapshot(); })
+        .catch(function(e) { alert('Error: '+e.message); });
+    });
+
+    /* ── Host selection / notes modal ── */
+    var hsClose = $('host-selection-modal-close');
+    if (hsClose) hsClose.addEventListener('click', function() { closeModal('host-selection-modal'); });
+    var saveNoteBtn = $('workspace-save-note-button');
+    if (saveNoteBtn) saveNoteBtn.addEventListener('click', function() {
+        var hostSel = $('workspace-host-select');
+        var noteText = $('workspace-note');
+        if (!hostSel||!noteText) return;
+        var hostId = hostSel.value;
+        if (!hostId) { alert('Select a host'); return; }
+        postJson('/api/workspace/hosts/'+hostId+'/note', {note:noteText.value})
+        .then(function() { alert('Note saved'); })
+        .catch(function(e) { alert('Error: '+e.message); });
+    });
+    var wsRefresh = $('workspace-refresh-button');
+    if (wsRefresh) wsRefresh.addEventListener('click', function() { pollSnapshot(); });
+
+    /* ── Scheduler settings modal ── */
+    var schClose = $('scheduler-modal-close');
+    if (schClose) schClose.addEventListener('click', function() { closeModal('scheduler-settings-modal'); });
+    var schForm = $('scheduler-form');
+    if (schForm) schForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var formData = {};
+        new FormData(schForm).forEach(function(v,k) { formData[k]=v; });
+        postJson('/api/scheduler/preferences', formData)
+        .then(function() { setText('scheduler-save-status','Saved!'); })
+        .catch(function(e) { setText('scheduler-save-status','Error: '+e.message); });
+    });
+    var schTest = $('scheduler-test-provider-button');
+    if (schTest) schTest.addEventListener('click', function() {
+        postJson('/api/scheduler/provider/test', {})
+        .then(function(d) { alert('Provider test: '+JSON.stringify(d)); })
+        .catch(function(e) { alert('Error: '+e.message); });
+    });
+
+    /* ── Report provider modal ── */
+    var rpClose = $('report-provider-modal-close');
+    if (rpClose) rpClose.addEventListener('click', function() { closeModal('report-provider-modal'); });
+    var rpForm = $('report-provider-form');
+    if (rpForm) rpForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var formData = {};
+        new FormData(rpForm).forEach(function(v,k) { formData[k]=v; });
+        postJson('/api/settings/legion-conf', {text: JSON.stringify(formData)})
+        .then(function() { setText('report-provider-save-status','Saved!'); })
+        .catch(function(e) { setText('report-provider-save-status','Error: '+e.message); });
+    });
+
+    /* ── App settings modal (raw config — old style, kept as fallback) ── */
+    var asClose = $('settings-modal-close');
+    if (asClose) asClose.addEventListener('click', function() { closeModal('app-settings-modal'); });
+    var asRefresh = $('settings-config-refresh-button');
+    if (asRefresh) asRefresh.addEventListener('click', function() {
+        fetchJson('/api/settings/legion-conf').then(function(d) {
+            $('settings-config-text').value = d.text||'';
+            setText('settings-config-status','Reloaded');
+        });
+    });
+    var asSave = $('settings-config-save-button');
+    if (asSave) asSave.addEventListener('click', function() {
+        postJson('/api/settings/legion-conf', {text:$('settings-config-text').value})
+        .then(function() { setText('settings-config-status','Saved!'); })
+        .catch(function(e) { setText('settings-config-status','Error: '+e.message); });
+    });
+
+    /* ── Provider logs modal ── */
+    var plClose = $('provider-logs-modal-close');
+    if (plClose) plClose.addEventListener('click', function() { closeModal('provider-logs-modal'); });
+    var plRefresh = $('provider-logs-refresh-button');
+    if (plRefresh) plRefresh.addEventListener('click', function() {
+        fetchJson('/api/scheduler/provider/logs').then(function(d) {
+            var logs = d.logs || d;
+            $('provider-logs-text').textContent = typeof logs === 'string' ? logs : JSON.stringify(logs,null,2);
+            setText('provider-logs-meta', 'Loaded');
+        }).catch(function(e) { setText('provider-logs-meta','Error: '+e.message); });
+    });
+
+    /* ── Screenshot modal ── */
+    var ssClose = $('screenshot-modal-close');
+    if (ssClose) ssClose.addEventListener('click', function() { closeModal('screenshot-modal'); });
+
+    /* ── Process output modal (fallback — we use inline, but wire close) ── */
+    var poClose = $('process-output-modal-close');
+    if (poClose) poClose.addEventListener('click', function() { closeModal('process-output-modal'); });
+
+    /* ── Script output modal ── */
+    var soClose = $('script-output-modal-close');
+    if (soClose) soClose.addEventListener('click', function() { closeModal('script-output-modal'); });
+
+    /* ── Nmap scan modal close (upstream wizard — our Add Hosts replaces it) ── */
+    var nsClose = $('nmap-scan-modal-close');
+    if (nsClose) nsClose.addEventListener('click', function() { closeModal('nmap-scan-modal'); });
+
+    /* ── Startup wizard ── */
+    var swSkip = $('startup-wizard-skip');
+    if (swSkip) swSkip.addEventListener('click', function() { closeModal('startup-wizard-overlay'); });
+
+    /* ── Populate manual scan tool selector when snapshot updates ── */
+    var origPoll = pollSnapshot;
+    pollSnapshot = function() {
+        origPoll();
+        /* Update tool selector in manual scan modal */
+        setTimeout(function() {
+            var sel = $('workspace-tool-select');
+            if (!sel) return;
+            var current = sel.value;
+            sel.innerHTML = '';
+            (L.tools || []).forEach(function(t) {
+                var opt = document.createElement('option');
+                opt.value = t.tool_id || t.label || '';
+                opt.textContent = (t.label || t.tool_id || '') + ' (' + (t.tool_id || '') + ')';
+                sel.appendChild(opt);
+            });
+            if (current) sel.value = current;
+
+            /* Update host selector in host-selection modal */
+            var hsel = $('workspace-host-select');
+            if (!hsel) return;
+            var hcur = hsel.value;
+            hsel.innerHTML = '';
+            (L.snapshot && L.snapshot.hosts || []).forEach(function(h) {
+                var opt = document.createElement('option');
+                opt.value = h.id || '';
+                opt.textContent = (h.ip||'') + (h.hostname ? ' ('+h.hostname+')' : '');
+                hsel.appendChild(opt);
+            });
+            if (hcur) hsel.value = hcur;
+        }, 100);
+    };
 
 });

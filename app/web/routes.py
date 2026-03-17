@@ -351,6 +351,55 @@ def host_action(host_id):
         result = wc.handleHostAction(ip, host_id, action)
     return jsonify({"status": "ok", "result": result})
 
+@web_bp.post("/api/workspace/hosts/<int:host_id>/scripts")
+def host_add_script(host_id):
+    logic = _logic()
+    payload = request.get_json(silent=True) or {}
+    script_id = str(payload.get("script_id", ""))
+    port = str(payload.get("port", ""))
+    output = str(payload.get("output", ""))
+    if not script_id:
+        return _err("script_id required")
+    try:
+        from db.entities.l1script import l1ScriptObj
+        session = logic.activeProject.database.session()
+        try:
+            script = l1ScriptObj()
+            script.scriptId = script_id
+            script.output = output
+            script.hostId = host_id
+            session.add(script)
+            session.commit()
+        finally:
+            session.close()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return _err(str(e), 500)
+
+@web_bp.post("/api/workspace/hosts/<int:host_id>/cves")
+def host_add_cve(host_id):
+    logic = _logic()
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name", ""))
+    severity = str(payload.get("severity", ""))
+    if not name:
+        return _err("name required")
+    try:
+        from db.entities.cve import cve as cveObj
+        session = logic.activeProject.database.session()
+        try:
+            c = cveObj()
+            c.name = name
+            c.severity = severity
+            c.hostId = host_id
+            session.add(c)
+            session.commit()
+        finally:
+            session.close()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return _err(str(e), 500)
+
 @web_bp.post("/api/workspace/hosts/<int:host_id>/note")
 def host_note(host_id):
     payload = request.get_json(silent=True) or {}
@@ -398,6 +447,28 @@ def project_save_as():
 # ═══════════════════════════════════════════
 # Settings
 # ═══════════════════════════════════════════
+
+@web_bp.post("/api/scheduler/run")
+def scheduler_run():
+    wc = _wc()
+    wc.scheduler()
+    return jsonify({"status": "ok"})
+
+@web_bp.get("/api/scheduler/preferences")
+def scheduler_prefs_get():
+    return jsonify({"mode": "deterministic", "goal_profile": "internal_asset_discovery"})
+
+@web_bp.post("/api/scheduler/preferences")
+def scheduler_prefs_save():
+    return jsonify({"status": "ok"})
+
+@web_bp.post("/api/scheduler/provider/test")
+def scheduler_provider_test():
+    return jsonify({"status": "ok", "message": "Provider test not yet implemented"})
+
+@web_bp.get("/api/scheduler/provider/logs")
+def scheduler_provider_logs():
+    return jsonify({"logs": "No provider logs yet"})
 
 @web_bp.get("/api/settings/legion-conf")
 def settings_get():
