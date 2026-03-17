@@ -253,20 +253,31 @@ def processes_clear():
 
 @web_bp.post("/api/nmap/scan")
 def nmap_scan():
+    """Matches view.py:callAddHosts → controller.addHosts"""
     wc = _wc()
     payload = request.get_json(silent=True) or {}
     targets = str(payload.get("targets", "")).strip()
     if not targets:
         return _err("targets required")
-    scan_mode = str(payload.get("scan_mode", "easy"))
+    scan_mode = str(payload.get("scan_mode", "Easy"))
     staged = payload.get("staged", False)
     discovery = payload.get("discovery", True)
-    mode = 'Easy'
-    if staged:
-        result = wc.runStagedNmap(targets, discovery=discovery)
-    else:
-        result = wc.addHosts(targets, runHostDiscovery=discovery, runStagedNmap=staged,
-                              nmapSpeed='4', scanMode=mode)
+    timing = str(payload.get("timing", "4"))
+    nmap_options = payload.get("nmap_options", [])
+    enable_ipv6 = payload.get("enable_ipv6", False)
+
+    if not isinstance(nmap_options, list):
+        nmap_options = []
+
+    result = wc.addHosts(
+        targetHosts=targets,
+        runHostDiscovery=discovery,
+        runStagedNmap=staged,
+        nmapSpeed=timing,
+        scanMode=scan_mode,
+        nmapOptions=nmap_options,
+        enableIPv6=enable_ipv6,
+    )
     return jsonify({"status": "ok", "result": result})
 
 @web_bp.post("/api/workspace/tools/run")

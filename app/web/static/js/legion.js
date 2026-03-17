@@ -682,31 +682,74 @@ document.addEventListener('DOMContentLoaded', function() {
 
     var addClose = $('add-hosts-close');
     if (addClose) addClose.addEventListener('click', function() { closeModal('add-hosts-modal'); });
+    var addCancel = $('add-hosts-cancel');
+    if (addCancel) addCancel.addEventListener('click', function() { closeModal('add-hosts-modal'); });
 
+    /* Easy/Hard mode toggle (matches addHostDialog.py:329-336) */
+    var modeEasy = $('add-hosts-mode-easy');
+    var modeHard = $('add-hosts-mode-hard');
+    function updateModeGroups() {
+        var isHard = modeHard && modeHard.checked;
+        var easyGrp = $('add-hosts-easy-group');
+        var portGrp = $('add-hosts-portscan-group');
+        var pingGrp = $('add-hosts-ping-group');
+        var custGrp = $('add-hosts-custom-group');
+        if (easyGrp) { easyGrp.style.opacity = isHard ? '0.4' : '1'; easyGrp.style.pointerEvents = isHard ? 'none' : ''; }
+        if (portGrp) { portGrp.style.opacity = isHard ? '1' : '0.4'; portGrp.style.pointerEvents = isHard ? '' : 'none'; }
+        if (pingGrp) { pingGrp.style.opacity = isHard ? '1' : '0.4'; pingGrp.style.pointerEvents = isHard ? '' : 'none'; }
+        if (custGrp) { custGrp.style.opacity = isHard ? '1' : '0.4'; custGrp.style.pointerEvents = isHard ? '' : 'none'; }
+    }
+    if (modeEasy) modeEasy.addEventListener('change', updateModeGroups);
+    if (modeHard) modeHard.addEventListener('change', updateModeGroups);
+
+    /* Submit — matches view.py:callAddHosts (lines 1075-1133) */
     var addStart = $('add-hosts-start');
     if (addStart) addStart.addEventListener('click', function() {
         var targets = ($('add-hosts-targets') || {}).value || '';
-        if (!targets.trim()) { setText('add-hosts-status', 'Enter at least one target'); return; }
-        var mode = ($('add-hosts-mode') || {}).value || 'staged';
+        targets = targets.replace(/;/g, ' ').trim();
+        if (!targets) {
+            var v = $('add-hosts-validation');
+            if (v) v.style.display = '';
+            return;
+        }
+        var v2 = $('add-hosts-validation');
+        if (v2) v2.style.display = 'none';
+
+        var isHard = modeHard && modeHard.checked;
+        var scanMode = isHard ? 'Hard' : 'Easy';
         var discovery = ($('add-hosts-discovery') || {}).checked;
-        var runActions = ($('add-hosts-actions') || {}).checked;
+        var staged = ($('add-hosts-staged') || {}).checked;
+        var timing = ($('add-hosts-timing') || {}).value || '4';
+        var resolve = ($('add-hosts-resolve') || {}).checked;
+        var ipv6 = ($('add-hosts-ipv6') || {}).checked;
+
+        /* Build nmap options (matches view.py:1091-1118) */
+        var nmapOptions = [];
+        if (isHard) {
+            var scanOpt = document.querySelector('input[name="add-hosts-scanopt"]:checked');
+            if (scanOpt) nmapOptions.push(scanOpt.value);
+            var pingOpt = document.querySelector('input[name="add-hosts-pingopt"]:checked');
+            if (pingOpt) nmapOptions.push(pingOpt.value);
+            if (($('add-hosts-fragment') || {}).checked) nmapOptions.push('-f');
+            var custom = ($('add-hosts-custom') || {}).value || '';
+            if (custom.trim()) nmapOptions.push(custom.trim());
+        }
+        nmapOptions = nmapOptions.filter(function(o) { return o !== '-n' && o !== '-R'; });
+        nmapOptions.push(resolve ? '-R' : '-n');
 
         setText('add-hosts-status', 'Starting scan...');
         addStart.disabled = true;
 
-        var scanMode = 'easy';
-        var staged = false;
-        if (mode === 'staged') { staged = true; }
-        else if (mode === 'list') { discovery = false; }
-
         postJson('/api/nmap/scan', {
-            targets: targets.trim(),
+            targets: targets,
             scan_mode: scanMode,
             discovery: discovery,
             staged: staged,
-            run_actions: runActions
+            timing: timing,
+            nmap_options: nmapOptions,
+            enable_ipv6: ipv6
         }).then(function(data) {
-            setText('add-hosts-status', 'Scan started! Job: ' + ((data.job||{}).id || '?'));
+            setText('add-hosts-status', 'Scan started!');
             addStart.disabled = false;
             setTimeout(function() { closeModal('add-hosts-modal'); }, 1500);
             pollSnapshot();
@@ -1069,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', 'LEGION v2.2-flask – ' + path.split('/').pop());
+                setText('window-title', 'LEGION v2.3-flask – ' + path.split('/').pop());
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
@@ -1083,7 +1126,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.2-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.3-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -1095,7 +1138,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.2-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.3-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -1109,7 +1152,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert('LEGION v2.2-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
+        alert('LEGION v2.3-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
     /* ── Ctrl+B note capture ── */
@@ -1148,7 +1191,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', 'LEGION v2.2-flask – *untitled');
+                setText('window-title', 'LEGION v2.3-flask – *untitled');
                 pollSnapshot();
             });
         }

@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v2.2-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v2.3-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -333,36 +333,84 @@
     </div>
 </div>
 
-<!-- ========== ADD HOSTS DIALOG ========== -->
+<!-- ========== ADD HOSTS DIALOG (1:1 from ui/addHostDialog.py) ========== -->
 <div id="add-hosts-modal" class="legion-modal-overlay">
-    <div class="legion-modal" style="width:min(600px,94vw)">
+    <div class="legion-modal" style="width:min(720px,96vw);max-height:92vh;overflow:auto">
         <div class="panel-header modal-header">
-            <h2>Add Host(s) to Scope</h2>
+            <h2>Add host(s) to scan separated by semicolons</h2>
             <button id="add-hosts-close" class="modal-close-btn" type="button"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        <div class="action-block">
-            <label>Targets (IPs, subnets, hostnames — space or comma separated)
-                <textarea id="add-hosts-targets" rows="3" placeholder="192.168.1.0/24 10.0.0.1"></textarea>
-            </label>
-            <label>Scan Mode
-                <select id="add-hosts-mode">
-                    <option value="staged" selected>Staged (recommended)</option>
-                    <option value="easy">Easy (discovery + service scan)</option>
-                    <option value="list">List only (no scan)</option>
-                </select>
-            </label>
-            <label class="checkbox">
-                <input id="add-hosts-discovery" type="checkbox" checked>
-                Host discovery (-sV -O)
-            </label>
-            <label class="checkbox">
-                <input id="add-hosts-actions" type="checkbox" checked>
-                Run automated tools after scan
-            </label>
-            <div class="scheduler-actions" style="margin-top:8px">
-                <button id="add-hosts-start" type="button">Start Scan</button>
+
+        <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:4px">
+            <label style="white-space:nowrap;padding-top:4px">IP(s), Range(s), and Host(s)</label>
+            <textarea id="add-hosts-targets" rows="3" style="flex:1" placeholder="192.168.1.0/24; 10.10.10.10-20"></textarea>
+        </div>
+        <p class="meta-note" style="text-align:right;margin-bottom:8px">Ex: 192.168.1.0/24; 10.10.10.10-20; 2001:db8::/64; bing.com</p>
+        <p id="add-hosts-validation" class="meta-note" style="color:#f44;display:none">Invalid input. Please try again!</p>
+
+        <label class="checkbox" style="margin-bottom:4px"><input id="add-hosts-resolve" type="checkbox" checked> Resolve hostnames (DNS)</label>
+        <label class="checkbox" style="margin-bottom:8px"><input id="add-hosts-ipv6" type="checkbox"> Enable IPv6 (-6)</label>
+
+        <fieldset style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px">
+            <legend>Mode Selection</legend>
+            <label class="checkbox" style="margin-right:20px"><input type="radio" name="add-hosts-mode" value="Easy" id="add-hosts-mode-easy" checked> Easy</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-mode" value="Hard" id="add-hosts-mode-hard"> Hard</label>
+        </fieldset>
+
+        <fieldset id="add-hosts-easy-group" style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px">
+            <legend>Easy Mode Options</legend>
+            <label class="checkbox" style="margin-right:20px"><input id="add-hosts-discovery" type="checkbox" checked> Run nmap host discovery</label>
+            <label class="checkbox"><input id="add-hosts-staged" type="checkbox" checked> Run staged nmap scan</label>
+        </fieldset>
+
+        <fieldset style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px">
+            <legend>Timing and Performance Options</legend>
+            <input id="add-hosts-timing" type="range" min="0" max="5" value="4" style="width:100%">
+            <div style="display:flex;justify-content:space-between;font-size:8pt;color:var(--disabled,#808080)">
+                <span title="Serialize every scan with 5min wait [-T0]">Paranoid</span>
+                <span title="15s wait between scans [-T1]">Sneaky</span>
+                <span title="0.4s wait between scans [-T2]">Polite</span>
+                <span title="NMAP defaults [-T3]">Normal</span>
+                <span title="Aggressive timeouts [-T4]">Aggressive</span>
+                <span title="Very aggressive [-T5]">Insane</span>
             </div>
-            <p id="add-hosts-status" class="meta-note"></p>
+        </fieldset>
+
+        <fieldset id="add-hosts-portscan-group" style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px;opacity:0.4;pointer-events:none">
+            <legend>Port Scan Options</legend>
+            <label class="checkbox"><input type="radio" name="add-hosts-scanopt" value="-sT"> TCP</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-scanopt" value="--data-length 5 --max-retries 2 --randomize-hosts" checked> Obfuscated</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-scanopt" value="-sF"> FIN</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-scanopt" value="-sN"> NULL</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-scanopt" value="-sX"> Xmas</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-scanopt" value="-sP"> TCP Ping</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-scanopt" value="-sU"> UDP Ping</label>
+            <label class="checkbox"><input id="add-hosts-fragment" type="checkbox" checked> Fragment (-f)</label>
+        </fieldset>
+
+        <fieldset id="add-hosts-ping-group" style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px;opacity:0.4;pointer-events:none">
+            <legend>Host Discovery Options</legend>
+            <label class="checkbox"><input type="radio" name="add-hosts-pingopt" value="-Pn" checked> Disable</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-pingopt" value="-PB"> Default</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-pingopt" value="-PE"> ICMP</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-pingopt" value="-PS"> TCP SYN</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-pingopt" value="-PT"> TCP ACK</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-pingopt" value="-PP"> Timestamp</label>
+            <label class="checkbox"><input type="radio" name="add-hosts-pingopt" value="-PM"> Netmask</label>
+        </fieldset>
+
+        <fieldset id="add-hosts-custom-group" style="border:1px solid var(--border,#5a5a5a);padding:8px;margin-bottom:8px;opacity:0.4;pointer-events:none">
+            <legend>Custom Options</legend>
+            <div style="display:flex;gap:8px;align-items:center">
+                <label style="white-space:nowrap">Additional arguments</label>
+                <input id="add-hosts-custom" type="text" style="flex:1">
+            </div>
+        </fieldset>
+
+        <div style="display:flex;gap:8px;align-items:center">
+            <button id="add-hosts-start" type="button" style="font-weight:600;padding:6px 20px">Submit</button>
+            <button id="add-hosts-cancel" type="button">Cancel</button>
+            <p id="add-hosts-status" class="meta-note" style="margin:0;margin-left:8px"></p>
         </div>
     </div>
 </div>
