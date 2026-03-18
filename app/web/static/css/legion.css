@@ -410,6 +410,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--highlight);outline:no
    visualUpgrades features: match highlighting, tab colors, blink
    ================================================================ */
 
+/* Qt6: QLabel 'Matches: ...' yellow banner at top of tool tab output */
+.match-banner{display:block;background:#fa0;color:#000;font-weight:700;
+  padding:3px 8px;margin-bottom:4px;border-radius:2px;font-size:9pt}
 /* P1: Match highlighting in output and process rows */
 .match-positive{background:rgba(255,255,0,0.25);color:#ff0;font-weight:700}
 .match-line{border-left:3px solid #ff0;padding-left:4px}

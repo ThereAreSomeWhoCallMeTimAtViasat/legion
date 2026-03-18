@@ -504,25 +504,66 @@ function _drawProcesses() {
     L._lastProcCount = L.processes.length;
 }
 
+function _drawOsHosts() {
+    var body = $('os-hosts-body');
+    if (!body) return;
+    var col=_osHostsSort.col, dir=_osHostsSort.dir;
+    var sorted = _osHostsData.slice().sort(function(a,b) {
+        var av=col==='ip'?_ipToNum(a.ip):(a[col]||'').toLowerCase();
+        var bv=col==='ip'?_ipToNum(b.ip):(b[col]||'').toLowerCase();
+        return av<bv?-dir:av>bv?dir:0;
+    });
+    body.innerHTML='';
+    sorted.forEach(function(h) {
+        var row=document.createElement('tr');
+        row.dataset.hostId=h.id; row.style.cursor='pointer';
+        row.innerHTML='<td>'+esc(h.ip||'')+'</td><td>'+esc(h.hostname||'')+'</td>';
+        body.appendChild(row);
+    });
+    _updateSortHeaders('os-hosts-table',_osHostsSort,{ip:'IP',hostname:'Hostname'});
+    /* Auto-click first row if none selected */
+    if (!body.querySelector('tr.selected')) {
+        var firstRow = body.querySelector('tr[data-host-id]');
+        if (firstRow) firstRow.click();
+    }
+}
+
 /* ── OS table (view.py:updateOsListView → getOperatingSystemsSummary) ── */
-/* Qt6 uses classified OS categories (Linux, Windows, Unknown) NOT raw osMatch strings.
-   The snapshot now includes os_groups from getOperatingSystemsSummary() so the
-   OS list shows the same names the /os/<name>/hosts API expects. */
+var _osListHash = '';  /* track changes so we don't re-render every 1.5s poll */
 function renderOsList() {
+    var groups = (L.snapshot && L.snapshot.os_groups) || [];
+    var hash = groups.map(function(g){return g.os+':'+g.count;}).join('|');
+    if (hash === _osListHash && $('os-list-body').querySelector('tr')) return; /* no change */
+    _osListHash = hash;
+
     var body = $('os-list-body');
     if (!body) return;
+    /* Remember selected OS before clearing */
+    var selectedOs = '';
+    var selRow = body.querySelector('tr.selected');
+    if (selRow) selectedOs = selRow.dataset.os || '';
+
+    var col=_osSort.col, dir=_osSort.dir;
+    var sorted = groups.slice().sort(function(a,b) {
+        var av=col==='count'?parseInt(a.count)||0:(a[col]||'').toLowerCase();
+        var bv=col==='count'?parseInt(b.count)||0:(b[col]||'').toLowerCase();
+        return av<bv?-dir:av>bv?dir:0;
+    });
     body.innerHTML = '';
-    var groups = (L.snapshot && L.snapshot.os_groups) || [];
-    groups.forEach(function(g) {
+    sorted.forEach(function(g) {
         var tr = document.createElement('tr');
         tr.dataset.os = g.os || 'Unknown';
         tr.style.cursor = 'pointer';
         tr.innerHTML = '<td>' + esc(g.os || 'Unknown') + '</td><td>' + (g.count || 0) + '</td>';
+        if ((g.os||'Unknown') === selectedOs) tr.classList.add('selected');
         body.appendChild(tr);
     });
-    /* Qt6: auto-selects first OS row and populates hosts pane (setupOsTabViews) */
-    var firstRow = body.querySelector('tr[data-os]');
-    if (firstRow) firstRow.click();
+    _updateSortHeaders('os-list-table', _osSort, {os:'OS', count:'#'});
+    /* Auto-click first row ONLY if nothing is selected yet (Qt6: setupOsTabViews) */
+    if (!selectedOs) {
+        var firstRow = body.querySelector('tr[data-os]');
+        if (firstRow) firstRow.click();
+    }
 }
 
 /* ── Host detail (view.py:updateRightPanel) ── */
@@ -583,34 +624,111 @@ function renderInformation(info) {
     }
 }
 
-/* ── Render Scripts tab (view.py:updateScriptsView) ── */
-function renderScripts(scripts) {
-    var body = $('host-detail-scripts');
-    if (!body) return;
-    body.innerHTML = '';
-    (scripts || []).forEach(function(s) {
-        var tr = document.createElement('tr');
-        tr.dataset.scriptId = s.id || '';
-        tr.style.cursor = 'pointer';
-        tr.innerHTML = '<td>' + esc(s.script_id||'') + '</td><td>' + esc(s.port||'') + '</td>';
-        body.appendChild(tr);
+/* ── Sortable right-panel tables ── */
+var _portsSort   = {col:'port',     dir:1};
+var _scriptsSort = {col:'script_id',dir:1};
+var _cvesSort    = {col:'severity', dir:-1};  /* highest severity first */
+var _osSort      = {col:'os',       dir:1};
+var _osHostsSort = {col:'ip',       dir:1};
+var _portsData=[], _scriptsData=[], _cvesData=[], _osHostsData=[];
+
+function _sortArrow(sort, col, label) {
+    return label + (sort.col===col ? (sort.dir===1?' \u25b2':' \u25bc') : '');
+}
+function _updateSortHeaders(tblId, sort, colMap) {
+    var tbl = $(tblId);
+    if (!tbl) return;
+    tbl.querySelectorAll('th[data-sort]').forEach(function(th) {
+        th.textContent = _sortArrow(sort, th.dataset.sort, colMap[th.dataset.sort] || th.dataset.sort);
     });
 }
+function _sortClick(sort, col, drawFn) {
+    if (sort.col===col) sort.dir*=-1; else { sort.col=col; sort.dir=1; }
+    drawFn();
+}
 
-/* ── Render CVEs tab (view.py:updateCvesByHostView) ── */
-function renderCves(cves) {
-    var body = $('host-detail-cves');
+/* Ports (Services right panel) */
+function renderPorts(ports, hostIp) {
+    _portsData = (ports||[]).map(function(p){ p._hostIp=hostIp; return p; });
+    _drawPorts();
+}
+function _drawPorts() {
+    var body = $('host-detail-ports');
     if (!body) return;
-    body.innerHTML = '';
-    (cves || []).forEach(function(c) {
-        var tr = document.createElement('tr');
-        var sevStyle = parseFloat(c.severity||0) >= 7 ? 'color:#f44' : parseFloat(c.severity||0) >= 4 ? 'color:#fa0' : '';
-        tr.innerHTML = '<td>' + esc(c.name||'') + '</td>' +
-                       '<td style="' + sevStyle + '">' + esc(c.severity||'') + '</td>' +
-                       '<td>' + esc(c.product||'') + '</td>' +
-                       '<td>' + esc(c.source||'') + '</td>';
+    var col=_portsSort.col, dir=_portsSort.dir;
+    var sorted = _portsData.slice().sort(function(a,b) {
+        var av,bv;
+        if (col==='port') { av=parseInt(a.port)||0; bv=parseInt(b.port)||0; }
+        else { av=(a[col]||'').toLowerCase(); bv=(b[col]||'').toLowerCase(); }
+        return av<bv?-dir:av>bv?dir:0;
+    });
+    body.innerHTML='';
+    sorted.forEach(function(p) {
+        var svc=p.service||{};
+        var stateStyle=p.state==='open'?'color:#4c4':p.state==='filtered'?'color:#fa0':'color:var(--disabled)';
+        var tr=document.createElement('tr');
+        tr.dataset.port=p.port||''; tr.dataset.protocol=p.protocol||'tcp';
+        tr.dataset.service=(svc.name||'');
+        tr.innerHTML='<td>'+esc(p._hostIp||'')+'</td><td>'+esc(p.port)+'</td><td>'+esc(p.protocol)+
+                     '</td><td style="'+stateStyle+'">'+esc(p.state)+'</td>'+
+                     '<td>'+esc(svc.name||'')+'</td>'+
+                     '<td>'+esc(((svc.product||'')+' '+(svc.version||'')).trim())+'</td>';
         body.appendChild(tr);
     });
+    _updateSortHeaders('ports-table',_portsSort,{port:'Port',protocol:'Proto',state:'State',name:'Service'});
+}
+
+/* Scripts tab */
+function renderScripts(scripts) {
+    _scriptsData = scripts || [];
+    _drawScripts();
+}
+function _drawScripts() {
+    var body = $('host-detail-scripts');
+    if (!body) return;
+    var col=_scriptsSort.col, dir=_scriptsSort.dir;
+    var sorted = _scriptsData.slice().sort(function(a,b) {
+        var av=parseInt(col==='port'?a.port:0)||((a[col]||'').toLowerCase());
+        var bv=parseInt(col==='port'?b.port:0)||((b[col]||'').toLowerCase());
+        if(col==='port'){av=parseInt(a.port)||0;bv=parseInt(b.port)||0;}
+        return av<bv?-dir:av>bv?dir:0;
+    });
+    body.innerHTML='';
+    sorted.forEach(function(s) {
+        var tr=document.createElement('tr');
+        tr.dataset.scriptId=s.id||''; tr.style.cursor='pointer';
+        tr.innerHTML='<td>'+esc(s.script_id||'')+'</td><td>'+esc(s.port||'')+'</td>';
+        body.appendChild(tr);
+    });
+    _updateSortHeaders('scripts-table',_scriptsSort,{script_id:'Script',port:'Port'});
+}
+
+/* CVEs tab */
+function renderCves(cves) {
+    _cvesData = cves || [];
+    _drawCves();
+}
+function _drawCves() {
+    var body = $('host-detail-cves');
+    if (!body) return;
+    var col=_cvesSort.col, dir=_cvesSort.dir;
+    var sorted = _cvesData.slice().sort(function(a,b) {
+        var av,bv;
+        if(col==='severity'){av=parseFloat(a.severity)||0;bv=parseFloat(b.severity)||0;}
+        else{av=(a[col]||'').toLowerCase();bv=(b[col]||'').toLowerCase();}
+        return av<bv?-dir:av>bv?dir:0;
+    });
+    body.innerHTML='';
+    sorted.forEach(function(c) {
+        var tr=document.createElement('tr');
+        var sevStyle=parseFloat(c.severity||0)>=7?'color:#f44':parseFloat(c.severity||0)>=4?'color:#fa0':'';
+        tr.innerHTML='<td>'+esc(c.name||'')+'</td>'+
+                     '<td style="'+sevStyle+'">'+esc(c.severity||'')+'</td>'+
+                     '<td>'+esc(c.product||'')+'</td>' +
+                       '<td>'+esc(c.source||'')+'</td>';
+        body.appendChild(tr);
+    });
+    _updateSortHeaders('cves-table',_cvesSort,{name:'CVE',severity:'Score',product:'Product',source:'Source'});
 }
 
 function loadHostDetail(hostId) {
@@ -631,23 +749,8 @@ function loadHostDetail(hostId) {
         var host = data.host || {};
         L.selectedHostIp = host.ip || '';
 
-        /* Services tab (right) — sorted by port ascending (Qt6 default) */
-        var ports = $('host-detail-ports');
-        ports.innerHTML = '';
-        (data.ports || []).forEach(function(p) {
-            var svc = p.service || {};
-            var stateStyle = p.state === 'open' ? 'color:#4c4' :
-                             p.state === 'filtered' ? 'color:#fa0' : 'color:var(--disabled)';
-            var tr = document.createElement('tr');
-            tr.innerHTML =
-                '<td>' + esc(host.ip) + '</td>' +
-                '<td>' + esc(p.port) + '</td>' +
-                '<td>' + esc(p.protocol) + '</td>' +
-                '<td style="' + stateStyle + '">' + esc(p.state) + '</td>' +
-                '<td>' + esc(svc.name||'') + '</td>' +
-                '<td>' + esc((svc.product||'') + ' ' + (svc.version||'')).trim() + '</td>';
-            ports.appendChild(tr);
-        });
+        /* Services tab (right) — sortable by column click */
+        renderPorts(data.ports || [], host.ip || '');
 
         /* Information tab — full host stats from dedicated endpoint */
         renderInformation(info);
@@ -663,7 +766,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v6.2-flask – ' + title);
+        setText('window-title', 'LEGION v6.3-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -672,11 +775,15 @@ function loadHostDetail(hostId) {
            Compare current data against previous load for this host.
            Mark the tab orange if new data arrived since last load. */
         var hkey = 'h' + hostId;
+        /* Comprehensive inf hash — any change in any field triggers orange + animation.
+           Previously only tracked os/open_ports/hostname; closed_ports, MAC, etc. missed. */
         var cur = {
-            svc:  (data.ports||[]).map(function(p){return p.port+'/'+p.state;}).join(','),
+            svc:  (data.ports||[]).map(function(p){return p.port+'/'+p.state+'/'+(p.service||{}).name;}).join(','),
             scr:  String((scripts||[]).length),
             cve:  String((cves||[]).length),
-            inf:  (info.os||'') + '|' + String(info.open_ports||0) + '|' + (info.hostname||''),
+            inf:  [info.status,info.ip,info.ipv6,info.hostname,info.mac,info.vendor,
+                   info.os,info.os_accuracy,info.open_ports,info.closed_ports,
+                   info.filtered_ports,info.asn,info.isp,info.country_code,info.city].join('|'),
             note: String((data.note||'').length)
         };
         var prev = _prevHostData[hkey];
@@ -741,16 +848,23 @@ function renderDynamicToolTabs(hostIp) {
 }
 
 /* ── Load process output inline (view.py tool output display) ── */
+/* Qt6: updateTabHighlight → QLabel 'Matches: ...' yellow banner above output */
 function loadProcessOutput(processId, targetEl) {
     fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
         var text = data.output_chunk || data.output || '';
+        /* Prepend match banner when process has match hits (Qt6: yellow QLabel at top) */
+        var matchBanner = '';
+        var proc = L.processes.find(function(p) { return String(p.id) === String(processId); });
+        if (proc && proc.has_match && proc.match_text) {
+            matchBanner = '<div class="match-banner">\u2605 Matches: ' + esc(proc.match_text) + '</div>';
+        }
         /* Screenshooter: output is "screenshot:/path/to/file.png" — render as image */
         if (text.startsWith('screenshot:')) {
             var imgPath = text.slice('screenshot:'.length).trim();
             var imgUrl = '/api/screenshots?path=' + encodeURIComponent(imgPath);
-            targetEl.innerHTML = '<img src="' + imgUrl + '" style="max-width:100%;max-height:100%;object-fit:contain" alt="screenshot"/>';
+            targetEl.innerHTML = matchBanner + '<img src="' + imgUrl + '" style="max-width:100%;max-height:100%;object-fit:contain" alt="screenshot"/>';
         } else {
-            targetEl.innerHTML = highlightMatches(ansiToHtml(text));
+            targetEl.innerHTML = matchBanner + highlightMatches(ansiToHtml(text));
         }
         targetEl.scrollTop = targetEl.scrollHeight;
     }).catch(function() {
@@ -843,6 +957,21 @@ function initInteractions() {
         _drawServices();
     });
 
+    /* ── Sort headers for right-panel tables ── */
+    function _wireSort(tblId, sort, drawFn) {
+        var tbl = $(tblId);
+        if (tbl) tbl.querySelector('thead') && tbl.querySelector('thead').addEventListener('click', function(e) {
+            var th = e.target.closest('th[data-sort]');
+            if (!th) return;
+            _sortClick(sort, th.dataset.sort, drawFn);
+        });
+    }
+    _wireSort('ports-table',    _portsSort,    _drawPorts);
+    _wireSort('scripts-table',  _scriptsSort,  _drawScripts);
+    _wireSort('cves-table',     _cvesSort,     _drawCves);
+    _wireSort('os-list-table',  _osSort,       renderOsList);
+    _wireSort('os-hosts-table', _osHostsSort,  _drawOsHosts);
+
     /* ── Service click (left) (view.py:serviceNamesTableClick) ── */
     $('services-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
@@ -897,17 +1026,8 @@ function initInteractions() {
         var body = $('os-hosts-body');
         body.innerHTML = '<tr><td colspan="2" style="color:var(--disabled)">Loading...</td></tr>';
         fetchJson('/api/workspace/os/' + encodeURIComponent(os) + '/hosts').then(function(d) {
-            body.innerHTML = '';
-            (d.hosts || []).forEach(function(h) {
-                var row = document.createElement('tr');
-                row.dataset.hostId = h.id;
-                row.style.cursor = 'pointer';
-                row.innerHTML = '<td>' + esc(h.ip||'') + '</td><td>' + esc(h.hostname||'') + '</td>';
-                body.appendChild(row);
-            });
-            /* Auto-select first host in the OS hosts pane */
-            var firstRow = body.querySelector('tr[data-host-id]');
-            if (firstRow) firstRow.click();
+            _osHostsData = d.hosts || [];
+            _drawOsHosts();
         }).catch(function() { body.innerHTML = ''; });
     });
 

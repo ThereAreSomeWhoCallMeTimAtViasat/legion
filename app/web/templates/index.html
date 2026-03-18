@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v6.2-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v6.3-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -147,12 +147,18 @@
 <div class="tab-content" id="os-panel">
     <div class="os-split">
         <div class="table-wrap">
-            <table><thead><tr><th>OS</th><th>#</th></tr></thead>
+            <table id="os-list-table"><thead><tr>
+                <th style="cursor:pointer" data-sort="os">OS ▲</th>
+                <th style="cursor:pointer;width:40px" data-sort="count">#</th>
+            </tr></thead>
             <tbody id="os-list-body"></tbody></table>
         </div>
         <div class="vsplitter"></div>
         <div class="table-wrap">
-            <table><thead><tr><th>IP</th><th>Hostname</th></tr></thead>
+            <table id="os-hosts-table"><thead><tr>
+                <th style="cursor:pointer" data-sort="ip">IP ▲</th>
+                <th style="cursor:pointer" data-sort="hostname">Hostname</th>
+            </tr></thead>
             <tbody id="os-hosts-body"></tbody></table>
         </div>
     </div>
@@ -178,8 +184,13 @@
 <!-- Services (right) — port table for selected host -->
 <div class="tab-content active" id="services-right">
     <div class="table-wrap">
-        <table><thead><tr>
-            <th>Host</th><th>Port</th><th>Protocol</th><th>State</th><th>Service</th><th>Version</th>
+        <table id="ports-table"><thead><tr>
+            <th>Host</th>
+            <th style="cursor:pointer" data-sort="port">Port ▲</th>
+            <th style="cursor:pointer" data-sort="protocol">Proto</th>
+            <th style="cursor:pointer" data-sort="state">State</th>
+            <th style="cursor:pointer" data-sort="name">Service</th>
+            <th>Version</th>
         </tr></thead>
         <tbody id="host-detail-ports"></tbody></table>
     </div>
@@ -189,7 +200,10 @@
 <div class="tab-content" id="scripts-right">
     <div class="scripts-split">
         <div class="table-wrap">
-            <table><thead><tr><th>Script</th><th>Port</th></tr></thead>
+            <table id="scripts-table"><thead><tr>
+                <th style="cursor:pointer" data-sort="script_id">Script ▲</th>
+                <th style="cursor:pointer" data-sort="port">Port</th>
+            </tr></thead>
             <tbody id="host-detail-scripts"></tbody></table>
         </div>
         <div class="vsplitter"></div>
@@ -208,8 +222,11 @@
 <!-- CVEs (right) -->
 <div class="tab-content" id="cves-right">
     <div class="table-wrap">
-        <table><thead><tr>
-            <th>CVE</th><th>Severity</th><th>Product</th><th>Source</th>
+        <table id="cves-table"><thead><tr>
+            <th style="cursor:pointer" data-sort="name">CVE</th>
+            <th style="cursor:pointer" data-sort="severity">Score ▼</th>
+            <th style="cursor:pointer" data-sort="product">Product</th>
+            <th style="cursor:pointer" data-sort="source">Source</th>
         </tr></thead>
         <tbody id="host-detail-cves"></tbody></table>
     </div>

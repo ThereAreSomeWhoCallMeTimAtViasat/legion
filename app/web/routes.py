@@ -153,9 +153,11 @@ def snapshot():
             proc['elapsed_secs'] = int(_time.time() - start_ts) if start_ts else 0
         else:
             proc['elapsed_secs'] = None  # use stored elapsed for finished
-        # Flag processes that have match hits (for tab-highlight like Qt6)
+        # Flag processes that have match hits + include match text (Qt6: 'Matches: ...' label)
         match_key = f"{proc.get('hostIp', '')}:{proc.get('tabTitle', '')}"
-        proc['has_match'] = bool(getattr(wc, '_matches', {}).get(match_key))
+        match_list = getattr(wc, '_matches', {}).get(match_key) or []
+        proc['has_match'] = bool(match_list)
+        proc['match_text'] = ', '.join(str(m) for m in match_list) if match_list else ''
         processes.append(proc)
 
     return jsonify({
