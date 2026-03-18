@@ -512,11 +512,14 @@ function _drawProcesses() {
             return id && prevSet.indexOf(id) < 0;
         });
         if (newRunning.length > 0) {
-            /* Click the newest running process row */
-            var newRow = body.querySelector('tr[data-process-id="' + newRunning[newRunning.length-1] + '"]');
-            if (newRow) newRow.click();
+            /* Only auto-switch if the new process is different from what's selected.
+               Don't restart the poll timer unnecessarily — that kills live output. */
+            var newest = newRunning[newRunning.length-1];
+            if (L.selectedProcessId !== parseInt(newest)) {
+                var newRow = body.querySelector('tr[data-process-id="' + newest + '"]');
+                if (newRow) newRow.click();
+            }
         } else if (!L.selectedProcessId && L.processes.length > 0) {
-            /* No running processes but nothing selected — select first row */
             var firstProc = body.querySelector('tr[data-process-id]');
             if (firstProc) firstProc.click();
         }
@@ -580,11 +583,12 @@ function renderOsList() {
         body.appendChild(tr);
     });
     _updateSortHeaders('os-list-table', _osSort, {os:'OS', count:'#'});
-    /* Auto-click first row ONLY if nothing is selected yet (Qt6: setupOsTabViews) */
-    if (!selectedOs) {
-        var firstRow = body.querySelector('tr[data-os]');
-        if (firstRow) firstRow.click();
-    }
+    /* If nothing was selected, auto-click first row. If something WAS selected,
+       re-click it to refresh the hosts pane with potentially new data. */
+    var targetRow = selectedOs
+        ? body.querySelector('tr[data-os="' + selectedOs + '"]')
+        : body.querySelector('tr[data-os]');
+    if (targetRow) targetRow.click();
 }
 
 /* ── Host detail (view.py:updateRightPanel) ── */
@@ -618,16 +622,22 @@ function renderInformation(info) {
         ['Longitude',       info.longitude],
     ];
     var changedFields = [];
+    var hasPrev = Object.keys(prev).length > 0;  /* false on first load */
     rows.forEach(function(r) {
-        if (!r[1] && r[1] !== 0) return; // skip empty fields
-        var label = r[0], val = String(r[1]);
+        var label = r[0], val = (r[1] != null && r[1] !== '') ? String(r[1]) : null;
+        /* Always track in prev so we detect changes from empty→value */
+        newPrev[label] = val || '';
+        if (val == null) return; // skip truly empty fields for display
         var tr = document.createElement('tr');
-        tr.dataset.infoLabel = label;  /* tag for animation lookup */
+        tr.dataset.infoLabel = label;
         tr.innerHTML = '<td style="color:var(--disabled);width:130px;white-space:nowrap">' + esc(label) +
                        '</td><td>' + esc(val) + '</td>';
-        /* Track changed fields — don't animate yet, wait for tab click (Qt6: pending_blink_labels) */
-        if (label in prev && prev[label] !== val) changedFields.push(label);
-        newPrev[label] = val;
+        /* Flash: value changed OR field newly appeared (was empty/missing, now has value).
+           Don't flash on very first load (hasPrev=false). */
+        if (hasPrev) {
+            if (label in prev && prev[label] !== val) changedFields.push(label);
+            else if (!(label in prev) || prev[label] === '') changedFields.push(label);
+        }
         body.appendChild(tr);
     });
     _prevInfoValues[hostKey] = newPrev;
@@ -787,7 +797,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v6.7-flask – ' + title);
+        setText('window-title', 'LEGION v6.8-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);

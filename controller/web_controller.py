@@ -403,8 +403,9 @@ class WebController:
             self._matches = {}
         key = f"{hostIp}:{tabTitle}"
         if key not in self._matches:
-            self._matches[key] = []
-        self._matches[key].append(str(matchStr))
+            self._matches[key] = set()
+        # Use set to deduplicate — same pattern from 50 lines shouldn't show 50 times
+        self._matches[key].add(str(matchStr))
 
     def handleHydraFindings(self, bWidget=None, userlist=None, passlist=None):
         """controller.py:2336 — store credentials without Qt view calls."""
