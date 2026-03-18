@@ -766,7 +766,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v6.3-flask – ' + title);
+        setText('window-title', 'LEGION v6.4-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -1089,12 +1089,21 @@ function initInteractions() {
             r.classList.toggle('selected', r === tr);
         });
         loadProcessOutput(tr.dataset.processId, $('process-output-inline'));
-        /* Start auto-polling for running processes */
+        /* Auto-poll output — keep running through Waiting→Running transition.
+           Bug: process may be Waiting when first auto-selected; old code stopped
+           immediately on !Running, so output never appeared until manual click. */
         if (L.procPollTimer) clearInterval(L.procPollTimer);
         L.procPollTimer = setInterval(function() {
             var proc = L.processes.find(function(p) { return parseInt(p.id) === L.selectedProcessId; });
-            if (!proc || proc.status !== 'Running') { clearInterval(L.procPollTimer); L.procPollTimer = null; return; }
-            loadProcessOutput(L.selectedProcessId, $('process-output-inline'));
+            if (!proc) { clearInterval(L.procPollTimer); L.procPollTimer = null; return; }
+            if (proc.status === 'Running') {
+                loadProcessOutput(L.selectedProcessId, $('process-output-inline'));
+            } else if (proc.status !== 'Waiting') {
+                /* Finished/Crashed — one final load then stop */
+                loadProcessOutput(L.selectedProcessId, $('process-output-inline'));
+                clearInterval(L.procPollTimer); L.procPollTimer = null;
+            }
+            /* If Waiting: keep polling, output will appear when process starts */
         }, 2000);
     });
 
@@ -1131,8 +1140,15 @@ function initInteractions() {
         _dynPollProcId = procId;
         _dynPollTimer = setInterval(function() {
             var proc = L.processes.find(function(p) { return String(p.id) === String(_dynPollProcId); });
-            if (!proc || proc.status !== 'Running') { _stopDynPoll(); return; }
-            loadProcessOutput(_dynPollProcId, outputEl);
+            if (!proc) { _stopDynPoll(); return; }
+            if (proc.status === 'Running') {
+                loadProcessOutput(_dynPollProcId, outputEl);
+            } else if (proc.status !== 'Waiting') {
+                /* Finished — final load then stop */
+                loadProcessOutput(_dynPollProcId, outputEl);
+                _stopDynPoll();
+            }
+            /* Waiting: keep polling until process starts */
         }, 2000);
     }
     /* ── Information tab click → fire queued field animations (Qt6: onTabViewed) ── */
@@ -1208,9 +1224,11 @@ function initInteractions() {
         if (outputEl) {
             outputEl.textContent = 'Loading...';
             loadProcessOutput(procId, outputEl);
-            /* Auto-refresh every 2s while process is Running */
+            /* Auto-refresh while Running or Waiting (survives Waiting→Running transition) */
             var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
-            if (proc && proc.status === 'Running') _startDynPoll(procId, outputEl);
+            if (proc && (proc.status === 'Running' || proc.status === 'Waiting')) {
+                _startDynPoll(procId, outputEl);
+            }
         }
     });
 
