@@ -82,8 +82,10 @@ def snapshot():
         ports = logic.activeProject.repositoryContainer.portRepository.getPortsByHostId(hid) if hid else []
         port_count = len(ports) if ports else 0
         total_ports += port_count
+        checked = h.get('checked', 'False') if isinstance(h, dict) else getattr(h, 'checked', 'False')
         hosts.append({"id": hid, "ip": hip, "hostname": hostname, "os": osm,
-                       "status": status, "open_ports": port_count})
+                       "status": status, "open_ports": port_count,
+                       "checked": str(checked) == 'True'})
 
     # getServiceNames returns {name, port} pairs — already DISTINCT+sorted by name,port
     services_raw = logic.activeProject.repositoryContainer.serviceRepository.getServiceNames(filters)

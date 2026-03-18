@@ -415,6 +415,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--highlight);outline:no
 .match-line{border-left:3px solid #ff0;padding-left:4px}
 /* Process row with match hit — Qt6 turns the tab orange/red */
 tr.proc-match td{color:#fa0}
+/* Host checked indicator — Qt6: CheckedHost column sets row marker */
+tr.host-checked td:last-child{color:var(--highlight,#2a82da)}
 
 /* P1b: Dynamic tab with match hit — Qt6 turns tab red */
 .tab-btn.tab-match{color:#f44!important;font-weight:700}

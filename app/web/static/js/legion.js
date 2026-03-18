@@ -78,6 +78,9 @@ var L = {
     _pollCount: 0,
     _hostSort: {col: 'ip', dir: 1},   /* Qt6: sort(3, Descending) = by Host/IP */
     _procSort: {col: 'id', dir: -1},  /* Qt6: sort(15, Descending) = newest first */
+    /* Qt6: Filters.apply(up,down,checked,portopen,portfiltered,portclosed,tcp,udp,keywords) */
+    _filters: {up:true, down:false, checked:true, portopen:true, portfiltered:false,
+               portclosed:false, tcp:true, udp:true, keywords:[]},
     selectedTool: null,
     selectedProcessId: null,
     hostCache: {},
@@ -292,9 +295,24 @@ function _drawHosts() {
     var tableWrap = $('hosts-table-wrap');
     if (tableWrap) tableWrap.style.display = L.hosts.length ? '' : 'none';
 
+    /* Apply host-level filters (Qt6: Filters.apply → updateInterface) */
+    var f = L._filters;
+    var filtered = L.hosts.filter(function(h) {
+        if (!f.up   && h.status === 'up')   return false;
+        if (!f.down && h.status === 'down')  return false;
+        /* checked=False means "hide hosts already marked as checked" */
+        if (!f.checked && h.checked === true) return false;
+        if (f.keywords && f.keywords.length) {
+            var text = ((h.ip||'') + ' ' + (h.hostname||'') + ' ' + (h.os||'')).toLowerCase();
+            if (!f.keywords.every(function(kw) { return text.includes(kw.toLowerCase()); }))
+                return false;
+        }
+        return true;
+    });
+
     /* Sort hosts */
     var col = L._hostSort.col, dir = L._hostSort.dir;
-    var sorted = L.hosts.slice().sort(function(a, b) {
+    var sorted = filtered.slice().sort(function(a, b) {
         var av, bv;
         if (col === 'ip') { av = _ipToNum(a.ip); bv = _ipToNum(b.ip); }
         else { av = (a[col]||'').toLowerCase(); bv = (b[col]||'').toLowerCase(); }
@@ -307,8 +325,11 @@ function _drawHosts() {
         tr.dataset.hostId = h.id || '';
         tr.dataset.hostIp = h.ip || '';
         if (L.selectedHostId && parseInt(h.id) === L.selectedHostId) tr.classList.add('selected');
+        /* Qt6: checked hosts shown with visual indicator (checkmark prefix) */
+        if (h.checked) tr.classList.add('host-checked');
         tr.style.cursor = 'pointer';
-        tr.innerHTML = '<td>' + esc(h.os||'') + '</td><td>' + esc(h.ip||'') +
+        var checkMark = h.checked ? '\u2713 ' : '';
+        tr.innerHTML = '<td>' + esc(h.os||'') + '</td><td>' + checkMark + esc(h.ip||'') +
                        (h.hostname && h.hostname !== h.ip ? ' ('+esc(h.hostname)+')' : '') + '</td>';
         body.appendChild(tr);
     });
@@ -642,7 +663,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v5.8-flask – ' + title);
+        setText('window-title', 'LEGION v5.9-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -747,6 +768,12 @@ function initInteractions() {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.hostId) return;
         var hostId = parseInt(tr.dataset.hostId);
+        /* Qt6: clearAllTabHighlights — reset orange tab-unread dots on host switch */
+        if (L.selectedHostId !== hostId) {
+            $('right-tab-bar').querySelectorAll('.tab-btn').forEach(function(btn) {
+                btn.classList.remove('tab-unread');
+            });
+        }
         L.selectedHostId = hostId;
         /* highlight */
         $('hosts-body').querySelectorAll('tr').forEach(function(r) {
@@ -1111,10 +1138,10 @@ function initInteractions() {
     var filterBtn = $('filter-apply');
     if (filterInput && filterBtn) {
         var doFilter = function() {
-            var q = filterInput.value.toLowerCase();
-            $('hosts-body').querySelectorAll('tr').forEach(function(r) {
-                r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
-            });
+            /* Store keywords in L._filters then re-render via _drawHosts */
+            var q = (filterInput.value || '').trim();
+            L._filters.keywords = q ? q.split(/\s+/) : [];
+            _drawHosts();
         };
         filterBtn.addEventListener('click', doFilter);
         filterInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') doFilter(); });
@@ -2252,14 +2279,17 @@ document.addEventListener('DOMContentLoaded', function() {
     var fApply = $('filters-apply');
     if (fApply) fApply.addEventListener('click', function() {
         closeModal('filters-modal');
-        /* Apply filters client-side to the hosts table */
-        var showUp = ($('filter-hosts-up')||{}).checked;
-        var showDown = ($('filter-hosts-down')||{}).checked;
-        var showOpen = ($('filter-ports-open')||{}).checked;
-        var showTcp = ($('filter-ports-tcp')||{}).checked;
-        var showUdp = ($('filter-ports-udp')||{}).checked;
-        /* Re-render with filters — for now just log */
-        console.log('Filters applied:', {showUp,showDown,showOpen,showTcp,showUdp});
+        /* Qt6: Filters.apply(up,down,checked,portopen,portfiltered,portclosed,tcp,udp,keywords)
+           Read all checkboxes and store in L._filters, then re-render. */
+        L._filters.up         = !!($('filter-hosts-up')||{}).checked;
+        L._filters.down       = !!($('filter-hosts-down')||{}).checked;
+        L._filters.portopen   = !!($('filter-ports-open')||{}).checked;
+        L._filters.portclosed = !!($('filter-ports-closed')||{}).checked;
+        L._filters.portfiltered = !!($('filter-ports-filtered')||{}).checked;
+        L._filters.tcp        = !!($('filter-ports-tcp')||{}).checked;
+        L._filters.udp        = !!($('filter-ports-udp')||{}).checked;
+        /* Sync filter checkboxes to their current state on open */
+        _drawHosts();  /* immediately re-renders with new filters */
         pollSnapshot();
     });
     /* Wire filter-advanced button to open filters dialog */
