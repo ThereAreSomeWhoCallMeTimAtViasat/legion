@@ -76,6 +76,8 @@ var L = {
     _nmapSig: null,
     _lastProcCount: 0,
     _pollCount: 0,
+    _hostSort: {col: 'ip', dir: 1},   /* Qt6: sort(3, Descending) = by Host/IP */
+    _procSort: {col: 'id', dir: -1},  /* Qt6: sort(15, Descending) = newest first */
     selectedTool: null,
     selectedProcessId: null,
     hostCache: {},
@@ -222,33 +224,105 @@ function initSplitter(splitterId, target, prop, min, max) {
     });
 }
 
+/* ── Column resize + localStorage persistence ──────────────────────────
+   Qt6: saveColumnWidths/restoreColumnWidths store CSV widths to settings.
+   Flask: drag handle on <th> right edge → mousemove → localStorage.
+   Key format: col-<tableId>-<colIndex>  (e.g. 'col-hosts-table-0')
+   ──────────────────────────────────────────────────────────────────── */
+function initColResizers(tableId) {
+    var tbl = $(tableId);
+    if (!tbl) return;
+    var headers = Array.from(tbl.querySelectorAll('thead th'));
+    headers.forEach(function(th, idx) {
+        /* Restore saved width */
+        var saved = localStorage.getItem('col-' + tableId + '-' + idx);
+        if (saved) th.style.width = saved + 'px';
+
+        /* Add resize handle div */
+        var handle = document.createElement('div');
+        handle.style.cssText = 'position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:1';
+        th.style.position = 'relative';
+        th.appendChild(handle);
+
+        var startX, startW;
+        handle.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            startX = e.clientX;
+            startW = th.offsetWidth;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            function onMove(ev) {
+                var newW = Math.max(40, startW + ev.clientX - startX);
+                th.style.width = newW + 'px';
+            }
+            function onUp(ev) {
+                var newW = Math.max(40, startW + ev.clientX - startX);
+                localStorage.setItem('col-' + tableId + '-' + idx, newW);
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    });
+}
+
 /* ================================================================
    RENDERING (mirrors view.py update methods)
    ================================================================ */
 
-/* ── Hosts table (view.py:updateHostsTableView → gui.py:HostsTableView) ── */
+/* ── Hosts table (view.py:updateHostsTableView) — with column sort ── */
+/* Qt6: setSortingEnabled(True) + HostsTableModel.sort(3, Descending) by default */
+function _ipToNum(ip) {
+    return (ip||'').split('.').reduce(function(a,o){ return a*256 + (parseInt(o,10)||0); }, 0);
+}
 function renderHosts(hosts) {
     L.hosts = hosts || [];
+    _drawHosts();
+}
+function _drawHosts() {
     var body = $('hosts-body');
     if (!body) return;
-    body.innerHTML = '';
     var overlay = $('add-hosts-overlay');
     if (overlay) overlay.classList.toggle('visible', L.hosts.length === 0);
     var tableWrap = $('hosts-table-wrap');
     if (tableWrap) tableWrap.style.display = L.hosts.length ? '' : 'none';
 
-    L.hosts.forEach(function(h) {
+    /* Sort hosts */
+    var col = L._hostSort.col, dir = L._hostSort.dir;
+    var sorted = L.hosts.slice().sort(function(a, b) {
+        var av, bv;
+        if (col === 'ip') { av = _ipToNum(a.ip); bv = _ipToNum(b.ip); }
+        else { av = (a[col]||'').toLowerCase(); bv = (b[col]||'').toLowerCase(); }
+        return av < bv ? -dir : av > bv ? dir : 0;
+    });
+
+    body.innerHTML = '';
+    sorted.forEach(function(h) {
         var tr = document.createElement('tr');
         tr.dataset.hostId = h.id || '';
         tr.dataset.hostIp = h.ip || '';
         if (L.selectedHostId && parseInt(h.id) === L.selectedHostId) tr.classList.add('selected');
         tr.style.cursor = 'pointer';
-        tr.innerHTML = '<td>' + esc(h.os||'') + '</td><td>' + esc(h.ip||'') + (h.hostname && h.hostname !== h.ip ? ' ('+esc(h.hostname)+')' : '') + '</td>';
+        tr.innerHTML = '<td>' + esc(h.os||'') + '</td><td>' + esc(h.ip||'') +
+                       (h.hostname && h.hostname !== h.ip ? ' ('+esc(h.hostname)+')' : '') + '</td>';
         body.appendChild(tr);
     });
     setText('stat-hosts', L.hosts.length);
 
-    /* Auto-click first host row when none is selected and hosts exist */
+    /* Update sort arrows */
+    var tbl = $('hosts-table');
+    if (tbl) tbl.querySelectorAll('th[data-sort]').forEach(function(th) {
+        var isActive = th.dataset.sort === col;
+        th.textContent = (th.dataset.sort === 'os' ? 'OS' : 'Host') +
+                         (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : '');
+    });
+
+    /* Auto-click first host when none selected */
     if (!L.selectedHostId && L.hosts.length > 0) {
         var firstRow = body.querySelector('tr[data-host-id]');
         if (firstRow) firstRow.click();
@@ -316,15 +390,41 @@ function renderTools(tools) {
     });
 }
 
-/* ── Processes table (view.py:updateProcessesTableView) ── */
+/* ── Processes table (view.py:updateProcessesTableView) — with column sort ── */
+/* Qt6: setSortingEnabled(True) + ProcessesTableModel.sort(15, Descending) = newest first */
+var _statusOrder = {Running:0, Waiting:1, Finished:2, Crashed:3, Killed:3, Cancelled:3};
 function renderProcesses(processes) {
     L.processes = processes || [];
+    _drawProcesses();
+}
+function _drawProcesses() {
     var filter = ($('process-status-filter')||{}).value || '';
     var body = $('processes-body');
     if (!body) return;
+
+    /* Sort processes */
+    var col = L._procSort.col, dir = L._procSort.dir;
+    var sorted = L.processes.slice().sort(function(a, b) {
+        var av, bv;
+        if (col === 'id') { av = parseInt(a.id)||0; bv = parseInt(b.id)||0; }
+        else if (col === 'elapsed') {
+            av = parseFloat(a.elapsed_secs != null ? a.elapsed_secs : a.elapsed)||0;
+            bv = parseFloat(b.elapsed_secs != null ? b.elapsed_secs : b.elapsed)||0;
+        } else if (col === 'status') {
+            av = _statusOrder[a.status] !== undefined ? _statusOrder[a.status] : 9;
+            bv = _statusOrder[b.status] !== undefined ? _statusOrder[b.status] : 9;
+        } else if (col === 'target') {
+            av = ((a.hostIp||'') + ':' + (a.port||'')).toLowerCase();
+            bv = ((b.hostIp||'') + ':' + (b.port||'')).toLowerCase();
+        } else {
+            av = (a[col]||'').toLowerCase(); bv = (b[col]||'').toLowerCase();
+        }
+        return av < bv ? -dir : av > bv ? dir : 0;
+    });
+
     body.innerHTML = '';
     var running = 0, finished = 0;
-    L.processes.forEach(function(p) {
+    sorted.forEach(function(p) {
         if (p.status === 'Running') running++;
         else finished++;
         if (filter && p.status !== filter) return;
@@ -365,6 +465,16 @@ function renderProcesses(processes) {
     setText('stat-running', running);
     setText('stat-finished', finished);
     setText('process-count', L.processes.length);
+
+    /* Update sort arrows */
+    var ptbl = $('processes-table');
+    var colLabels = {id:'ID', name:'Name', target:'Target', status:'Status', elapsed:'Elapsed'};
+    if (ptbl) ptbl.querySelectorAll('th[data-sort]').forEach(function(th) {
+        var isActive = th.dataset.sort === col;
+        th.textContent = (colLabels[th.dataset.sort] || th.dataset.sort) +
+                         (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : '');
+    });
+
     /* Auto-select first process when table transitions from empty to populated */
     if (!L.selectedProcessId && L.processes.length > 0 && L._lastProcCount === 0) {
         var firstProc = body.querySelector('tr[data-process-id]');
@@ -532,7 +642,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v5.7-flask – ' + title);
+        setText('window-title', 'LEGION v5.8-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -671,6 +781,28 @@ function initInteractions() {
         var origBg = tr.style.background;
         tr.style.background = 'var(--highlight,#2a82da)';
         setTimeout(function() { tr.style.background = origBg; }, 200);
+    });
+
+    /* ── Hosts table header click → sort (Qt6: setSortingEnabled(True)) ── */
+    var hostsTable = $('hosts-table');
+    if (hostsTable) hostsTable.querySelector('thead').addEventListener('click', function(e) {
+        var th = e.target.closest('th[data-sort]');
+        if (!th) return;
+        var col = th.dataset.sort;
+        if (L._hostSort.col === col) { L._hostSort.dir *= -1; }
+        else { L._hostSort.col = col; L._hostSort.dir = 1; }
+        _drawHosts();
+    });
+
+    /* ── Processes table header click → sort (Qt6: setSortingEnabled(True)) ── */
+    var procTable = $('processes-table');
+    if (procTable) procTable.querySelector('thead').addEventListener('click', function(e) {
+        var th = e.target.closest('th[data-sort]');
+        if (!th) return;
+        var col = th.dataset.sort;
+        if (L._procSort.col === col) { L._procSort.dir *= -1; }
+        else { L._procSort.col = col; L._procSort.dir = col === 'id' ? -1 : 1; }
+        _drawProcesses();
     });
 
     /* ── Services table header click → sort ── */
@@ -1133,6 +1265,10 @@ document.addEventListener('DOMContentLoaded', function() {
     initMenuBar();
     initSplitter('main-vsplitter', 'left-panel', 'width', 120, 600);
     initSplitter('main-hsplitter', 'bottom-section', 'height', 80, 500);
+    /* Column resize + width persistence (Qt6: saveColumnWidths/restoreColumnWidths) */
+    initColResizers('hosts-table');
+    initColResizers('processes-table');
+    initColResizers('services-table');
     initInteractions();
 
     /* Initial render from embedded snapshot */

@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v5.7-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v5.8-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -106,10 +106,13 @@
 <div class="tab-content active" id="hosts-panel">
     <div class="add-overlay" id="add-hosts-overlay">Click here to add host(s) to scope</div>
     <div class="table-wrap" id="hosts-table-wrap">
-        <table><thead><tr>
-            <th>OS</th><th>Host</th>
-        </tr></thead>
-        <tbody id="hosts-body"></tbody></table>
+        <table id="hosts-table">
+            <thead><tr>
+                <th style="cursor:pointer" data-sort="os">OS ▲</th>
+                <th style="cursor:pointer" data-sort="ip">Host</th>
+            </tr></thead>
+            <tbody id="hosts-body"></tbody>
+        </table>
     </div>
     <div class="filter-bar">
         <input type="text" id="filter-keyword" placeholder="filter" title="Enter keywords and click apply to filter view">
@@ -293,8 +296,14 @@
     </div>
     <div style="display:flex;flex:1;min-height:0;overflow:hidden">
         <div class="table-wrap" style="flex:1">
-            <table><thead><tr>
-                <th>ID</th><th>Name</th><th>Target</th><th>PID</th><th>Status</th><th>%</th><th>Elapsed</th>
+            <table id="processes-table"><thead><tr>
+                <th style="cursor:pointer" data-sort="id">ID ▼</th>
+                <th style="cursor:pointer" data-sort="name">Name</th>
+                <th style="cursor:pointer" data-sort="target">Target</th>
+                <th>PID</th>
+                <th style="cursor:pointer" data-sort="status">Status</th>
+                <th>%</th>
+                <th style="cursor:pointer" data-sort="elapsed">Elapsed</th>
             </tr></thead>
             <tbody id="processes-body"></tbody></table>
         </div>
