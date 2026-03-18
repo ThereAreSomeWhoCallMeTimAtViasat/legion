@@ -622,21 +622,24 @@ function renderInformation(info) {
         ['Longitude',       info.longitude],
     ];
     var changedFields = [];
-    var hasPrev = Object.keys(prev).length > 0;  /* false on first load */
+    var hasPrev = Object.keys(prev).length > 0;
     rows.forEach(function(r) {
         var label = r[0], val = (r[1] != null && r[1] !== '') ? String(r[1]) : null;
-        /* Always track in prev so we detect changes from empty→value */
         newPrev[label] = val || '';
         if (val == null) return; // skip truly empty fields for display
         var tr = document.createElement('tr');
         tr.dataset.infoLabel = label;
         tr.innerHTML = '<td style="color:var(--disabled);width:130px;white-space:nowrap">' + esc(label) +
                        '</td><td>' + esc(val) + '</td>';
-        /* Flash: value changed OR field newly appeared (was empty/missing, now has value).
-           Don't flash on very first load (hasPrev=false). */
+        /* Flash: value changed, field newly appeared, OR first load for this host.
+           Qt6: updateInformationView compares against blank initial state,
+           so ALL fields flash when a host is first discovered. */
         if (hasPrev) {
             if (label in prev && prev[label] !== val) changedFields.push(label);
             else if (!(label in prev) || prev[label] === '') changedFields.push(label);
+        } else if (val) {
+            /* First load for this host — ALL fields with values should flash */
+            changedFields.push(label);
         }
         body.appendChild(tr);
     });
@@ -797,7 +800,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v6.9-flask – ' + title);
+        setText('window-title', 'LEGION v7.0-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -819,11 +822,19 @@ function loadHostDetail(hostId) {
         };
         var prev = _prevHostData[hkey];
         if (prev) {
+            /* Data changed since last load — mark changed tabs orange */
             if (cur.svc  !== prev.svc)  markTabUnread('services-right');
             if (cur.scr  !== prev.scr)  markTabUnread('scripts-right');
             if (cur.cve  !== prev.cve)  markTabUnread('cves-right');
             if (cur.inf  !== prev.inf)  markTabUnread('info-right');
             if (cur.note !== prev.note) markTabUnread('notes-right');
+        } else {
+            /* First load for this host — Qt6: highlightTab fires when new data appears.
+               Mark all tabs with data as orange so user knows there's info to see. */
+            if (cur.svc)              markTabUnread('services-right');
+            if (cur.inf)              markTabUnread('info-right');
+            if (cur.scr !== '0')      markTabUnread('scripts-right');
+            if (cur.cve !== '0')      markTabUnread('cves-right');
         }
         _prevHostData[hkey] = cur;
 
@@ -905,7 +916,9 @@ function loadProcessOutput(processId, targetEl) {
             }
             targetEl.innerHTML = html;
         }
-        targetEl.scrollTop = targetEl.scrollHeight;
+        /* Defer scroll to after browser reflow — synchronous scrollTop before
+           the new innerHTML is rendered doesn't reach the true bottom. */
+        setTimeout(function() { targetEl.scrollTop = targetEl.scrollHeight; }, 0);
     }).catch(function() {
         targetEl.textContent = 'Error loading output';
     });
