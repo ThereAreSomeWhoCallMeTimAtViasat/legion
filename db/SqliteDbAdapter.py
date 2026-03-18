@@ -69,8 +69,17 @@ class Database:
         self.dbsemaphore = threading.Semaphore(1)  # to control concurrent write access to db
         self.engine = create_engine(
             'sqlite:///{dbFileName}'.format(dbFileName=dbFileName),
-            connect_args={'check_same_thread': False}
+            connect_args={'check_same_thread': False, 'timeout': 30}
         )
+        # Enable WAL mode: allows concurrent reads and writes without blocking.
+        # Default journal mode serialises ALL reads behind writes — storeProcessOutput
+        # (writing megabytes of nmap output every 2s) would freeze every Flask request.
+        from sqlalchemy import event
+        @event.listens_for(self.engine, "connect")
+        def _set_wal(conn, _rec):
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, much faster
+
         self.session = scoped_session(sessionmaker(bind=self.engine))
         self.session.configure(bind=self.engine, autoflush=False)
         self.metadata = self.base.metadata

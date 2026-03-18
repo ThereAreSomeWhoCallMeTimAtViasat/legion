@@ -102,7 +102,7 @@ html,body{
 .tab-btn{
   background:var(--tab-inactive);border:1px solid var(--border);
   border-bottom:none;color:var(--text);font:inherit;
-  padding:3px 14px;cursor:pointer;white-space:nowrap;
+  padding:12px 14px;cursor:pointer;white-space:nowrap;
   margin-right:-1px;margin-bottom:-1px;
 }
 .tab-btn:hover{background:var(--midlight)}
@@ -216,14 +216,26 @@ button:active{background:var(--dark)}
 .notes-area{
   flex:1;background:var(--base);color:var(--text);
   font:inherit;border:none;padding:6px;resize:none;
+  overflow:auto;white-space:pre-wrap;word-break:break-word;
 }
 .notes-area:focus{outline:none}
+/* Display div cursor hint */
+#notes-display{cursor:text}
+/* Qt6: headerFormat.setBackground(QColor(255,165,0)) — orange/yellow header lines */
+.note-header{
+  display:block;background:#fa0;color:#000;
+  font-weight:700;border-radius:2px;
+  padding:1px 3px;margin:2px 0;
+}
 
 /* === TOOL OUTPUT (right panel when Tools tab active) === */
 .tool-output-area{
-  flex:1;background:var(--base);color:var(--text);
+  flex:1;min-height:0;height:100%;background:var(--base);color:var(--text);
   font:inherit;padding:4px;overflow:auto;
   white-space:pre-wrap;word-break:break-word;
+  align-self:stretch;
+  /* Ensure parent background fills entire pane for short content */
+  box-sizing:border-box;
 }
 
 /* === OS TAB (splitter: os-list | os-hosts) === */
@@ -398,17 +410,24 @@ input:focus,select:focus,textarea:focus{border-color:var(--highlight);outline:no
    visualUpgrades features: match highlighting, tab colors, blink
    ================================================================ */
 
-/* P1: Match highlighting in output */
+/* P1: Match highlighting in output and process rows */
 .match-positive{background:rgba(255,255,0,0.25);color:#ff0;font-weight:700}
 .match-line{border-left:3px solid #ff0;padding-left:4px}
+/* Process row with match hit — Qt6 turns the tab orange/red */
+tr.proc-match td{color:#fa0}
+
+/* P1b: Dynamic tab with match hit — Qt6 turns tab red */
+.tab-btn.tab-match{color:#f44!important;font-weight:700}
+.tab-btn.tab-match::before{content:'★ ';font-size:9px}
 
 /* P2: Tab unread notification (orange) */
 .tab-btn.tab-unread{color:#fa0!important;font-weight:700}
 .tab-btn.tab-unread::after{content:'●';margin-left:4px;font-size:8px}
 
 /* P5: Information tab blink animation */
-@keyframes info-blink{0%{background:transparent}50%{background:rgba(255,170,0,0.3)}100%{background:transparent}}
-.info-changed{animation:info-blink 0.6s ease 3}
+/* Qt6: HostInformationWidget.onTabViewed → green blink on changed fields, 500ms, ~3 cycles */
+@keyframes info-blink{0%,100%{background:transparent;color:inherit}35%,65%{background:rgba(0,180,0,0.45);color:#000;font-weight:bold}}
+.info-changed{animation:info-blink 0.5s ease 3}
 
 /* P8: Flash for Ctrl+B note capture */
 @keyframes note-flash{0%{background:transparent}50%{background:rgba(255,165,0,0.5)}100%{background:transparent}}

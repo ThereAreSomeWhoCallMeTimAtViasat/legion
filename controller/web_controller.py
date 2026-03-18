@@ -324,6 +324,43 @@ class WebController:
         except Exception as e:
             log.error(f"[WebController] screenshotFinished error: {e}")
 
+    def _run_screenshot(self, ip, port):
+        """Run eyewitness via runCommand so the process appears in the Processes/Tools
+        table immediately (Waiting → Running → Finished), matching Qt6 visibility.
+        Qt6 used a QThread (Screenshooter); Flask uses the normal subprocess pipeline."""
+        from app.httputil.isHttps import isHttps
+        from app.timing import getTimestamp
+        from app.auxiliary import isKali
+
+        # Check eyewitness is installed before queuing anything
+        eyewitness = '/usr/bin/eyewitness' if isKali() else '/usr/local/bin/eyewitness'
+        if not os.path.isfile(eyewitness):
+            log.warning(f"[WebController] eyewitness not found at {eyewitness} — screenshot skipped for {ip}:{port}")
+            return
+
+        output_folder = self.logic.activeProject.properties.outputFolder
+        screenshots_dir = os.path.join(output_folder, 'screenshots')
+        try:
+            os.makedirs(screenshots_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        try:
+            proto = 'https' if isHttps(ip, port) else 'http'
+        except Exception:
+            proto = 'http'
+        url = f"{proto}://{ip}:{port}"
+
+        outputfile = os.path.join(screenshots_dir, f"{getTimestamp()}-{ip}-{port}")
+        cmd = (f"xvfb-run -a {eyewitness} --single {url} --no-prompt --web --delay 5 "
+               f"-d {outputfile}-dir")
+
+        log.info(f"[WebController] Screenshot: {url}")
+        self.runCommand(command=cmd, name='screenshooter',
+                        tabTitle=f'screenshooter ({port}/tcp)',
+                        hostIp=ip, port=str(port), protocol='tcp',
+                        outputfile=outputfile, run_actions=False)
+
     def saveRunningProcessOutputs(self):
         """controller.py:2305 — flush active process output to DB before save."""
         processRepo = self.logic.activeProject.repositoryContainer.processRepository
@@ -407,32 +444,39 @@ class WebController:
 
             from app.auxiliary import Filters
             from app.timing import getTimestamp
+            from sqlalchemy import text as _text
             filters = Filters()
             repo = self.logic.activeProject.repositoryContainer
-            hosts = repo.hostRepository.getHosts(filters)
-            runningFolder = self.logic.activeProject.properties.runningFolder
 
-            # For each host, check each port against SchedulerSettings
+            # Force a fresh read: expire any cached session state so we see
+            # data just committed by NmapImporter in the same thread
+            try:
+                self.logic.activeProject.database.session.remove()
+            except Exception:
+                pass
+
+            hosts = repo.hostRepository.getHosts(filters)
+            log.info(f'[Scheduler] hosts visible: {len(hosts or [])}')
+            runningFolder = self.logic.activeProject.properties.outputFolder
+
+            # For each host, check each port against SchedulerSettings.
+            # Use getPortsAndServicesByHostIP (SQL JOIN → plain dicts, no ORM detachment).
             for host in (hosts or []):
-                hid = host.get('id', '') if isinstance(host, dict) else getattr(host, 'id', '')
                 hip = host.get('ipv4', '') or host.get('ip', '') if isinstance(host, dict) else getattr(host, 'ipv4', '') or getattr(host, 'ip', '')
-                if not hid or not hip:
+                if not hip:
                     continue
 
-                ports = repo.portRepository.getPortsByHostId(hid)
-                for port_obj in (ports or []):
-                    port_num = str(getattr(port_obj, 'portId', '') or '')
-                    protocol = str(getattr(port_obj, 'protocol', 'tcp') or 'tcp').lower()
-                    state = str(getattr(port_obj, 'state', '') or '')
+                port_rows = repo.portRepository.getPortsAndServicesByHostIP(hip, filters)
+                log.info(f'[Scheduler] {hip}: {len(port_rows or [])} open ports')
+                for port_row in (port_rows or []):
+                    port_num = str(port_row.get('portId', '') or '')
+                    protocol = str(port_row.get('protocol', 'tcp') or 'tcp').lower()
+                    state = str(port_row.get('state', '') or '')
                     if state not in ('open', 'open|filtered'):
                         continue
 
-                    svc_name = ''
-                    svc_id = getattr(port_obj, 'serviceId', None)
-                    if svc_id:
-                        svc = repo.serviceRepository.getServiceById(svc_id)
-                        if svc:
-                            svc_name = str(getattr(svc, 'name', '') or '').rstrip('?').lower()
+                    svc_name = str(port_row.get('name', '') or '').rstrip('?').lower()
+                    log.info(f'[Scheduler] checking {hip}:{port_num}/{protocol} svc={svc_name!r}')
 
                     # Check each SchedulerSettings entry
                     for auto in (self.settings.automatedAttacks or []):
@@ -446,6 +490,40 @@ class WebController:
 
                             svc_scope = [s.strip() for s in svc_scope_raw.split(',') if s.strip()]
                             if svc_name not in svc_scope and '*' not in svc_scope:
+                                continue
+
+                            # Duplicate check — Qt6: controller.py:checkDuplicate
+                            # Applies to ALL tools including screenshooter.
+                            # storeScreenshot creates a process entry with name='screenshooter',
+                            # so the DB check catches completed screenshots on repeat scheduler runs.
+                            try:
+                                from app.auxiliary import Filters as _Filters
+                                existing = self.logic.activeProject.repositoryContainer.processRepository.getProcesses(
+                                    _Filters(), showProcesses='noNmap')
+                                already_ran = any(
+                                    p.get('name','') == tool_id and
+                                    p.get('hostIp','') == hip and
+                                    str(p.get('port','')) == str(port_num)
+                                    for p in (existing or [])
+                                )
+                                if already_ran:
+                                    log.debug(f'[Scheduler] Skipping {tool_id} on {hip}:{port_num} — already ran')
+                                    continue
+                            except Exception:
+                                pass
+
+                            # Screenshooter is a built-in special tool — not a portAction.
+                            # Also guard with in-memory set to block concurrent duplicate shots
+                            # (DB entry only exists after the shot completes, not while in progress).
+                            if tool_id == 'screenshooter':
+                                if not hasattr(self, '_screenshots_taken'):
+                                    self._screenshots_taken = set()
+                                scr_key = f"{hip}:{port_num}"
+                                if scr_key in self._screenshots_taken:
+                                    log.debug(f'[Scheduler] Screenshot already in progress: {scr_key}')
+                                    continue
+                                self._screenshots_taken.add(scr_key)
+                                self._run_screenshot(hip, port_num)
                                 continue
 
                             # Find command from portActions
@@ -533,6 +611,7 @@ class WebController:
                                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
                 proc.pid = popen.pid
                 proc._popen = popen
+                proc._start_mono = time.monotonic()  # for elapsed time calculation
                 processRepo = self.logic.activeProject.repositoryContainer.processRepository
                 processRepo.storeProcessRunningStatus(str(proc_id), str(popen.pid))
                 self._active_processes[int(proc_id)] = proc
@@ -751,6 +830,14 @@ class WebController:
         """controller.py:1416"""
         return self.logic.activeProject.repositoryContainer.scriptRepository.getScriptOutputById(scriptDBId)
 
+    def getHostsForOperatingSystem(self, os_name):
+        """controller.py:1565"""
+        return self.logic.activeProject.repositoryContainer.hostRepository.getHostsByOperatingSystem(os_name)
+
+    def getPortStatesForHost(self, hostid):
+        """controller.py:1407"""
+        return self.logic.activeProject.repositoryContainer.portRepository.getPortStatesByHostId(hostid)
+
     def getHostsForTool(self, toolName, closed='False'):
         """controller.py:1422"""
         return self.logic.activeProject.repositoryContainer.processRepository.getHostsByToolName(
@@ -840,21 +927,24 @@ class WebController:
                 except Exception:
                     pass
 
-                # Periodically flush to DB (every ~2 seconds or 50 lines)
-                if len(output_parts) % 50 == 0 or (time.monotonic() - start_time) > 2:
+                # Periodically flush to DB (every 5 seconds or 100 lines).
+                # WAL mode allows concurrent reads, but write frequency still matters
+                # for large outputs (NSE produces megabytes — flushing often bloats writes).
+                if len(output_parts) % 100 == 0 or (time.monotonic() - start_time) > 5:
                     combined = ''.join(output_parts)
                     processRepo.storeProcessOutput(dbId, combined, preserve_status=True)
                     start_time = time.monotonic()
 
             # Process finished — store final output
             proc._popen.wait()
-            elapsed = time.monotonic()
+            finish_mono = time.monotonic()
             combined = ''.join(output_parts)
             processRepo.storeProcessOutput(dbId, combined, preserve_status=False)
 
-            # Store elapsed time (same as controller.py handleProcStop)
+            # Store elapsed time in seconds (controller.py:handleProcStop)
             if hasattr(proc, '_start_mono'):
-                processRepo.storeProcessRunningElapsedTime(dbId, elapsed - proc._start_mono)
+                elapsed_secs = finish_mono - proc._start_mono
+                processRepo.storeProcessRunningElapsedTime(dbId, round(elapsed_secs, 1))
 
             exit_code = proc._popen.returncode
             log.info(f"[WebController] Process {dbId} finished, exit={exit_code}, output={len(combined)} bytes")
@@ -897,9 +987,12 @@ class WebController:
                         )
                         log.info(f"[WebController] Nmap XML imported: {xml_path}")
                         # Run automated attacks after import (scheduler)
+                        # isNmapImport=False because this is a live nmap run (has output),
+                        # matching Qt6: NmapImporter.schedule.emit(parser, self.output == '')
+                        # isNmapImport=True is only for XML-only file imports with no terminal output
                         run_actions = getattr(proc, '_run_actions', True)
                         if run_actions:
-                            self.scheduler(isNmapImport=True)
+                            self.scheduler(isNmapImport=False)
                     except Exception as e:
                         log.error(f"[WebController] Nmap XML import failed: {e}")
                 else:
@@ -955,9 +1048,7 @@ class WebController:
             return
 
         target = str(targetHosts).strip()
-        runningFolder = self.logic.activeProject.properties.runningFolder
-        session_path = getattr(self.logic.activeProject, 'sessionFile', None)
-        tool_output_dir = os.path.dirname(session_path) if session_path else runningFolder
+        tool_output_dir = self.logic.activeProject.properties.outputFolder
         outputfile = os.path.join(tool_output_dir, f"{getTimestamp()}-nmap-scan")
 
         if scanMode == 'Easy':
@@ -1157,9 +1248,13 @@ class WebController:
             return
 
         log.info(f"[WebController] runStagedNmap stage {stage} for {host_arg}")
-        runningFolder = self.logic.activeProject.properties.runningFolder
-        session_path = getattr(self.logic.activeProject, 'sessionFile', None)
-        tool_output_dir = os.path.dirname(session_path) if session_path else runningFolder
+        # Use outputFolder — the designated tool-output directory.
+        # runningFolder is a separate temp dir that ProjectManager creates for
+        # interactive tool output, but nmap XML files end up in outputFolder.
+        # The session_path approach was wrong: session_path=None so it fell back
+        # to runningFolder, but that's where ecjt6f6v-running lives (no XML files).
+        tool_output_dir = self.logic.activeProject.properties.outputFolder
+        log.info(f"[WebController] Stage {stage} output dir: {tool_output_dir}")
 
         if stop:
             return
@@ -1214,25 +1309,62 @@ class WebController:
         if stage < 6 and result and result.get('process_id'):
             proc_id = result['process_id']
             def _chain_next_stage():
-                # Wait for process to finish
-                proc = self._active_processes.get(proc_id)
-                if proc and proc._popen:
+                # Wait for process to START (it may still be in fastProcessQueue)
+                # _active_processes only contains running processes; poll until started
+                deadline = time.monotonic() + 600  # 10-min safety limit
+                proc = None
+                while time.monotonic() < deadline:
+                    proc = self._active_processes.get(proc_id)
+                    if proc and proc._popen is not None:
+                        break
+                    time.sleep(0.5)
+
+                if proc and proc._popen is not None:
+                    # Process started — wait for it to actually finish
                     proc._popen.wait()
+                else:
+                    # Timed out waiting for start (killed before starting?)
+                    log.warning(f"[WebController] Stage {stage} never started (proc_id={proc_id}), stopping chain")
+                    return
+
                 # Check if killed
                 processRepo = self.logic.activeProject.repositoryContainer.processRepository
                 if processRepo.isKilledProcess(str(proc_id)):
                     log.info(f"[WebController] Stage {stage} was killed, stopping chain")
                     return
+
                 # Import nmap results
+                exit_code = proc._popen.returncode
                 xml_path = outputfile + '.xml'
-                if os.path.isfile(xml_path):
+                xml_exists = os.path.isfile(xml_path)
+                xml_size = os.path.getsize(xml_path) if xml_exists else -1
+                log.info(f"[Chain{stage}] nmap exit={exit_code}  xml_path={xml_path}  exists={xml_exists}  size={xml_size}b")
+                if xml_exists and xml_size > 0:
                     try:
                         from app.importers.nmap_import import import_nmap_xml
                         import_nmap_xml(project=self.logic.activeProject,
                                         xml_path=xml_path, output="")
                         log.info(f"[WebController] Stage {stage} XML imported: {xml_path}")
+                        # Verify host/port counts using raw sqlite3 — bypasses ALL
+                        # SQLAlchemy session/transaction caching to see actual DB state.
+                        try:
+                            import sqlite3 as _sq3
+                            _xml_size = os.path.getsize(xml_path) if os.path.isfile(xml_path) else -1
+                            _db_path = self.logic.activeProject.database.name
+                            with _sq3.connect(_db_path) as _rc:
+                                _hc = _rc.execute("SELECT COUNT(*) FROM hostObj").fetchone()[0]
+                                _pc = _rc.execute("SELECT COUNT(*) FROM portObj").fetchone()[0]
+                                _sc = _rc.execute("SELECT COUNT(*) FROM serviceObj").fetchone()[0]
+                            log.info(f"[Chain{stage}] XML={_xml_size}b  raw-DB: {_hc} hosts, {_pc} ports, {_sc} services")
+                        except Exception as _ve:
+                            log.error(f"[Chain{stage}] DB verify failed: {_ve}")
+                        # Qt6: NmapImporter.schedule.connect(self.scheduler) fires after every
+                        # stage import. Run automated attacks on newly discovered ports.
+                        self.scheduler(isNmapImport=False)
                     except Exception as e:
                         log.error(f"[WebController] Stage {stage} import error: {e}")
+                else:
+                    log.warning(f"[WebController] Stage {stage} XML not found: {xml_path}")
                 # Run next stage
                 self.runStagedNmap(host_arg, discovery=discovery, stage=stage+1, enable_ipv6=enable_ipv6)
 

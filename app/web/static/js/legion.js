@@ -4,6 +4,65 @@
    ================================================================ */
 'use strict';
 
+/* ── Notes rendering: convert plain text to HTML with styled === headers === ── */
+/* Qt6: notesCursor.insertText(header, headerFormat) — orange bg, black text */
+function renderNotes(text) {
+    return (text || '').split('\n').map(function(line) {
+        if (/^===.*===$/.test(line.trim())) {
+            return '<span class="note-header">' + esc(line) + '</span>';
+        }
+        return esc(line) || '\u200B'; /* zero-width space keeps empty lines visible */
+    }).join('\n');
+}
+function _showNotesDisplay(text) {
+    var disp = $('notes-display'), ta = $('notes-text');
+    if (!disp || !ta) return;
+    disp.innerHTML = renderNotes(text);
+    disp.style.display = '';
+    ta.style.display = 'none';
+}
+function _showNotesEdit(text) {
+    var disp = $('notes-display'), ta = $('notes-text');
+    if (!disp || !ta) return;
+    ta.value = text !== undefined ? text : (ta.value || '');
+    disp.style.display = 'none';
+    ta.style.display = '';
+    ta.focus();
+}
+
+/* ── Per-host info field tracker for blink animation ── */
+var _prevInfoValues = {};
+var _pendingInfoAnimations = {};  /* hostKey → [field labels that changed, waiting for tab view] */
+
+/* Apply the green blink animation to changed info rows (Qt6: toggle_style 500ms timer) */
+function _applyInfoAnimation(fields) {
+    var body = $('host-info-body');
+    if (!body || !fields || !fields.length) return;
+    fields.forEach(function(label) {
+        /* Use direct attribute selector — field labels are plain text, no CSS escaping needed.
+           CSS.escape() was previously used here but it escapes spaces incorrectly for
+           attribute value selectors, causing querySelector to always return null. */
+        var tr = body.querySelector('[data-info-label="' + label + '"]');
+        if (tr) {
+            tr.classList.remove('info-changed');
+            void tr.offsetWidth;  /* force reflow to restart CSS animation */
+            tr.classList.add('info-changed');
+            (function(el) { setTimeout(function() { el.classList.remove('info-changed'); }, 1800); })(tr);
+        }
+    });
+}
+
+/* ── Match patterns (global so highlightMatches() can access them) ── */
+var matchPositive = [];
+var matchNegative = [];
+
+/* ── Tab unread helper (global so loadHostDetail can call it) ── */
+var _prevHostData = {};  /* per-host data hashes for unread detection */
+function markTabUnread(tabId) {
+    var tabBtn = document.querySelector('[data-tab="' + tabId + '"]');
+    if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.classList.add('tab-unread');
+}
+
 /* ── State (mirrors ui/ViewState.py) ── */
 var L = {
     hosts: [],
@@ -13,6 +72,10 @@ var L = {
     selectedHostId: null,
     selectedHostIp: null,
     selectedService: null,
+    _hostProcSig: null,
+    _nmapSig: null,
+    _lastProcCount: 0,
+    _pollCount: 0,
     selectedTool: null,
     selectedProcessId: null,
     hostCache: {},
@@ -107,7 +170,8 @@ function initTabBar(barId) {
         bar.querySelectorAll('.tab-btn').forEach(function(t) { t.classList.remove('active'); });
         btn.classList.add('active');
         var widget = bar.closest('.tab-widget') || bar.parentElement;
-        widget.querySelectorAll(':scope > .tab-content').forEach(function(c) { c.classList.remove('active'); });
+        /* Deactivate any currently-active panel (including dynamic panels nested in containers) */
+        widget.querySelectorAll('.tab-content.active').forEach(function(c) { c.classList.remove('active'); });
         var panel = $(btn.dataset.tab);
         if (panel) panel.classList.add('active');
     });
@@ -183,28 +247,56 @@ function renderHosts(hosts) {
         body.appendChild(tr);
     });
     setText('stat-hosts', L.hosts.length);
+
+    /* Auto-click first host row when none is selected and hosts exist */
+    if (!L.selectedHostId && L.hosts.length > 0) {
+        var firstRow = body.querySelector('tr[data-host-id]');
+        if (firstRow) firstRow.click();
+    }
 }
 
-/* ── Services table (left) (view.py:updateServiceNamesTableView) ── */
+/* ── Services table (left) — with sortable Port column ── */
+var _svcSort = {col: 'service', dir: 1};  // 1=asc, -1=desc
+
 function renderServiceNames(services) {
     L.services = services || [];
+    _drawServices();
+}
+
+function _drawServices() {
     var body = $('services-body');
     if (!body) return;
+    /* Sort */
+    var col = _svcSort.col, dir = _svcSort.dir;
+    var sorted = L.services.slice().sort(function(a, b) {
+        var av = a[col] || '', bv = b[col] || '';
+        if (col === 'port') { av = parseInt(av)||0; bv = parseInt(bv)||0; }
+        return av < bv ? -dir : av > bv ? dir : 0;
+    });
     body.innerHTML = '';
-    L.services.forEach(function(s) {
+    sorted.forEach(function(s) {
         var tr = document.createElement('tr');
         tr.dataset.service = s.service || '';
+        tr.dataset.port = s.port || '';
         tr.style.cursor = 'pointer';
         if (L.selectedService === s.service) tr.classList.add('selected');
-        tr.innerHTML = '<td>' + esc(s.service||'') + '</td>';
+        tr.innerHTML = '<td>' + esc(s.service||'') + '</td><td>' + esc(s.port||'') + '</td>';
         body.appendChild(tr);
+    });
+    /* Update sort arrows in headers */
+    var tbl = $('services-table');
+    if (tbl) tbl.querySelectorAll('th[data-sort]').forEach(function(th) {
+        var isActive = th.dataset.sort === col;
+        th.textContent = (th.dataset.sort === 'service' ? 'Name' : 'Port') +
+                         (isActive ? (dir === 1 ? ' ▲' : ' ▼') : '');
     });
 }
 
-/* ── Tools table (left) — only tools that actually ran (view.py:updateToolsTableView) ── */
+/* ── Tools table (left) — tools that actually ran (view.py:updateToolsTableView + _dedupeTools) ── */
 function renderTools(tools) {
-    /* Show all tools — Qt6 shows all available tools in the left panel,
-       not just ones that ran. run_count shown in the table so user knows. */
+    /* Shows unique tool names from process DB — matches Qt6 behavior.
+       tool_id == process.name (e.g. "nmap", "ssh-enum"), label == same.
+       run_count = number of times this tool has been run. */
     L.tools = tools || [];
     var body = $('tools-body');
     if (!body) return;
@@ -215,8 +307,11 @@ function renderTools(tools) {
         tr.style.cursor = 'pointer';
         if (L.selectedTool === t.tool_id) tr.classList.add('selected');
         var runCount = t.run_count || 0;
-        var style = runCount > 0 ? 'font-weight:600' : 'color:var(--disabled,#808080)';
-        tr.innerHTML = '<td style="' + style + '">' + esc(t.label || t.tool_id || '') + (runCount > 0 ? ' (' + runCount + ')' : '') + '</td>';
+        var countStr = runCount > 1 ? ' (' + runCount + ')' : '';
+        /* Colour tool entry red if any of its processes found a match (Qt6: tab-goes-red) */
+        var matchStyle = t.has_match ? ' style="color:#f44;font-weight:700"' : '';
+        var matchStar  = t.has_match ? '<span title="Match found">★ </span>' : '';
+        tr.innerHTML = '<td' + matchStyle + '>' + matchStar + esc(t.label || t.tool_id || '') + countStr + '</td>';
         body.appendChild(tr);
     });
 }
@@ -237,109 +332,231 @@ function renderProcesses(processes) {
         tr.dataset.processId = p.id || '';
         tr.style.cursor = 'pointer';
         if (L.selectedProcessId && parseInt(p.id) === L.selectedProcessId) tr.classList.add('selected');
+        if (p.has_match) tr.classList.add('proc-match');
         var statusClass = p.status === 'Running' ? 'proc-running' : p.status === 'Crashed' ? 'proc-crashed' : p.status === 'Waiting' ? 'proc-waiting' : 'proc-finished';
         var spinnerHtml = p.status === 'Running' ? '<span class="spinner"></span>' : '';
+        var matchIcon = p.has_match ? '<span title="Match found" style="color:var(--match-positive,#ff0)">★</span> ' : '';
         var target = (p.hostIp||'') + (p.port ? ':'+p.port : '');
         var pct = p.percent || '';
+        /* Elapsed: live seconds from snapshot for Running; stored seconds for Finished */
+        var elapsedStr = '';
+        function fmtSecs(s) {
+            s = Math.round(parseFloat(s) || 0);
+            var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + sec + 's';
+        }
+        if (p.status === 'Running' && p.elapsed_secs != null) {
+            elapsedStr = fmtSecs(p.elapsed_secs);
+        } else if (p.elapsed && parseFloat(p.elapsed) > 0) {
+            elapsedStr = fmtSecs(p.elapsed);
+        }
+        /* Show tabTitle (e.g. "nmap (stage 1)") when available, fall back to name */
+        var displayName = p.tabTitle && p.tabTitle !== p.name ? p.tabTitle : p.name || '';
         tr.innerHTML =
             '<td>' + esc(p.id) + '</td>' +
-            '<td>' + esc(p.name||'') + '</td>' +
+            '<td>' + matchIcon + esc(displayName) + '</td>' +
             '<td>' + esc(target) + '</td>' +
             '<td>' + esc(p.pid||'') + '</td>' +
             '<td class="' + statusClass + '">' + spinnerHtml + esc(p.status||'') + '</td>' +
             '<td>' + esc(pct) + '</td>' +
-            '<td>' + esc(p.elapsed||'') + '</td>';
+            '<td>' + esc(elapsedStr) + '</td>';
         body.appendChild(tr);
     });
     setText('stat-running', running);
     setText('stat-finished', finished);
     setText('process-count', L.processes.length);
+    /* Auto-select first process when table transitions from empty to populated */
+    if (!L.selectedProcessId && L.processes.length > 0 && L._lastProcCount === 0) {
+        var firstProc = body.querySelector('tr[data-process-id]');
+        if (firstProc) firstProc.click();
+    }
+    L._lastProcCount = L.processes.length;
 }
 
-/* ── OS table ── */
+/* ── OS table (view.py:updateOsListView → getOperatingSystemsSummary) ── */
+/* Qt6 uses classified OS categories (Linux, Windows, Unknown) NOT raw osMatch strings.
+   The snapshot now includes os_groups from getOperatingSystemsSummary() so the
+   OS list shows the same names the /os/<name>/hosts API expects. */
 function renderOsList() {
-    var groups = {};
-    L.hosts.forEach(function(h) {
-        var os = h.os || 'Unknown';
-        if (!groups[os]) groups[os] = [];
-        groups[os].push(h);
-    });
     var body = $('os-list-body');
     if (!body) return;
     body.innerHTML = '';
-    Object.keys(groups).sort().forEach(function(os) {
+    var groups = (L.snapshot && L.snapshot.os_groups) || [];
+    groups.forEach(function(g) {
         var tr = document.createElement('tr');
-        tr.dataset.os = os;
+        tr.dataset.os = g.os || 'Unknown';
         tr.style.cursor = 'pointer';
-        tr.innerHTML = '<td>' + esc(os) + '</td><td>' + groups[os].length + '</td>';
+        tr.innerHTML = '<td>' + esc(g.os || 'Unknown') + '</td><td>' + (g.count || 0) + '</td>';
+        body.appendChild(tr);
+    });
+    /* Qt6: auto-selects first OS row and populates hosts pane (setupOsTabViews) */
+    var firstRow = body.querySelector('tr[data-os]');
+    if (firstRow) firstRow.click();
+}
+
+/* ── Host detail (view.py:updateRightPanel) ── */
+/* ── Render Information tab (view.py:updateInformationView + buildInformationText) ── */
+/* Qt6: HostInformationWidget.updateFields tracks changed fields → onTabViewed blinks them
+   green (500ms, 3 cycles). Flask: detect changed fields and apply .info-changed CSS class. */
+function renderInformation(info) {
+    var body = $('host-info-body');
+    if (!body) return;
+    var hostKey = info.ip || 'unknown';
+    var prev = _prevInfoValues[hostKey] || {};
+    var newPrev = {};
+    body.innerHTML = '';
+    var rows = [
+        ['Status',          info.status],
+        ['IP',              info.ip],
+        ['IPv6',            info.ipv6],
+        ['Hostname',        info.hostname],
+        ['MAC Address',     info.mac],
+        ['Vendor',          info.vendor],
+        ['OS Match',        info.os],
+        ['OS Accuracy',     info.os_accuracy ? info.os_accuracy + '%' : ''],
+        ['Open Ports',      info.open_ports],
+        ['Closed Ports',    info.closed_ports],
+        ['Filtered Ports',  info.filtered_ports],
+        ['ASN',             info.asn],
+        ['ISP',             info.isp],
+        ['Country',         info.country_code],
+        ['City',            info.city],
+        ['Latitude',        info.latitude],
+        ['Longitude',       info.longitude],
+    ];
+    var changedFields = [];
+    rows.forEach(function(r) {
+        if (!r[1] && r[1] !== 0) return; // skip empty fields
+        var label = r[0], val = String(r[1]);
+        var tr = document.createElement('tr');
+        tr.dataset.infoLabel = label;  /* tag for animation lookup */
+        tr.innerHTML = '<td style="color:var(--disabled);width:130px;white-space:nowrap">' + esc(label) +
+                       '</td><td>' + esc(val) + '</td>';
+        /* Track changed fields — don't animate yet, wait for tab click (Qt6: pending_blink_labels) */
+        if (label in prev && prev[label] !== val) changedFields.push(label);
+        newPrev[label] = val;
+        body.appendChild(tr);
+    });
+    _prevInfoValues[hostKey] = newPrev;
+
+    if (changedFields.length > 0) {
+        /* Check if Information tab is currently the active right-panel tab */
+        var infoBtn = $('right-tab-bar') && $('right-tab-bar').querySelector('[data-tab="info-right"]');
+        if (infoBtn && infoBtn.classList.contains('active')) {
+            /* Tab is visible — animate immediately */
+            _applyInfoAnimation(changedFields);
+        } else {
+            /* Tab not visible — queue for when user clicks it (Qt6: pending_blink_labels) */
+            _pendingInfoAnimations[hostKey] = (_pendingInfoAnimations[hostKey] || []).concat(changedFields);
+        }
+    }
+}
+
+/* ── Render Scripts tab (view.py:updateScriptsView) ── */
+function renderScripts(scripts) {
+    var body = $('host-detail-scripts');
+    if (!body) return;
+    body.innerHTML = '';
+    (scripts || []).forEach(function(s) {
+        var tr = document.createElement('tr');
+        tr.dataset.scriptId = s.id || '';
+        tr.style.cursor = 'pointer';
+        tr.innerHTML = '<td>' + esc(s.script_id||'') + '</td><td>' + esc(s.port||'') + '</td>';
         body.appendChild(tr);
     });
 }
 
-/* ── Host detail (view.py:updateRightPanel) ── */
+/* ── Render CVEs tab (view.py:updateCvesByHostView) ── */
+function renderCves(cves) {
+    var body = $('host-detail-cves');
+    if (!body) return;
+    body.innerHTML = '';
+    (cves || []).forEach(function(c) {
+        var tr = document.createElement('tr');
+        var sevStyle = parseFloat(c.severity||0) >= 7 ? 'color:#f44' : parseFloat(c.severity||0) >= 4 ? 'color:#fa0' : '';
+        tr.innerHTML = '<td>' + esc(c.name||'') + '</td>' +
+                       '<td style="' + sevStyle + '">' + esc(c.severity||'') + '</td>' +
+                       '<td>' + esc(c.product||'') + '</td>' +
+                       '<td>' + esc(c.source||'') + '</td>';
+        body.appendChild(tr);
+    });
+}
+
 function loadHostDetail(hostId) {
-    fetchJson('/api/workspace/hosts/' + hostId).then(function(data) {
+    /* Fire all 4 requests in parallel — Qt6 updates each tab independently */
+    var baseUrl = '/api/workspace/hosts/' + hostId;
+    Promise.all([
+        fetchJson(baseUrl),
+        fetchJson(baseUrl + '/information'),
+        fetchJson(baseUrl + '/scripts-list'),
+        fetchJson(baseUrl + '/cves-list'),
+    ]).then(function(results) {
+        var data    = results[0];
+        var info    = results[1];
+        var scripts = results[2].scripts || [];
+        var cves    = results[3].cves    || [];
+
         L.hostCache[hostId] = data;
         var host = data.host || {};
         L.selectedHostIp = host.ip || '';
 
-        /* Services tab (right) */
+        /* Services tab (right) — sorted by port ascending (Qt6 default) */
         var ports = $('host-detail-ports');
         ports.innerHTML = '';
         (data.ports || []).forEach(function(p) {
             var svc = p.service || {};
+            var stateStyle = p.state === 'open' ? 'color:#4c4' :
+                             p.state === 'filtered' ? 'color:#fa0' : 'color:var(--disabled)';
             var tr = document.createElement('tr');
             tr.innerHTML =
                 '<td>' + esc(host.ip) + '</td>' +
                 '<td>' + esc(p.port) + '</td>' +
                 '<td>' + esc(p.protocol) + '</td>' +
-                '<td>' + esc(p.state) + '</td>' +
+                '<td style="' + stateStyle + '">' + esc(p.state) + '</td>' +
                 '<td>' + esc(svc.name||'') + '</td>' +
                 '<td>' + esc((svc.product||'') + ' ' + (svc.version||'')).trim() + '</td>';
             ports.appendChild(tr);
         });
 
-        /* Scripts tab */
-        var scripts = $('host-detail-scripts');
-        scripts.innerHTML = '';
-        (data.scripts || []).forEach(function(s) {
-            var tr = document.createElement('tr');
-            tr.dataset.scriptId = s.id || '';
-            tr.style.cursor = 'pointer';
-            tr.innerHTML = '<td>' + esc(s.scriptId||s.script_id||'') + '</td><td>' + esc(s.port||'') + '</td>';
-            scripts.appendChild(tr);
-        });
+        /* Information tab — full host stats from dedicated endpoint */
+        renderInformation(info);
 
-        /* Information tab */
-        var info = $('host-info-body');
-        info.innerHTML = '';
-        [['IP', host.ip], ['Hostname', host.hostname], ['OS', host.os], ['Status', host.status],
-         ['Open Ports', (data.ports||[]).length], ['Scripts', (data.scripts||[]).length],
-         ['CVEs', (data.cves||[]).length]].forEach(function(row) {
-            var tr = document.createElement('tr');
-            tr.innerHTML = '<td style="color:var(--disabled);width:120px">' + esc(row[0]) + '</td><td>' + esc(row[1]) + '</td>';
-            info.appendChild(tr);
-        });
+        /* Scripts tab */
+        renderScripts(scripts);
 
         /* CVEs tab */
-        var cves = $('host-detail-cves');
-        cves.innerHTML = '';
-        (data.cves || []).forEach(function(c) {
-            var tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + esc(c.name||'') + '</td><td>' + esc(c.severity||'') + '</td><td>' + esc(c.product||'') + '</td><td></td>';
-            cves.appendChild(tr);
-        });
+        renderCves(cves);
 
-        /* Notes */
-        var notes = $('notes-text');
-        if (notes) notes.value = data.note || '';
+        /* Notes — show styled display div (=== headers highlighted) */
+        _showNotesDisplay(data.note || '');
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION – ' + title);
+        setText('window-title', 'LEGION v5.6-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
+
+        /* ── Tab unread detection (Qt6: highlightTab fires on data change) ──
+           Compare current data against previous load for this host.
+           Mark the tab orange if new data arrived since last load. */
+        var hkey = 'h' + hostId;
+        var cur = {
+            svc:  (data.ports||[]).map(function(p){return p.port+'/'+p.state;}).join(','),
+            scr:  String((scripts||[]).length),
+            cve:  String((cves||[]).length),
+            inf:  (info.os||'') + '|' + String(info.open_ports||0) + '|' + (info.hostname||''),
+            note: String((data.note||'').length)
+        };
+        var prev = _prevHostData[hkey];
+        if (prev) {
+            if (cur.svc  !== prev.svc)  markTabUnread('services-right');
+            if (cur.scr  !== prev.scr)  markTabUnread('scripts-right');
+            if (cur.cve  !== prev.cve)  markTabUnread('cves-right');
+            if (cur.inf  !== prev.inf)  markTabUnread('info-right');
+            if (cur.note !== prev.note) markTabUnread('notes-right');
+        }
+        _prevHostData[hkey] = cur;
 
     }).catch(function(err) {
         console.error('loadHostDetail error:', err);
@@ -350,34 +567,58 @@ function loadHostDetail(hostId) {
 function renderDynamicToolTabs(hostIp) {
     var bar = $('right-tab-bar');
     var container = $('dynamic-tabs-container');
+
+    /* Remember which dynamic tab was active before we wipe everything */
+    var activeBtn = bar.querySelector('.dynamic-tab.active');
+    var prevActiveTabId = activeBtn ? activeBtn.dataset.tab : null;
+
     /* Remove old dynamic tabs */
     bar.querySelectorAll('.dynamic-tab').forEach(function(b) { b.remove(); });
     container.innerHTML = '';
 
-    /* Find processes for this host */
+    /* Find processes for this host — matched ones sort first (Qt6: tab turns red) */
     var hostProcs = L.processes.filter(function(p) { return p.hostIp === hostIp; });
+    hostProcs.sort(function(a, b) { return (b.has_match ? 1 : 0) - (a.has_match ? 1 : 0); });
     hostProcs.forEach(function(proc) {
         var tabId = 'dyntab-' + proc.id;
         var btn = document.createElement('button');
-        btn.className = 'tab-btn dynamic-tab';
+        btn.className = 'tab-btn dynamic-tab' + (proc.has_match ? ' tab-match' : '');
         btn.type = 'button';
         btn.dataset.tab = tabId;
-        btn.textContent = (proc.name||'?') + (proc.port ? ' '+proc.port : '');
+        /* Use tabTitle when it adds info (e.g. "nmap (stage 1)"), else name+port */
+        btn.textContent = proc.tabTitle && proc.tabTitle !== proc.name
+            ? proc.tabTitle
+            : (proc.name||'?') + (proc.port ? ' '+proc.port : '');
         bar.appendChild(btn);
 
         var panel = document.createElement('div');
-        panel.className = 'tab-content';
+        panel.className = 'tab-content';  /* CSS provides: display:none, flex:1, min-height:0, flex-direction:column */
         panel.id = tabId;
-        panel.innerHTML = '<div class="tool-output-area ansi" id="dyn-output-' + proc.id + '">Loading...</div>';
+        panel.innerHTML = '<div class="tool-output-area ansi" id="dyn-output-' + proc.id + '"></div>';
         container.appendChild(panel);
     });
+
+    /* Restore the previously active dynamic tab so the user's view is preserved */
+    if (prevActiveTabId) {
+        var restoredBtn = bar.querySelector('[data-tab="' + prevActiveTabId + '"]');
+        if (restoredBtn) {
+            restoredBtn.click();  /* re-activates tab and reloads its output */
+        }
+    }
 }
 
 /* ── Load process output inline (view.py tool output display) ── */
 function loadProcessOutput(processId, targetEl) {
     fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
         var text = data.output_chunk || data.output || '';
-        targetEl.innerHTML = ansiToHtml(text);
+        /* Screenshooter: output is "screenshot:/path/to/file.png" — render as image */
+        if (text.startsWith('screenshot:')) {
+            var imgPath = text.slice('screenshot:'.length).trim();
+            var imgUrl = '/api/screenshots?path=' + encodeURIComponent(imgPath);
+            targetEl.innerHTML = '<img src="' + imgUrl + '" style="max-width:100%;max-height:100%;object-fit:contain" alt="screenshot"/>';
+        } else {
+            targetEl.innerHTML = highlightMatches(ansiToHtml(text));
+        }
         targetEl.scrollTop = targetEl.scrollHeight;
     }).catch(function() {
         targetEl.textContent = 'Error loading output';
@@ -409,6 +650,17 @@ function initInteractions() {
         loadHostDetail(hostId);
     });
 
+    /* ── Services table header click → sort ── */
+    var svcTable = $('services-table');
+    if (svcTable) svcTable.querySelector('thead').addEventListener('click', function(e) {
+        var th = e.target.closest('th[data-sort]');
+        if (!th) return;
+        var col = th.dataset.sort;
+        if (_svcSort.col === col) { _svcSort.dir *= -1; }
+        else { _svcSort.col = col; _svcSort.dir = col === 'port' ? 1 : 1; }
+        _drawServices();
+    });
+
     /* ── Service click (left) (view.py:serviceNamesTableClick) ── */
     $('services-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
@@ -438,6 +690,9 @@ function initInteractions() {
         $('right-tabs').style.display = 'none';
         $('tools-display').style.display = 'flex';
         updateToolHosts(L.selectedTool);
+        /* Auto-select first host/process in middle pane so output shows immediately */
+        var firstHostRow = $('tool-hosts-body').querySelector('tr[data-process-id]');
+        if (firstHostRow) firstHostRow.click();
     });
 
     /* ── Tool hosts click → show output (view.py:toolHostsClick) ── */
@@ -456,15 +711,22 @@ function initInteractions() {
         if (!tr) return;
         var os = tr.dataset.os || '';
         $('os-list-body').querySelectorAll('tr').forEach(function(r) { r.classList.toggle('selected', r === tr); });
+        /* G4: fetch matching hosts from server (view.py:updateOsHostsTableView) */
         var body = $('os-hosts-body');
-        body.innerHTML = '';
-        L.hosts.filter(function(h) { return (h.os||'Unknown') === os; }).forEach(function(h) {
-            var row = document.createElement('tr');
-            row.dataset.hostId = h.id;
-            row.style.cursor = 'pointer';
-            row.innerHTML = '<td>' + esc(h.ip) + '</td><td>' + esc(h.hostname||'') + '</td>';
-            body.appendChild(row);
-        });
+        body.innerHTML = '<tr><td colspan="2" style="color:var(--disabled)">Loading...</td></tr>';
+        fetchJson('/api/workspace/os/' + encodeURIComponent(os) + '/hosts').then(function(d) {
+            body.innerHTML = '';
+            (d.hosts || []).forEach(function(h) {
+                var row = document.createElement('tr');
+                row.dataset.hostId = h.id;
+                row.style.cursor = 'pointer';
+                row.innerHTML = '<td>' + esc(h.ip||'') + '</td><td>' + esc(h.hostname||'') + '</td>';
+                body.appendChild(row);
+            });
+            /* Auto-select first host in the OS hosts pane */
+            var firstRow = body.querySelector('tr[data-host-id]');
+            if (firstRow) firstRow.click();
+        }).catch(function() { body.innerHTML = ''; });
     });
 
     /* ── OS hosts click → load host detail ── */
@@ -472,14 +734,14 @@ function initInteractions() {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.hostId) return;
         L.selectedHostId = parseInt(tr.dataset.hostId);
+        $('os-hosts-body').querySelectorAll('tr').forEach(function(r) { r.classList.toggle('selected', r === tr); });
         loadHostDetail(L.selectedHostId);
-        /* Switch to Hosts tab in left panel to show the selected host */
-        var hostsTab = $('left-tab-bar').querySelector('[data-tab="hosts-panel"]');
-        if (hostsTab) hostsTab.click();
-        renderHosts(L.hosts); /* re-render to show selection */
-        /* Show right panel */
+        renderHosts(L.hosts); /* re-render hosts pane to show selection */
+        /* Show right panel and activate Services tab */
         $('right-tabs').style.display = '';
         $('tools-display').style.display = 'none';
+        var svcTab = $('right-tab-bar').querySelector('[data-tab="services-right"]');
+        if (svcTab) svcTab.click();
     });
 
     /* ── Left tab switch → update right panel mode ── */
@@ -500,6 +762,20 @@ function initInteractions() {
         }
         /* Render OS data when OS tab is selected */
         if (tab === 'os-panel') renderOsList();
+        /* Auto-select first service when Services tab is clicked */
+        if (tab === 'services-left-panel') {
+            setTimeout(function() {
+                var firstSvc = $('services-body').querySelector('tr');
+                if (firstSvc && !firstSvc.classList.contains('selected')) firstSvc.click();
+            }, 0);
+        }
+        /* Auto-select first host when Hosts tab is clicked (if none selected) */
+        if (tab === 'hosts-panel' && !L.selectedHostId) {
+            setTimeout(function() {
+                var firstHost = $('hosts-body').querySelector('tr[data-host-id]');
+                if (firstHost) firstHost.click();
+            }, 0);
+        }
     });
 
     /* ── Process row click → show output inline ── */
@@ -529,24 +805,63 @@ function initInteractions() {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.scriptId) return;
         $('host-detail-scripts').querySelectorAll('tr').forEach(function(r) { r.classList.toggle('selected', r === tr); });
-        var scriptData = L.hostCache[L.selectedHostId];
-        if (scriptData) {
-            var script = (scriptData.scripts||[]).find(function(s) { return String(s.id) === tr.dataset.scriptId; });
-            if (script) $('script-output-inline').innerHTML = ansiToHtml(script.output || script.script_output || '');
+        var sid = tr.dataset.scriptId;
+        var outEl = $('script-output-inline');
+        if (sid && outEl) {
+            outEl.textContent = 'Loading...';
+            fetchJson('/api/workspace/scripts/' + sid + '/output').then(function(d) {
+                outEl.innerHTML = ansiToHtml(d.output || '');
+            }).catch(function() {
+                outEl.textContent = 'Error loading script output';
+            });
         }
     });
 
-    /* ── Dynamic tab click → load process output ── */
+    /* ── Dynamic tab click → reload output; auto-poll if process is Running ── */
+    var _dynPollTimer = null;
+    var _dynPollProcId = null;
+    function _stopDynPoll() {
+        if (_dynPollTimer) { clearInterval(_dynPollTimer); _dynPollTimer = null; }
+        _dynPollProcId = null;
+    }
+    function _startDynPoll(procId, outputEl) {
+        _stopDynPoll();
+        _dynPollProcId = procId;
+        _dynPollTimer = setInterval(function() {
+            var proc = L.processes.find(function(p) { return String(p.id) === String(_dynPollProcId); });
+            if (!proc || proc.status !== 'Running') { _stopDynPoll(); return; }
+            loadProcessOutput(_dynPollProcId, outputEl);
+        }, 2000);
+    }
+    /* ── Information tab click → fire queued field animations (Qt6: onTabViewed) ── */
+    $('right-tab-bar').addEventListener('click', function(e) {
+        var infoBtn = e.target.closest('[data-tab="info-right"]');
+        if (infoBtn) {
+            setTimeout(function() {  /* wait for panel to become visible */
+                var hostKey = L.selectedHostIp || 'unknown';
+                var pending = _pendingInfoAnimations[hostKey];
+                if (pending && pending.length) {
+                    _pendingInfoAnimations[hostKey] = [];
+                    _applyInfoAnimation(pending);
+                }
+            }, 60);
+        }
+    });
+
     $('right-tab-bar').addEventListener('click', function(e) {
         var btn = e.target.closest('.dynamic-tab');
         if (!btn) return;
+        _stopDynPoll();
         var tabId = btn.dataset.tab;
         if (!tabId) return;
         var procId = tabId.replace('dyntab-', '');
         var outputEl = $('dyn-output-' + procId);
-        if (outputEl && !outputEl.dataset.loaded) {
-            outputEl.dataset.loaded = '1';
+        if (outputEl) {
+            outputEl.textContent = 'Loading...';
             loadProcessOutput(procId, outputEl);
+            /* Auto-refresh every 2s while process is Running */
+            var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
+            if (proc && proc.status === 'Running') _startDynPoll(procId, outputEl);
         }
     });
 
@@ -621,7 +936,12 @@ function updateToolHosts(toolId) {
         var tr = document.createElement('tr');
         tr.dataset.processId = p.id;
         tr.style.cursor = 'pointer';
-        tr.innerHTML = '<td>' + esc(p.hostIp||'') + '</td><td>' + esc(p.port||'') + '</td>';
+        /* Show tabTitle in port column if port is empty (e.g. staged nmap shows stage info) */
+        var portCol = p.port || p.tabTitle || '';
+        var statusClass = p.status === 'Running' ? 'proc-running' : p.status === 'Finished' ? '' : 'proc-crashed';
+        tr.innerHTML = '<td>' + esc(p.hostIp||'') + '</td>' +
+                       '<td>' + esc(portCol) + '</td>' +
+                       '<td class="' + statusClass + '">' + esc(p.status||'') + '</td>';
         body.appendChild(tr);
     });
 }
@@ -639,6 +959,63 @@ function pollSnapshot() {
         setText('project-name', (snap.project||{}).name || '*untitled');
         setText('project-output-folder', (snap.project||{}).output_folder || '');
         setText('stat-open-ports', (snap.summary||{}).open_ports || 0);
+
+        /* ── Dynamic right-panel refresh (Qt6: signal-driven, Flask: poll-driven) ──
+           Three triggers that reload the right panel without requiring a host click:
+           1. Process set for selected host changes (start/finish) → immediate reload
+           2. Any scan is running → periodic reload every ~6s (catches nmap XML imports)
+           3. OS tab active → re-render OS list from latest snapshot classified groups */
+
+        if (L.selectedHostIp) {
+            /* Trigger 1: processes for the exact selected host IP changed */
+            var sig = (snap.processes || [])
+                .filter(function(p) { return p.hostIp === L.selectedHostIp; })
+                .map(function(p) { return p.id + ':' + p.status; })
+                .sort().join(',');
+            if (sig !== L._hostProcSig) {
+                L._hostProcSig = sig;
+                renderDynamicToolTabs(L.selectedHostIp);
+                if (L.selectedHostId && $('tools-display').style.display !== 'flex') {
+                    loadHostDetail(L.selectedHostId);
+                }
+            }
+        }
+
+        /* Trigger 2: any nmap process changed status (stage completions).
+           _hostProcSig misses staged nmap because its hostIp = scan target
+           (e.g. "192.168.85.0/24") not the discovered host IP. This catches
+           stage finishes and imports that add new ports/OS/scripts to the DB. */
+        if (L.selectedHostId) {
+            var nmapSig = (snap.processes || [])
+                .filter(function(p) { return p.name === 'nmap'; })
+                .map(function(p) { return p.id + ':' + p.status; })
+                .sort().join(',');
+            if (nmapSig !== L._nmapSig) {
+                L._nmapSig = nmapSig;
+                if ($('tools-display').style.display !== 'flex') {
+                    loadHostDetail(L.selectedHostId);
+                }
+            }
+        }
+
+        /* Periodic right-panel refresh while scans are running (nmap imports ports
+           without changing process status, so _hostProcSig alone misses those) */
+        var anyRunning = ((snap.summary || {}).running_processes || 0) > 0;
+        L._pollCount = (L._pollCount || 0) + 1;
+        if (L.selectedHostId && anyRunning && L._pollCount % 4 === 0) {
+            /* Every ~6s — reload static right-panel tabs.
+               Skip if viewing a dynamic tool tab to avoid a flicker every 6s;
+               the _hostProcSig trigger above handles the important state changes. */
+            var bar2 = $('right-tab-bar');
+            var dynActive2 = !!(bar2 && bar2.querySelector('.dynamic-tab.active'));
+            if (!dynActive2 && $('tools-display').style.display !== 'flex') {
+                loadHostDetail(L.selectedHostId);
+            }
+        }
+
+        /* Keep OS list current when OS tab is active */
+        var osPanel = $('os-panel');
+        if (osPanel && osPanel.classList.contains('active')) renderOsList();
     }).catch(function(err) {
         console.error('Snapshot poll error:', err);
     });
@@ -670,8 +1047,8 @@ document.addEventListener('DOMContentLoaded', function() {
         setText('stat-open-ports', (snap.summary||{}).open_ports || 0);
     } catch(e) { console.error('Initial snapshot parse error:', e); }
 
-    /* Start polling every 3 seconds */
-    L.pollTimer = setInterval(pollSnapshot, 3000);
+    /* Start polling every 1.5 seconds */
+    L.pollTimer = setInterval(pollSnapshot, 1500);
 
     /* ════════════════════════════════════════════════
        MODAL WIRING — connect menu buttons to dialogs
@@ -679,7 +1056,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function openModal(id) {
         var el = $(id);
-        if (el) { el.classList.add('is-open'); el.style.display = 'flex'; }
+        if (!el) return;
+        el.classList.add('is-open'); el.style.display = 'flex';
+        /* Auto-focus first text input or textarea in the modal */
+        setTimeout(function() {
+            var inp = el.querySelector('input[type="text"]:not([disabled]),textarea:not([disabled])');
+            if (inp) inp.focus();
+        }, 50);
     }
     function closeModal(id) {
         var el = $(id);
@@ -999,14 +1382,19 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(function() { alert('Note saved'); });
     });
 
-    /* ── Notes save in right panel ── */
-    var notesSave2 = $('notes-text');
-    if (notesSave2) {
-        notesSave2.addEventListener('blur', function() {
-            if (!L.selectedHostId) return;
-            postJson('/api/workspace/hosts/' + L.selectedHostId + '/note', { note: notesSave2.value });
-        });
-    }
+    /* ── Notes display/edit toggle ── */
+    var notesDisp = $('notes-display');
+    var notesTa   = $('notes-text');
+    /* Click display div → switch to textarea for editing */
+    if (notesDisp) notesDisp.addEventListener('click', function() {
+        _showNotesEdit(notesDisp.innerText);
+    });
+    /* Textarea blur → save, switch back to styled display */
+    if (notesTa) notesTa.addEventListener('blur', function() {
+        if (!L.selectedHostId) { _showNotesDisplay(notesTa.value); return; }
+        postJson('/api/workspace/hosts/' + L.selectedHostId + '/note', { note: notesTa.value });
+        _showNotesDisplay(notesTa.value);
+    });
 
     /* ── Scheduler run button ── */
     var schedulerBtn = $('workspace-run-scheduler-button');
@@ -1126,7 +1514,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', 'LEGION v2.8-flask – ' + path.split('/').pop());
+                setText('window-title', 'LEGION v2.9-flask – ' + path.split('/').pop());
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
@@ -1140,7 +1528,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.8-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.9-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -1152,7 +1540,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.8-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', 'LEGION v2.9-flask – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -1166,23 +1554,87 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert('LEGION v2.8-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
+        alert('LEGION v2.9-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
-    /* ── Ctrl+B note capture ── */
+    /* ── Ctrl+B / Send selection to notes (Qt6: view.py:sendSelectionToNotes) ──
+       Gets selected text + title from active output area, APPENDS to notes with
+       an orange header "=== Selection from {title} ===", flashes source orange,
+       activates Notes tab. Matches Qt6 behavior exactly. */
+    function sendSelectionToNotes() {
+        var sel = window.getSelection();
+        var text = sel ? sel.toString() : '';
+        if (!text || !L.selectedHostId) return;
+
+        /* Determine title from context (which output area / tab the text came from) */
+        var title = 'Output';
+        var sourceEl = null;
+        try {
+            var node = sel.anchorNode;
+            while (node && node !== document.body) {
+                if (node.id === 'script-output-inline') {
+                    /* Scripts tab — include script name + port */
+                    var scriptRow = $('host-detail-scripts').querySelector('tr.selected');
+                    var scriptName = scriptRow ? (scriptRow.cells[0]||{}).textContent : '';
+                    var scriptPort = scriptRow ? (scriptRow.cells[1]||{}).textContent : '';
+                    title = 'Scripts - ' + (scriptName || 'Script') + (scriptPort ? ' (Port ' + scriptPort + ')' : '');
+                    sourceEl = $('script-output-inline');
+                    break;
+                }
+                if (node.id === 'process-output-inline') {
+                    /* Processes tab */
+                    var procRow = $('processes-body').querySelector('tr.selected');
+                    var procName = procRow ? (procRow.cells[1]||{}).textContent : '';
+                    title = 'Process ' + (procName || String(L.selectedProcessId || ''));
+                    sourceEl = $('process-output-inline');
+                    break;
+                }
+                if (node.id === 'tool-output-text') {
+                    /* Tools display middle panel */
+                    var toolHostRow = $('tool-hosts-body').querySelector('tr.selected');
+                    var toolHost = toolHostRow ? (toolHostRow.cells[0]||{}).textContent : '';
+                    title = (L.selectedTool || 'Tool') + (toolHost ? ' - ' + toolHost : '');
+                    sourceEl = $('tool-output-text');
+                    break;
+                }
+                if (node.classList && node.classList.contains('tool-output-area')) {
+                    /* Dynamic tool output tab — get label from active tab button */
+                    var activeTabBtn = $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
+                    title = activeTabBtn ? activeTabBtn.textContent.trim() : 'Tool Output';
+                    sourceEl = node;
+                    break;
+                }
+                node = node.parentElement;
+            }
+        } catch(e) {}
+
+        /* Flash source area orange (Qt6: viewport orange 200ms) */
+        if (sourceEl) {
+            var orig = sourceEl.style.background;
+            sourceEl.style.background = 'rgba(255,165,0,0.35)';
+            setTimeout(function() { sourceEl.style.background = orig; }, 200);
+        }
+
+        /* Build formatted block: orange header + selection + spacing */
+        var header = '=== Selection from ' + title + ' ===';
+        var notesEl = $('notes-text');
+        if (notesEl) {
+            var existing = notesEl.value;
+            var newText = existing + (existing ? '\n' : '') + header + '\n' + text + '\n\n';
+            notesEl.value = newText;
+            _showNotesDisplay(newText);
+            /* Save to DB and mark Notes tab unread — stay on current tab */
+            postJson('/api/workspace/hosts/' + L.selectedHostId + '/note', { note: newText });
+            markTabUnread('notes-right');
+        }
+    }
+
     var noteSelBtn = $('action-note-selection');
-    if (noteSelBtn) noteSelBtn.addEventListener('click', function() {
-        var sel = window.getSelection().toString();
-        if (!sel || !L.selectedHostId) { alert('Select text first, then press Ctrl+B'); return; }
-        postJson('/api/workspace/hosts/' + L.selectedHostId + '/note', { note: sel })
-        .then(function() { alert('Selection sent to notes'); });
-    });
+    if (noteSelBtn) noteSelBtn.addEventListener('click', sendSelectionToNotes);
     document.addEventListener('keydown', function(e) {
         if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
             e.preventDefault();
-            var sel = window.getSelection().toString();
-            if (!sel || !L.selectedHostId) return;
-            postJson('/api/workspace/hosts/' + L.selectedHostId + '/note', { note: sel });
+            sendSelectionToNotes();
         }
     });
 
@@ -1205,7 +1657,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', 'LEGION v2.8-flask – *untitled');
+                setText('window-title', 'LEGION v2.9-flask – *untitled');
                 pollSnapshot();
             });
         }
@@ -1594,32 +2046,26 @@ document.addEventListener('DOMContentLoaded', function() {
        visualUpgrades features
        ═══════════════════════════════════════════ */
 
-    /* P1: Match highlighting in ANSI output */
-    /* Matches are detected server-side in WebController._capture_output
-       and stored in wc._matches. The snapshot could include them.
-       For now, we highlight keywords client-side in rendered output. */
-    var matchPositive = [];
-    var matchNegative = [];
-    try {
-        fetchJson('/api/settings/legion-conf').then(function(d) {
-            var text = d.text || '';
-            var inMatch = false;
-            text.split('\n').forEach(function(line) {
-                if (line.trim() === '[MatchSettings]') { inMatch = true; return; }
-                if (line.trim().startsWith('[') && inMatch) { inMatch = false; return; }
-                if (!inMatch) return;
-                var eq = line.indexOf('=');
-                if (eq < 0) return;
-                var key = line.substring(0, eq).trim();
-                var val = line.substring(eq+1).trim().replace(/^"|"$/g, '');
-                if (key.endsWith('-positive')) {
-                    val.split(',').forEach(function(v) { if (v.trim()) matchPositive.push(v.trim()); });
-                } else if (key.endsWith('-negative')) {
-                    val.split(',').forEach(function(v) { if (v.trim()) matchNegative.push(v.trim()); });
-                }
-            });
+    /* P1: Match highlighting — load positive/negative patterns from legion.conf once at startup.
+       matchPositive/matchNegative are global; highlightMatches() uses them when rendering output. */
+    fetchJson('/api/settings/legion-conf').then(function(d) {
+        var text = d.text || '';
+        var inMatch = false;
+        text.split('\n').forEach(function(line) {
+            if (line.trim() === '[MatchSettings]') { inMatch = true; return; }
+            if (line.trim().startsWith('[') && inMatch) { inMatch = false; return; }
+            if (!inMatch) return;
+            var eq = line.indexOf('=');
+            if (eq < 0) return;
+            var key = line.substring(0, eq).trim();
+            var val = line.substring(eq+1).trim().replace(/^"|"$/g, '');
+            if (key.endsWith('-positive')) {
+                val.split(',').forEach(function(v) { if (v.trim()) matchPositive.push(v.trim()); });
+            } else if (key.endsWith('-negative')) {
+                val.split(',').forEach(function(v) { if (v.trim()) matchNegative.push(v.trim()); });
+            }
         });
-    } catch(e) {}
+    }).catch(function() {});
 
     /* P2: Tab unread tracking */
     var lastSeenData = {};

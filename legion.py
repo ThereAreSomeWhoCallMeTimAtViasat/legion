@@ -274,7 +274,7 @@ if __name__ == "__main__":
         app.register_blueprint(web_bp)
 
         print("Legion web UI starting at http://127.0.0.1:5000")
-        app.run(host="127.0.0.1", port=5000, debug=False)
+        app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
         sys.exit(0)
 
     # --- GUI MODE ---

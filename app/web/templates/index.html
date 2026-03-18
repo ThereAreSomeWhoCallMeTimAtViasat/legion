@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v2.8-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v5.6-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -122,8 +122,13 @@
 <!-- Services panel (left) -->
 <div class="tab-content" id="services-left-panel">
     <div class="table-wrap">
-        <table><thead><tr><th>Name</th></tr></thead>
-        <tbody id="services-body"></tbody></table>
+        <table id="services-table">
+            <thead><tr>
+                <th style="cursor:pointer" data-sort="service">Name ▲</th>
+                <th style="cursor:pointer;width:55px" data-sort="port">Port</th>
+            </tr></thead>
+            <tbody id="services-body"></tbody>
+        </table>
     </div>
 </div>
 
@@ -207,9 +212,10 @@
     </div>
 </div>
 
-<!-- Notes (right) -->
+<!-- Notes (right) — display div (styled) + textarea (editing) toggle -->
 <div class="tab-content" id="notes-right">
-    <textarea class="notes-area" id="notes-text" placeholder="Host notes..."></textarea>
+    <div class="notes-area" id="notes-display" title="Click to edit"></div>
+    <textarea class="notes-area" id="notes-text" placeholder="Host notes..." style="display:none"></textarea>
 </div>
 
 <!-- Dynamic tool output tabs (content divs added by JS) -->
@@ -221,7 +227,7 @@
 <div id="tools-display" style="display:none;flex:1;min-height:0;overflow:hidden">
     <div style="display:flex;flex:1;min-height:0;overflow:hidden">
         <div class="table-wrap" style="width:275px;flex-shrink:0">
-            <table><thead><tr><th>Host</th><th>Port</th></tr></thead>
+            <table><thead><tr><th>Host</th><th>Port / Stage</th><th>Status</th></tr></thead>
             <tbody id="tool-hosts-body"></tbody></table>
         </div>
         <div class="vsplitter" id="tools-vsplitter"></div>
@@ -494,7 +500,7 @@
             <button id="help-close" class="modal-close-btn" type="button"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <table style="width:100%;margin-bottom:12px">
-            <tr><td style="color:var(--disabled,#808080);width:120px">Version</td><td>v2.8-flask (Web UI)</td></tr>
+            <tr><td style="color:var(--disabled,#808080);width:120px">Version</td><td>v2.9-flask (Web UI)</td></tr>
             <tr><td style="color:var(--disabled,#808080)">Author</td><td>Shane Scott, Dmitriy Dubson, Tim McLean</td></tr>
             <tr><td style="color:var(--disabled,#808080)">License</td><td>GNU GPL v3</td></tr>
             <tr><td style="color:var(--disabled,#808080)">Website</td><td><a href="https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion" style="color:var(--link,#2a82da)">GitHub Repository</a></td></tr>

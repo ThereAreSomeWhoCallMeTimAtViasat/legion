@@ -85,23 +85,36 @@ def snapshot():
         hosts.append({"id": hid, "ip": hip, "hostname": hostname, "os": osm,
                        "status": status, "open_ports": port_count})
 
+    # getServiceNames returns {name, port} pairs — already DISTINCT+sorted by name,port
     services_raw = logic.activeProject.repositoryContainer.serviceRepository.getServiceNames(filters)
     services = []
     for s in (services_raw or []):
         if isinstance(s, dict):
             sname = s.get('name', '')
-        elif hasattr(s, 'name'):
-            sname = s.name
-        elif hasattr(s, '__getitem__'):
-            sname = str(s[0])
+            sport = str(s.get('port', '') or '')
         else:
-            sname = str(s)
-        services.append({"service": sname, "host_count": 1, "port_count": 1, "protocols": ["tcp"]})
+            sname = str(s[0]) if hasattr(s, '__getitem__') else str(s)
+            sport = str(s[1]) if hasattr(s, '__getitem__') and len(s) > 1 else ''
+        services.append({"service": sname, "port": sport})
 
-    tools = wc.getContextMenuForServiceName('*')
-    tool_list = [{"label": t.get("label", ""), "tool_id": t.get("tool_id", t.get("label", "")),
-                   "run_count": 0, "last_status": "", "runnable": True,
-                   "danger_categories": []} for t in tools if t.get("action") == "port-action"]
+    # Tools = unique process names from DB (tools that actually ran), matching Qt6
+    # view.py:updateToolsTableView → getProcessesFromDB(showProcesses='noNmap') + _dedupeTools()
+    from collections import OrderedDict
+    procs_for_tools = logic.activeProject.repositoryContainer.processRepository.getProcesses(
+        filters, showProcesses='noNmap')
+    tool_counts = OrderedDict()
+    tool_matches = {}
+    for p in (procs_for_tools or []):
+        name = p.get('name', '') if isinstance(p, dict) else getattr(p, 'name', '')
+        if name:
+            tool_counts[name] = tool_counts.get(name, 0) + 1
+            # Propagate match flag: any matching process colours the whole tool entry
+            match_key = f"{p.get('hostIp','') if isinstance(p,dict) else getattr(p,'hostIp','')}:{p.get('tabTitle','') if isinstance(p,dict) else getattr(p,'tabTitle','')}"
+            if getattr(wc, '_matches', {}).get(match_key):
+                tool_matches[name] = True
+    tool_list = [{"label": name, "tool_id": name, "run_count": count,
+                  "has_match": tool_matches.get(name, False)}
+                 for name, count in tool_counts.items()]
 
     procs_raw = logic.activeProject.repositoryContainer.processRepository.getProcesses(filters)
     processes = []
@@ -123,6 +136,24 @@ def snapshot():
             running += 1
         else:
             finished += 1
+        # Live elapsed for running processes — count up from startTime
+        if status == "Running":
+            import time as _time
+            from datetime import datetime as _dt
+            start_str = str(proc.get('startTime', '') or '')
+            start_ts = None
+            for fmt in ('%d %b %Y %H:%M:%S.%f', '%Y%m%d%H%M%S%f'):
+                try:
+                    start_ts = _dt.strptime(start_str, fmt).timestamp()
+                    break
+                except Exception:
+                    pass
+            proc['elapsed_secs'] = int(_time.time() - start_ts) if start_ts else 0
+        else:
+            proc['elapsed_secs'] = None  # use stored elapsed for finished
+        # Flag processes that have match hits (for tab-highlight like Qt6)
+        match_key = f"{proc.get('hostIp', '')}:{proc.get('tabTitle', '')}"
+        proc['has_match'] = bool(getattr(wc, '_matches', {}).get(match_key))
         processes.append(proc)
 
     return jsonify({
@@ -136,6 +167,10 @@ def snapshot():
         "project": {"name": getattr(logic.activeProject.properties, "projectName", "*untitled"),
                      "output_folder": getattr(logic.activeProject.properties, "outputFolder", ""),
                      "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True)},
+        # OS summary — classified groups (Linux, Windows, Unknown) matching Qt6
+        # getOperatingSystemsSummary() so the OS tab list shows the same names
+        # the /os/<name>/hosts API expects.
+        "os_groups": logic.activeProject.repositoryContainer.hostRepository.getOperatingSystemsSummary() or [],
         "scheduler_decisions": [],
         "scheduler_approvals": [],
         "jobs": [],
@@ -182,6 +217,135 @@ def host_detail(host_id):
         session.close()
 
 
+@web_bp.get("/api/workspace/hosts/<int:host_id>/information")
+def host_information(host_id):
+    """G1: Information tab — Qt6: view.py:updateInformationView + buildInformationText"""
+    wc = _wc()
+    logic = _logic()
+    session = logic.activeProject.database.session()
+    try:
+        from db.entities.host import hostObj
+        host = session.query(hostObj).filter_by(id=host_id).first()
+        if not host:
+            return _err(f"Host {host_id} not found", 404)
+        ip = getattr(host, 'ipv4', '') or getattr(host, 'ip', '')
+        # Count port states (Qt6: getPortStatesForHost)
+        states = wc.getPortStatesForHost(host_id) or []
+        # Rows can be SQLAlchemy Row, tuple, dict or plain str — normalise to str
+        def _state(s):
+            if isinstance(s, dict): return str(s.get('state', ''))
+            try: return str(s[0])
+            except Exception: return str(s)
+        open_c = sum(1 for s in states if _state(s) == 'open')
+        closed_c = sum(1 for s in states if _state(s) == 'closed')
+        filtered_c = sum(1 for s in states if _state(s) not in ('open', 'closed'))
+        return jsonify({
+            "ip": ip,
+            "ipv6": getattr(host, 'ipv6', '') or '',
+            "hostname": getattr(host, 'hostname', '') or '',
+            "status": getattr(host, 'status', '') or '',
+            "os": getattr(host, 'osMatch', '') or '',
+            "os_accuracy": getattr(host, 'osAccuracy', '') or '',
+            "mac": getattr(host, 'macaddr', '') or '',
+            "vendor": getattr(host, 'vendor', '') or '',
+            "open_ports": open_c,
+            "closed_ports": closed_c,
+            "filtered_ports": filtered_c,
+            "asn": getattr(host, 'asn', '') or '',
+            "isp": getattr(host, 'isp', '') or '',
+            "country_code": getattr(host, 'countryCode', '') or '',
+            "city": getattr(host, 'city', '') or '',
+            "latitude": getattr(host, 'latitude', '') or '',
+            "longitude": getattr(host, 'longitude', '') or '',
+        })
+    finally:
+        session.close()
+
+
+@web_bp.get("/api/workspace/hosts/<int:host_id>/cves-list")
+def host_cves_list(host_id):
+    """G2: CVEs tab — Qt6: view.py:updateCvesByHostView"""
+    wc = _wc()
+    logic = _logic()
+    session = logic.activeProject.database.session()
+    try:
+        from db.entities.host import hostObj
+        host = session.query(hostObj).filter_by(id=host_id).first()
+        if not host:
+            return _err(f"Host {host_id} not found", 404)
+        ip = getattr(host, 'ipv4', '') or getattr(host, 'ip', '')
+    finally:
+        session.close()
+    cves_raw = wc.getCvesFromDB(ip) or []
+    cves = []
+    for c in cves_raw:
+        if isinstance(c, dict):
+            cves.append({"name": c.get('name',''), "severity": c.get('severity',''),
+                         "product": c.get('product',''), "version": c.get('version',''),
+                         "url": c.get('url',''), "source": c.get('source',''),
+                         "exploit_id": c.get('exploitId',''), "exploit_url": c.get('exploitUrl','')})
+        else:
+            cves.append({"name": getattr(c,'name',''), "severity": str(getattr(c,'severity','')),
+                         "product": getattr(c,'product',''), "version": getattr(c,'version',''),
+                         "url": getattr(c,'url',''), "source": getattr(c,'source',''),
+                         "exploit_id": getattr(c,'exploitId',''), "exploit_url": getattr(c,'exploitUrl','')})
+    return jsonify({"cves": cves})
+
+
+@web_bp.get("/api/workspace/hosts/<int:host_id>/scripts-list")
+def host_scripts_list(host_id):
+    """G3: Scripts tab — Qt6: view.py:updateScriptsView"""
+    wc = _wc()
+    logic = _logic()
+    session = logic.activeProject.database.session()
+    try:
+        from db.entities.host import hostObj
+        host = session.query(hostObj).filter_by(id=host_id).first()
+        if not host:
+            return _err(f"Host {host_id} not found", 404)
+        ip = getattr(host, 'ipv4', '') or getattr(host, 'ip', '')
+    finally:
+        session.close()
+    scripts_raw = wc.getScriptsFromDB(ip) or []
+    scripts = []
+    for s in scripts_raw:
+        if isinstance(s, dict):
+            scripts.append({"id": s.get('id',''), "script_id": s.get('scriptId',''),
+                            "port": str(s.get('portId','') or ''), "protocol": s.get('protocol','')})
+        else:
+            scripts.append({"id": getattr(s,'id',''), "script_id": getattr(s,'scriptId',''),
+                            "port": str(getattr(s,'portId','') or ''), "protocol": getattr(s,'protocol','')})
+    return jsonify({"scripts": scripts})
+
+
+@web_bp.get("/api/workspace/scripts/<int:script_id>/output")
+def script_output(script_id):
+    """G3: Script output — Qt6: view.py:updateScriptsOutputView"""
+    wc = _wc()
+    rows = wc.getScriptOutputFromDB(script_id) or []
+    output = ''.join(r.get('output','') if isinstance(r,dict) else getattr(r,'output','')
+                     for r in rows)
+    return jsonify({"id": script_id, "output": output})
+
+
+@web_bp.get("/api/workspace/os/<path:os_name>/hosts")
+def os_hosts(os_name):
+    """G4: OS hosts table — Qt6: view.py:updateOsHostsTableView"""
+    wc = _wc()
+    hosts_raw = wc.getHostsForOperatingSystem(os_name) or []
+    hosts = []
+    for h in hosts_raw:
+        if isinstance(h, dict):
+            hosts.append({"id": h.get('id',''), "ip": h.get('ip','') or h.get('ipv4',''),
+                          "hostname": h.get('hostname',''), "os": h.get('osMatch','') or h.get('os',''),
+                          "status": h.get('status','')})
+        else:
+            hosts.append({"id": getattr(h,'id',''), "ip": getattr(h,'ipv4','') or getattr(h,'ip',''),
+                          "hostname": getattr(h,'hostname',''), "os": getattr(h,'osMatch',''),
+                          "status": getattr(h,'status','')})
+    return jsonify({"os": os_name, "hosts": hosts})
+
+
 # ═══════════════════════════════════════════
 # Process management
 # ═══════════════════════════════════════════
@@ -203,15 +367,36 @@ def process_output(process_id):
         session.close()
     offset = int(request.args.get("offset", 0) or 0)
     max_chars = int(request.args.get("max_chars", 24000) or 24000)
-    chunk = output[offset:offset + max_chars]
     status = proc.get("status", "")
+    # Screenshooter: find the PNG eyewitness put in {outputfile}-dir/ and serve as image
+    proc_name = proc.get("name", "")
+    outputfile = proc.get("outputfile", "") or ""
+    if proc_name == "screenshooter" and outputfile:
+        outdir = outputfile + '-dir'
+        if os.path.isdir(outdir):
+            for _root, _dirs, _files in os.walk(outdir):
+                for _fname in _files:
+                    if _fname.endswith('.png'):
+                        output = f"screenshot:{os.path.join(_root, _fname)}"
+                        break
+                if output.startswith('screenshot:'):
+                    break
+    chunk = output[offset:offset + max_chars]
     return jsonify({
-        "id": process_id, "name": proc.get("name", ""), "hostIp": proc.get("hostIp", ""),
+        "id": process_id, "name": proc_name, "hostIp": proc.get("hostIp", ""),
         "port": proc.get("port", ""), "command": proc.get("command", ""), "status": status,
         "output_chunk": chunk, "output_length": len(output),
         "offset": offset, "next_offset": offset + len(chunk),
         "completed": status not in ("Running", "Waiting"),
     })
+
+@web_bp.get("/api/screenshots")
+def serve_screenshot():
+    """Serve a screenshot image by absolute path (query param avoids Flask path-stripping)."""
+    path = request.args.get('path', '')
+    if not path or not os.path.isfile(path):
+        return _err("screenshot not found", 404)
+    return send_from_directory(os.path.dirname(path), os.path.basename(path))
 
 @web_bp.post("/api/processes/<int:process_id>/kill")
 def process_kill(process_id):

@@ -228,6 +228,7 @@ class HostRepository:
             os_category = classify_os(os_match)
             if os_category.lower() == desired.lower():
                 results.append({
+                    'id': getattr(host, 'id', None),
                     'ip': getattr(host, 'ip', '') or getattr(host, 'ipv4', ''),
                     'hostname': getattr(host, 'hostname', ''),
                     'os': os_match,

@@ -4,7 +4,7 @@
 - User's database refactoring and features TAKE PRECEDENCE over upstream code
 - Tests for every method before building — prove one element works before doing the whole thing
 - Host is always the key — never mix data from different hosts in views
-- Cache-busting on static files + version indicator in UI
+- Version number must be bumped in `index.html` with every change set, BEFORE restarting server
 - Prefers comprehensive explanations and step-by-step guidance
 
 ## Project Overview
@@ -12,13 +12,10 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — your pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (being replaced by Flask), SQLAlchemy ORM, SQLite
-- **Size:** ~18,000 lines across 150 Python files
-- **Tests:** 164/164 passing (run: see "Running" section below)
+- **Current Flask version:** v4.2-flask
 
-## CRITICAL ARCHITECTURE DECISION (2026-03-17)
+## CRITICAL ARCHITECTURE DECISION
 **DO NOT USE upstream runtime.py.** The user's logic in controller.py IS the source of truth.
-
-The upstream Flask `runtime.py` (6559 lines) is someone else's REIMPLEMENTATION of the user's controller.py logic. It has known gaps (scheduler doesn't match, service name mismatches, missing tool triggers). Instead:
 
 ```
 YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
@@ -28,65 +25,102 @@ YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
     Everything else stays EXACTLY the same
 ```
 
-## Current State (2026-03-17)
-- **Branch:** `flask-clean` (last commit: 940bc44) — v2.6-flask
-- **Tests:** 241/242 passing across 7 test files (1 intentional skip)
-- **WebController:** `controller/web_controller.py` (1060 lines)
-  - ALL 43 Qt methods + match detection + deduplication
-  - QProcess → subprocess.Popen, QMenu → JSON, QTimer → threading, self.view → no-op
-- **Routes:** `app/web/routes.py` (~400 lines) — calls WebController directly, no runtime.py
-- **Frontend:** Qt6 Fusion Dark 1:1 replica with all visualUpgrades features
-  - `legion.css` — QPalette + match highlighting + tab-unread + blink animations
-  - `index.html` — Qt6 layout + Add Hosts/Port/Filters/Help/Brute/Config dialogs
-  - `legion.js` (~1500 lines) — all interactions, match rendering, tab colors, localStorage, file browser
-- **visualUpgrades features:** ALL ported except interactive terminal (xterm.js)
+## Running
+```bash
+# Start Flask (v4.2)
+sudo python3 legion.py --web          # http://127.0.0.1:5000
+# Logs: /tmp/legion-web.log
+
+# Core test suites
+sudo python3 tests/test_behavioral.py          # 15 — most critical, run always
+sudo python3 tests/test_signal_chains.py       # 28 — scheduler/chain
+sudo python3 tests/test_phase1_right_panel.py  # 27 — right panel APIs
+```
 
 ## Branch History
-- `flask-clean` — **CURRENT** — built from visualUpgrades, 164/164 tests, zero upstream
-- `flask-rewrite` — previous attempt from visualUpgradesCC, archived
+- `flask-clean` — **CURRENT** — built from visualUpgrades, zero upstream
+- `flask-rewrite` — previous attempt, archived
 - `visualUpgradesCC` — upstream integration, DO NOT USE for Flask
-- `visualUpgrades` — your pure 77 commits, base for flask-clean
+- `visualUpgrades` — user's pure 77 commits, base for flask-clean
 - `master` — upstream Hackman238 code
 
-## Test Status — 122/122 PASSING
+## Architecture — Critical Files
 
-### test_webcontroller.py (28/28) — Core WebController
-- **Tier 1 (21):** Pure logic — imports, project, DB queries, settings without Qt
-- **Tier 2 (4):** Context menus → JSON (host/service/port/process menus)
-- **Tier 3 (3):** runCommand with subprocess, output captured in DB
+| File | Purpose |
+|------|---------|
+| `controller/web_controller.py` | Qt-free WebController: scheduler, _chain_next_stage, screenshooter, process queue |
+| `controller/controller.py` | Original Qt6 controller — DO NOT modify |
+| `app/web/routes.py` | All Flask API endpoints |
+| `app/web/static/js/legion.js` | All UI interactions, rendering, polling |
+| `app/web/static/css/legion.css` | Qt6 Fusion Dark palette replica |
+| `app/web/templates/index.html` | Qt6 layout — version string is here |
+| `db/SqliteDbAdapter.py` | SQLAlchemy adapter — WAL mode enabled |
+| `app/importers/nmap_import.py` | Qt-free NmapImporter wrapper |
+| `app/importers/NmapImporter.py` | Original Qt6 importer — DO NOT modify |
 
-### test_webcontroller_remaining.py (31/31) — All Methods
-- **Group A (15):** Lifecycle — start, project CRUD, save, cleanup, import, screenshot
-- **Group B (11):** Process execution — addHosts, handleHostAction (mark/delete/purge), handleServiceNameAction, handlePortAction, handleProcessAction (kill/retry/clear), runStagedNmap, killAll, checkQueue
-- **Group C (5):** Match/UI — handleMatch, handleHydraFindings, markAsInteractive, saveOutputs, scheduler
+## Known Critical Bugs & Patterns
 
-### test_routes_webcontroller.py (21/21) — Route Wiring
-- **R1 (7):** Query routes — health, snapshot, host detail, settings
-- **R2 (3):** Action routes — new project, save note, clear processes
-- **R3 (4):** Context menu routes — GET /api/menus/{host,service,port,process}
-- **R4 (3):** Host action routes — POST action dispatch, tool run, service action
-- **R5 (3):** Process mgmt — run→output, kill via route, snapshot shows processes
-- **R6 (1):** Nmap scan route
+### SQLite / Sessions
+- **WAL mode is required** — without it, frequent output writes freeze all Flask reads
+  - Set in `SqliteDbAdapter.establishSqliteConnection` via `event.listens_for` → `PRAGMA journal_mode=WAL`
+- **ORM objects detach after `session.close()`** — never use `getPortsByHostId()` (returns ORM) in scheduler; use `getPortsAndServicesByHostIP()` (returns plain dicts)
+- `session.remove()` creates fresh session; `session.close()` just closes connection but keeps session in scoped registry
+- NmapImporter uses `self.db.session()` (same scoped_session as scheduler thread) and commits but never removes
 
-### test_flask_integration.py (42/42) — End-to-End
-- **E1 (8):** Page load — HTML structure, menubar, panels, CSS palette, JS logic
-- **E2 (5):** Host workflow — snapshot hosts, detail ports, service names, mark action
-- **E3 (4):** Service workflow — services listed, HTTP/SSH/MySQL menus correct
-- **E4 (4):** Tool workflow — run tool, get output, kill, appears in snapshot
-- **E5 (5):** Process lifecycle — Running/Finished/Killed status, retry, clear
-- **E6 (5):** Context menus match Qt6 — structure, submenus, checked/unchecked
-- **E7 (3):** Project lifecycle — new, details, save note
-- **E8 (3):** Settings — load legion.conf, has StagedNmap, has Scheduler
-- **E9 (3):** Staged nmap — method exists, settings loaded, scan route works
-- **E10 (2):** Data integrity — host isolation, delete doesn't affect others
+### Staged Nmap Chain
+- Stage ports: stage1=HTTP, stage2=NSE|vulners (slow, 2-3min), stage3=SMB/DB, stage4=FTP/SSH/RDP, stage5=remaining, stage6=high
+- `_chain_next_stage`: polls `_active_processes` until `_popen` is not None (process started), then `wait()`
+- After each stage XML import: `self.scheduler(isNmapImport=False)` — this is the correct Qt6 equivalent
+- Scheduler calls `session.remove()` before `getHosts` to bypass any cached session state
 
-## Qt Replacement Patterns (proven by tests)
+### Scheduler
+- Uses `getPortsAndServicesByHostIP(hip, filters)` → plain dict rows → no ORM detachment
+- Duplicate check: queries process DB for same name+hostIp+port before running
+- Screenshooter: special case handled before portActions lookup; also guarded by `_screenshots_taken` in-memory set
+- `isNmapImport=False` for live scans; `isNmapImport=True` only for file import (respects `enable-scheduler-on-import` setting)
+
+### Process Output
+- `_capture_output` flushes every 5s or 100 lines (not 2s — reduces SQLite write frequency)
+- `storeProcessOutput` uses `filter_by(id=process_id)` — works by coincidence since process.id == process_output.id (1:1, both auto-increment)
+- Dynamic tool output tabs auto-poll every 2s while process status is Running
+
+### startTime Format
+- Stored as HUMAN_FORMAT: `'%d %b %Y %H:%M:%S.%f'` (e.g. `17 Mar 2026 19:12:35.171589`)
+- Snapshot route tries both `'%d %b %Y %H:%M:%S.%f'` and `'%Y%m%d%H%M%S%f'`
+
+## Unresolved Issues (investigate next session)
+
+### #28 — Hosts table doesn't populate after host discovery
+Diagnostic line in log after stage 1:
+```
+[Chain1] XML=NNNb  raw-DB: X hosts, Y ports, Z services
+```
+- If `XML=0b` → nmap didn't write output (scan itself failed)
+- If `XML>0b, raw-DB: 0 hosts` → NmapImporter ran but parsed no hosts (target down? all ports filtered? XML malformed?)
+- If `raw-DB: 1+ hosts` → data IS in DB, issue is SQLAlchemy session isolation (WAL fix may resolve)
+
+### #29 — Screenshooter not firing after port 80 discovered
+Depends on #28. Scheduler sees 0 hosts → never reaches screenshooter check. Once #28 resolved, watch for:
+```
+[Scheduler] hosts visible: N
+[Scheduler] 192.168.x.x: N open ports
+[Scheduler] checking IP:80/tcp svc='http'
+[Scheduler] Screenshot queued: IP:80
+```
+
+## Phase 2 Plan (next)
+Remaining gap analysis phases:
+- **Phase 2**: Host double-click, port right-click/double-click, tool tab close button + context menu (save output)
+- **Phase 3**: Table column sorting (host/process), column width localStorage persistence
+- **Phase 4**: State restoration (`restoreToolTabs` on project open), advanced filter checkboxes working, host lifecycle (delete clears tabs + dynamic panels)
+
+## Qt Replacement Patterns
 ```python
-# QMenu → JSON (Tier 2)
+# QMenu → JSON
 QMenu()                    → list of dicts
 menu.addAction("label")    → items.append({"label": "...", "action": "..."})
 
-# QProcess → subprocess (Tier 3)
+# QProcess → subprocess
 MyQProcess(...)            → WebProcessStub(...)
 qProcess.start(cmd)        → subprocess.Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
 qProcess.readAllStdout()   → background thread reads stdout line-by-line, flushes to DB
@@ -94,112 +128,31 @@ qProcess.readAllStdout()   → background thread reads stdout line-by-line, flus
 # QTimer → threading
 QTimer.singleShot(ms, fn)  → threading.Timer(ms/1000, fn).start()
 
-# self.view.xxx() → no-op or state update
-self.view.updateInterface() → no-op (browser polls /api/snapshot every 3s)
-self.view.createNewTabForHost() → return None
+# self.view.xxx() → no-op
+self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
+self.view.createNewTabForHost() → return None (renderDynamicToolTabs in JS handles it)
 ```
 
-## Architecture (MVC)
+## Key Systems
 
-### Critical Files Map
-| File | Lines | Purpose | Qt-free? |
-|------|-------|---------|----------|
-| `controller/web_controller.py` | 420 | Qt-free wrapper around controller.py | ✓ NEW |
-| `controller/controller.py` | ~3956 | Process queue, scheduling, UI orchestration | 54 pure / 43 need wrapping |
-| `app/logic.py` | | Business logic, project lifecycle | ✓ zero Qt |
-| `app/settings.py` | ~450 | AppSettings + Settings classes | ✓ zero Qt (uses config_store.py) |
-| `app/auxiliary.py` | ~490 | MyQProcess (166 lines), Filters, match detection | MyQProcess → WebProcessStub |
-| `db/repositories/*` | | All DB operations | ✓ zero Qt |
-| `db/SqliteDbAdapter.py` | | SQLAlchemy DB adapter | QSemaphore → threading.Semaphore needed |
-| `app/ProjectManager.py` | | Project create/open/save | ✓ zero Qt |
-| `legion.conf` | ~360 | All configuration (INI format) | ✓ |
+### Screenshooter
+- Configured in `[SchedulerSettings]`: `screenshooter="http,https,ssl,...", tcp`
+- Runs via `runCommand` (appears in process table immediately)
+- Requires eyewitness at `/usr/bin/eyewitness`
+- Output served via `/api/screenshots?path=` (not `<path:filename>` — Flask strips leading slash)
+- Screenshot PNG found by walking `{outputfile}-dir/` for first `.png`
 
-### Flask Frontend Files (rewritten from scratch)
-| File | Lines | Purpose |
-|------|-------|---------|
-| `app/web/static/css/legion.css` | ~450 | Qt6 Fusion Dark palette replica |
-| `app/web/static/js/legion.js` | ~500 | Fresh JS: view logic from view.py |
-| `app/web/templates/index.html` | ~1050 | Qt6 gui.py layout + upstream modals |
-| `app/web/templates/base.html` | ~17 | Minimal shell |
+### Process Execution Flow
+1. `runCommand()` → WebProcessStub → `fastProcessQueue.put()` → `checkProcessQueue()`
+2. `checkProcessQueue()` → `subprocess.Popen` → sets `proc._start_mono = time.monotonic()` → starts `_capture_output` thread
+3. `_capture_output` → reads stdout → flushes to DB every 5s/100 lines → on finish: stores elapsed, marks Finished, imports XML (if nmap non-staged), calls scheduler, calls checkProcessQueue
+4. Browser polls `/api/snapshot` every 1.5s → `renderProcesses` → dynamic tabs auto-refresh
 
-### Upstream Flask Files (kept for API endpoints only)
-| File | Lines | Purpose | Status |
-|------|-------|---------|--------|
-| `app/web/runtime.py` | 6559 | Upstream reimplementation | **BEING REPLACED by WebController** |
-| `app/web/routes.py` | 1153 | Flask endpoint handlers | Keep API endpoints |
-| `app/web/jobs.py` | 286 | Background job queue | Keep |
-| `app/web/ws.py` | 18 | WebSocket support | Keep |
-| `app/web/bootstrap.py` | 20 | App factory | Keep |
-
-## Process Execution Flow (WebController — the new way)
-1. User right-clicks host/port → JS sends action to Flask route
-2. Flask route calls WebController.handleHostAction/handlePortAction
-3. WebController.runCommand() creates WebProcessStub + subprocess.Popen
-4. ProcessRepository.storeProcess() saves to DB with status='Waiting'
-5. storeProcessRunningStatus() updates with PID
-6. Background thread (_capture_output) reads stdout, flushes to DB periodically
-7. Process finishes → storeProcessOutput() with preserve_status=False → status='Finished'
-8. Browser polls /api/snapshot every 3s → sees new process → renders in table
-9. User clicks process row → JS fetches /api/processes/{id}/output → renders ANSI inline
-
-## Key Systems to Preserve in WebController
-
-### Deduplication System
-- general_tool_duplication setting: append/newTab/skip/askMe
-- checkProcessQueue() must check is_appending property BEFORE clearing output
-- findExistingTabIndex() logic → becomes a DB query for existing processes with same tool+host+port
-
-### Match Detection & Highlighting
-- [MatchSettings] in legion.conf: global-positive, global-negative, {tool}-positive, {tool}-negative
-- Negative check first, then positive. Substring filtering for overlapping ranges.
-- In WebController: handleMatch() stores match data in state dict, browser renders highlights
-
-### Staged Nmap
-- 6 stages in [StagedNmapSettings]: HTTP → SMB/DB → FTP/SSH → vulners → remaining → high ports
-- Stage N completion triggers Stage N+1 via process finished callback
-- runStagedNmap() chains runCommand() calls
-
-### 18 Fragile Areas — items relevant to WebController
-- **#1 Process timer:** Must check BOTH queue empty AND no Running processes
-- **#6 DB sessions:** get session, use, close in try/except/finally
-- **#7 Match substring filtering:** positive inside negative must not highlight
-- **#8 Purge 10-step:** cancel screenshots → kill processes → delete DB records, delayed validation
-- **#10 Interactive detection:** isInteractive flag survives lifecycle, 10-second msfconsole delay
-- **#12 Output persistence:** saveRunningProcessOutputs() BEFORE closing DB
-- **#15 OS discovery flag:** -O flag in BOTH discovery=True AND discovery=False paths
-
-## legion.conf
-- Installed at `/root/.local/share/legion/legion.conf` (Flask reads this with sudo)
-- Repo copy at `legion.conf` — keep in sync
-- Merged config: best staged order (HTTP→SMB/DB→FTP/SSH→vulners), best match settings
-- SchedulerSettings auto-runs ~12 tools; nikto/whatweb are manual via PortActions
-- Known issues: smbenum service name mismatch (microsoft-ds vs netbios-ssn), screenshooter empty command
-
-## Running
-```bash
-# Start Flask
-sudo python3 legion.py --web          # http://127.0.0.1:5000
-
-# Run ALL 242 tests
-sudo python3 tests/test_webcontroller.py && \
-sudo python3 tests/test_webcontroller_remaining.py && \
-sudo python3 tests/test_routes_webcontroller.py && \
-sudo python3 tests/test_ui_wiring.py && \
-sudo python3 tests/test_flask_integration.py && \
-sudo python3 tests/test_new_dialogs.py && \
-sudo python3 tests/test_visualupgrades_features.py
-
-# Individual suites
-sudo python3 tests/test_webcontroller.py           # 28 — core WebController
-sudo python3 tests/test_webcontroller_remaining.py  # 31 — all methods
-sudo python3 tests/test_routes_webcontroller.py     # 21 — route wiring
-sudo python3 tests/test_ui_wiring.py                # 42 — every button/menu
-sudo python3 tests/test_flask_integration.py        # 42 — end-to-end
-sudo python3 tests/test_new_dialogs.py              # 55 — dialogs + routes
-sudo python3 tests/test_visualupgrades_features.py  # 23 — match/tabs/dedup
-```
+### Services Tab
+- Left panel: Name + Port columns, both sortable by clicking header
+- `getServiceNames` returns `DISTINCT service.name, ports.portId` already
 
 ## Commit Authors
-- **ifly53e** (62 commits): Primary developer - color system, dedup, terminal, DB refactoring, splitters, purge, match filtering, tab reordering, process context menu
-- **therearesomewhocallmetimatviasat** (17 commits): Testing infrastructure, terminal, output persistence, Ctrl+B, PTY config, match filtering, OS discovery, sorting fix
+- **ifly53e** (62 commits): Primary developer
+- **therearesomewhocallmetimatviasat** (17 commits): Testing + features
 - Both are Tim McLean (the user)
