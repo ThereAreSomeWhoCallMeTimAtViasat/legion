@@ -59,8 +59,10 @@ var matchNegative = [];
 /* ── Tab unread helper (global so loadHostDetail can call it) ── */
 var _prevHostData = {};  /* per-host data hashes for unread detection */
 function markTabUnread(tabId) {
+    /* Qt6: highlightTab ALWAYS colors the tab orange, even if it's the active tab.
+       Previous code skipped active tabs → user never saw orange when watching Services tab. */
     var tabBtn = document.querySelector('[data-tab="' + tabId + '"]');
-    if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.classList.add('tab-unread');
+    if (tabBtn) tabBtn.classList.add('tab-unread');
 }
 
 /* ── State (mirrors ui/ViewState.py) ── */
@@ -496,11 +498,30 @@ function _drawProcesses() {
                          (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : '');
     });
 
-    /* Auto-select first process when table transitions from empty to populated */
-    if (!L.selectedProcessId && L.processes.length > 0 && L._lastProcCount === 0) {
-        var firstProc = body.querySelector('tr[data-process-id]');
-        if (firstProc) firstProc.click();
+    /* Auto-select: when a new Running process appears, switch to it so output shows.
+       Bug was: only auto-selected on 0→N transition. When stage 2 started while stage 1
+       output was shown, user had to manually click stage 2 to see its output.
+       Fix: track running process IDs; when a NEW running ID appears, click its row. */
+    var curRunningIds = L.processes.filter(function(p){return p.status==='Running';})
+                                   .map(function(p){return String(p.id);}).sort().join(',');
+    if (!L._prevRunningIds) L._prevRunningIds = '';
+    if (curRunningIds !== L._prevRunningIds) {
+        /* Find newly-running process IDs */
+        var prevSet = L._prevRunningIds ? L._prevRunningIds.split(',') : [];
+        var newRunning = curRunningIds.split(',').filter(function(id){
+            return id && prevSet.indexOf(id) < 0;
+        });
+        if (newRunning.length > 0) {
+            /* Click the newest running process row */
+            var newRow = body.querySelector('tr[data-process-id="' + newRunning[newRunning.length-1] + '"]');
+            if (newRow) newRow.click();
+        } else if (!L.selectedProcessId && L.processes.length > 0) {
+            /* No running processes but nothing selected — select first row */
+            var firstProc = body.querySelector('tr[data-process-id]');
+            if (firstProc) firstProc.click();
+        }
     }
+    L._prevRunningIds = curRunningIds;
     L._lastProcCount = L.processes.length;
 }
 
@@ -766,7 +787,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v6.5-flask – ' + title);
+        setText('window-title', 'LEGION v6.7-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -864,7 +885,15 @@ function loadProcessOutput(processId, targetEl) {
             var imgUrl = '/api/screenshots?path=' + encodeURIComponent(imgPath);
             targetEl.innerHTML = matchBanner + '<img src="' + imgUrl + '" style="max-width:100%;max-height:100%;object-fit:contain" alt="screenshot"/>';
         } else {
-            targetEl.innerHTML = matchBanner + highlightMatches(ansiToHtml(text));
+            var html = matchBanner + highlightMatches(ansiToHtml(text));
+            /* If process is Running but output hasn't changed, show activity indicator */
+            if (proc && proc.status === 'Running' && text.length > 0) {
+                var elapsed = proc.elapsed_secs || 0;
+                var fmtE = Math.floor(elapsed/60) + 'm ' + (elapsed%60) + 's';
+                html += '\n<div style="color:var(--disabled);margin-top:8px;font-style:italic">'
+                      + '\u23f3 Running... ' + fmtE + ' elapsed</div>';
+            }
+            targetEl.innerHTML = html;
         }
         targetEl.scrollTop = targetEl.scrollHeight;
     }).catch(function() {

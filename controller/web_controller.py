@@ -571,7 +571,7 @@ class WebController:
                        and not getattr(p, 'isInteractive', False)]
         running_scans = [p for p in running_all if 'nmap' in str(p.name).lower()]
 
-        log.debug(f"[Queue] running={len(running_all)}/{max_fast} scans={len(running_scans)}/{max_scans} queued={self.fastProcessQueue.qsize()}")
+        log.info(f"[Queue] running={len(running_all)}/{max_fast} scans={len(running_scans)}/{max_scans} queued={self.fastProcessQueue.qsize()}")
 
         # Start processes while under limits (controller.py:1590-1591)
         while not self.fastProcessQueue.empty():
@@ -930,11 +930,22 @@ class WebController:
             tabTitle = getattr(proc, 'tabTitle', '')
             all_matches = set()
             line_count = 0
+            last_line_time = time.monotonic()
+
+            import threading as _thr
+            log.info(f"[Capture:{dbId}] STARTED reading output for {toolName} ({tabTitle}) thread={_thr.current_thread().name}")
 
             for line in iter(proc._popen.stdout.readline, b''):
+                now = time.monotonic()
+                gap = now - last_line_time
+                last_line_time = now
                 text = line.decode('ISO-8859-1', errors='replace')
                 output_parts.append(text)
                 line_count += 1
+
+                # Log every 100 lines or if readline blocked for >10s
+                if line_count % 100 == 0 or gap > 10:
+                    log.info(f"[Capture:{dbId}] line={line_count} gap={gap:.1f}s total_chars={sum(len(p) for p in output_parts)}")
 
                 # Write to temp file immediately (no SQLite, no GIL pressure)
                 if live_file:
@@ -965,8 +976,11 @@ class WebController:
 
             proc._popen.wait()
             finish_mono = time.monotonic()
+            log.info(f"[Capture:{dbId}] FINISHED reading. lines={line_count} writing {sum(len(p) for p in output_parts)} bytes to SQLite...")
+            _write_t0 = time.monotonic()
             combined = ''.join(output_parts)
             processRepo.storeProcessOutput(dbId, combined, preserve_status=False)
+            log.info(f"[Capture:{dbId}] SQLite write done in {int((time.monotonic()-_write_t0)*1000)}ms")
 
             # Store elapsed time in seconds (controller.py:handleProcStop)
             if hasattr(proc, '_start_mono'):
@@ -1346,9 +1360,9 @@ class WebController:
         if stage < 6 and result and result.get('process_id'):
             proc_id = result['process_id']
             def _chain_next_stage():
+                log.info(f"[Chain{stage}] WAITING for process {proc_id} to start...")
                 # Wait for process to START (it may still be in fastProcessQueue)
-                # _active_processes only contains running processes; poll until started
-                deadline = time.monotonic() + 600  # 10-min safety limit
+                deadline = time.monotonic() + 600
                 proc = None
                 while time.monotonic() < deadline:
                     proc = self._active_processes.get(proc_id)
@@ -1357,17 +1371,17 @@ class WebController:
                     time.sleep(0.5)
 
                 if proc and proc._popen is not None:
-                    # Process started — wait for it to actually finish
+                    log.info(f"[Chain{stage}] Process {proc_id} STARTED (pid={proc.pid}), waiting for finish...")
                     proc._popen.wait()
+                    log.info(f"[Chain{stage}] Process {proc_id} FINISHED (exit={proc._popen.returncode})")
                 else:
-                    # Timed out waiting for start (killed before starting?)
-                    log.warning(f"[WebController] Stage {stage} never started (proc_id={proc_id}), stopping chain")
+                    log.warning(f"[Chain{stage}] Stage {stage} never started (proc_id={proc_id}), stopping chain")
                     return
 
                 # Check if killed
                 processRepo = self.logic.activeProject.repositoryContainer.processRepository
                 if processRepo.isKilledProcess(str(proc_id)):
-                    log.info(f"[WebController] Stage {stage} was killed, stopping chain")
+                    log.info(f"[Chain{stage}] Stage {stage} was killed, stopping chain")
                     return
 
                 # Import nmap results

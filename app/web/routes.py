@@ -173,9 +173,11 @@ def snapshot():
     os_groups = logic.activeProject.repositoryContainer.hostRepository.getOperatingSystemsSummary() or []
 
     _elapsed_ms = int((_snap_time.monotonic() - _t0) * 1000)
-    if _elapsed_ms > 500:
-        import logging
-        logging.getLogger('legion').warning(f"[Snapshot] SLOW: {_elapsed_ms}ms")
+    import logging as _logging
+    _logging.getLogger('legion').info(
+        f"[Snapshot] {_elapsed_ms}ms  hosts={len(hosts)} procs={len(processes)} "
+        f"running={running} tools={len(tool_list)}"
+    )
 
     return jsonify({
         "hosts": hosts,
