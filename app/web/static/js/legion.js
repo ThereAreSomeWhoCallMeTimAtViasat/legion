@@ -663,7 +663,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v6.0-flask – ' + title);
+        setText('window-title', 'LEGION v6.1-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -1263,12 +1263,14 @@ function pollSnapshot() {
         var anyRunning = ((snap.summary || {}).running_processes || 0) > 0;
         L._pollCount = (L._pollCount || 0) + 1;
         if (L.selectedHostId && anyRunning && L._pollCount % 4 === 0) {
-            /* Every ~6s — reload static right-panel tabs.
-               Skip if viewing a dynamic tool tab to avoid a flicker every 6s;
-               the _hostProcSig trigger above handles the important state changes. */
-            var bar2 = $('right-tab-bar');
-            var dynActive2 = !!(bar2 && bar2.querySelector('.dynamic-tab.active'));
-            if (!dynActive2 && $('tools-display').style.display !== 'flex') {
+            /* Every ~6s — reload right-panel tabs unconditionally while any process runs.
+               Root cause of #30: during nmap stage 2 (2-3 min), _nmapSig and _hostProcSig
+               never change (nmap stays "Running"), so loadHostDetail is NEVER triggered
+               from those paths. With dynActive guard, the periodic refresh was also blocked
+               when the user watched the stage 2 output tab → complete UI freeze.
+               renderDynamicToolTabs already restores the active dynamic tab, so removing
+               the dynActive guard is safe — no permanent blank screen. */
+            if ($('tools-display').style.display !== 'flex') {
                 loadHostDetail(L.selectedHostId);
             }
         }

@@ -928,10 +928,14 @@ class WebController:
                     pass
 
                 # Periodically flush to DB (every 5 seconds or 100 lines).
-                # WAL mode allows concurrent reads, but write frequency still matters
-                # for large outputs (NSE produces megabytes — flushing often bloats writes).
+                # Cap at last 2000 lines to prevent unbounded blob growth for long NSE scans.
+                # NSE|vulners can run 2-3 min producing thousands of lines; without this cap
+                # each flush rewrites an ever-growing blob (600KB+ after 2 min at 10 lines/s).
                 if len(output_parts) % 100 == 0 or (time.monotonic() - start_time) > 5:
-                    combined = ''.join(output_parts)
+                    MAX_LINES = 2000
+                    display_parts = output_parts[-MAX_LINES:] if len(output_parts) > MAX_LINES else output_parts
+                    prefix = f'[... {len(output_parts) - MAX_LINES} earlier lines truncated for display ...]\n' if len(output_parts) > MAX_LINES else ''
+                    combined = prefix + ''.join(display_parts)
                     processRepo.storeProcessOutput(dbId, combined, preserve_status=True)
                     start_time = time.monotonic()
 
