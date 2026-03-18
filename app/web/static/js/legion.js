@@ -766,7 +766,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v6.4-flask – ' + title);
+        setText('window-title', 'LEGION v6.5-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);

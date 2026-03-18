@@ -66,62 +66,64 @@ def health():
 
 @web_bp.get("/api/snapshot")
 def snapshot():
+    import time as _snap_time
+    _t0 = _snap_time.monotonic()
     wc = _wc()
     logic = _logic()
     filters = _filters()
 
-    hosts_raw = logic.activeProject.repositoryContainer.hostRepository.getHosts(filters)
+    # ── Hosts: single SQL query with port counts (no ORM, no N+1 queries) ──
+    # Previous: getHosts() + getPortsByHostId(hid) per host = N+1 ORM queries
+    # Fix: one raw SQL with LEFT JOIN count — eliminates the per-host query loop
+    from sqlalchemy import text as _st
+    _sess = logic.activeProject.database.session()
+    try:
+        _host_rows = _sess.execute(_st(
+            "SELECT h.id, h.ip, h.ipv4, h.hostname, h.osMatch, h.status, h.checked, "
+            "  (SELECT COUNT(*) FROM portObj p WHERE p.hostId = h.id) AS port_count "
+            "FROM hostObj h WHERE h.status != 'down'"
+        )).fetchall()
+        _host_keys = ['id','ip','ipv4','hostname','osMatch','status','checked','port_count']
+        hosts_raw = [dict(zip(_host_keys, r)) for r in _host_rows]
+    finally:
+        _sess.close()
+
     hosts = []
     total_ports = 0
-    for h in (hosts_raw or []):
-        hid = h.get('id', '') if isinstance(h, dict) else getattr(h, 'id', '')
-        hip = h.get('ipv4', '') or h.get('ip', '') if isinstance(h, dict) else getattr(h, 'ipv4', '') or getattr(h, 'ip', '')
-        hostname = h.get('hostname', '') if isinstance(h, dict) else getattr(h, 'hostname', '')
-        osm = h.get('osMatch', '') if isinstance(h, dict) else getattr(h, 'osMatch', '')
-        status = h.get('status', '') if isinstance(h, dict) else getattr(h, 'status', '')
-        ports = logic.activeProject.repositoryContainer.portRepository.getPortsByHostId(hid) if hid else []
-        port_count = len(ports) if ports else 0
+    for h in hosts_raw:
+        hid = h.get('id', '')
+        hip = h.get('ipv4', '') or h.get('ip', '')
+        port_count = int(h.get('port_count', 0) or 0)
         total_ports += port_count
-        checked = h.get('checked', 'False') if isinstance(h, dict) else getattr(h, 'checked', 'False')
-        hosts.append({"id": hid, "ip": hip, "hostname": hostname, "os": osm,
-                       "status": status, "open_ports": port_count,
-                       "checked": str(checked) == 'True'})
+        hosts.append({"id": hid, "ip": hip,
+                       "hostname": h.get('hostname', ''),
+                       "os": h.get('osMatch', ''),
+                       "status": h.get('status', ''),
+                       "open_ports": port_count,
+                       "checked": str(h.get('checked', 'False')) == 'True'})
 
-    # getServiceNames returns {name, port} pairs — already DISTINCT+sorted by name,port
+    # ── Services ──
     services_raw = logic.activeProject.repositoryContainer.serviceRepository.getServiceNames(filters)
     services = []
     for s in (services_raw or []):
         if isinstance(s, dict):
-            sname = s.get('name', '')
-            sport = str(s.get('port', '') or '')
+            services.append({"service": s.get('name', ''), "port": str(s.get('port', '') or '')})
         else:
             sname = str(s[0]) if hasattr(s, '__getitem__') else str(s)
             sport = str(s[1]) if hasattr(s, '__getitem__') and len(s) > 1 else ''
-        services.append({"service": sname, "port": sport})
+            services.append({"service": sname, "port": sport})
 
-    # Tools = unique process names from DB (tools that actually ran), matching Qt6
-    # view.py:updateToolsTableView → getProcessesFromDB(showProcesses='noNmap') + _dedupeTools()
+    # ── Tools + Processes: single getProcesses call, derive both ──
+    # Previous: getProcesses called TWICE (once for tools, once for processes)
     from collections import OrderedDict
-    procs_for_tools = logic.activeProject.repositoryContainer.processRepository.getProcesses(
-        filters, showProcesses='noNmap')
+    procs_raw = logic.activeProject.repositoryContainer.processRepository.getProcesses(filters)
     tool_counts = OrderedDict()
     tool_matches = {}
-    for p in (procs_for_tools or []):
-        name = p.get('name', '') if isinstance(p, dict) else getattr(p, 'name', '')
-        if name:
-            tool_counts[name] = tool_counts.get(name, 0) + 1
-            # Propagate match flag: any matching process colours the whole tool entry
-            match_key = f"{p.get('hostIp','') if isinstance(p,dict) else getattr(p,'hostIp','')}:{p.get('tabTitle','') if isinstance(p,dict) else getattr(p,'tabTitle','')}"
-            if getattr(wc, '_matches', {}).get(match_key):
-                tool_matches[name] = True
-    tool_list = [{"label": name, "tool_id": name, "run_count": count,
-                  "has_match": tool_matches.get(name, False)}
-                 for name, count in tool_counts.items()]
-
-    procs_raw = logic.activeProject.repositoryContainer.processRepository.getProcesses(filters)
     processes = []
     running = 0
     finished = 0
+    import time as _time
+    from datetime import datetime as _dt
     for p in (procs_raw or []):
         if isinstance(p, dict):
             proc = dict(p)
@@ -130,18 +132,20 @@ def snapshot():
                      "port": getattr(p, 'port', ''), "protocol": getattr(p, 'protocol', ''),
                      "status": getattr(p, 'status', ''), "pid": getattr(p, 'pid', ''),
                      "command": getattr(p, 'command', '')}
-        # Ensure 'id' key exists (some returns use 'pid' or 'progress' as pseudo-id)
         if 'id' not in proc:
             proc['id'] = proc.get('pid', proc.get('progress', ''))
         status = proc.get("status", "")
+        name = proc.get("name", "")
+
+        # Tools aggregate (was a separate getProcesses call)
+        if name:
+            tool_counts[name] = tool_counts.get(name, 0) + 1
+            match_key_tool = f"{proc.get('hostIp','')}:{proc.get('tabTitle','')}"
+            if getattr(wc, '_matches', {}).get(match_key_tool):
+                tool_matches[name] = True
+
         if status == "Running":
             running += 1
-        else:
-            finished += 1
-        # Live elapsed for running processes — count up from startTime
-        if status == "Running":
-            import time as _time
-            from datetime import datetime as _dt
             start_str = str(proc.get('startTime', '') or '')
             start_ts = None
             for fmt in ('%d %b %Y %H:%M:%S.%f', '%Y%m%d%H%M%S%f'):
@@ -152,13 +156,26 @@ def snapshot():
                     pass
             proc['elapsed_secs'] = int(_time.time() - start_ts) if start_ts else 0
         else:
-            proc['elapsed_secs'] = None  # use stored elapsed for finished
-        # Flag processes that have match hits + include match text (Qt6: 'Matches: ...' label)
+            finished += 1
+            proc['elapsed_secs'] = None
+
         match_key = f"{proc.get('hostIp', '')}:{proc.get('tabTitle', '')}"
         match_list = getattr(wc, '_matches', {}).get(match_key) or []
         proc['has_match'] = bool(match_list)
         proc['match_text'] = ', '.join(str(m) for m in match_list) if match_list else ''
         processes.append(proc)
+
+    tool_list = [{"label": n, "tool_id": n, "run_count": c,
+                  "has_match": tool_matches.get(n, False)}
+                 for n, c in tool_counts.items()]
+
+    # ── OS groups ──
+    os_groups = logic.activeProject.repositoryContainer.hostRepository.getOperatingSystemsSummary() or []
+
+    _elapsed_ms = int((_snap_time.monotonic() - _t0) * 1000)
+    if _elapsed_ms > 500:
+        import logging
+        logging.getLogger('legion').warning(f"[Snapshot] SLOW: {_elapsed_ms}ms")
 
     return jsonify({
         "hosts": hosts,
@@ -171,10 +188,7 @@ def snapshot():
         "project": {"name": getattr(logic.activeProject.properties, "projectName", "*untitled"),
                      "output_folder": getattr(logic.activeProject.properties, "outputFolder", ""),
                      "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True)},
-        # OS summary — classified groups (Linux, Windows, Unknown) matching Qt6
-        # getOperatingSystemsSummary() so the OS tab list shows the same names
-        # the /os/<name>/hosts API expects.
-        "os_groups": logic.activeProject.repositoryContainer.hostRepository.getOperatingSystemsSummary() or [],
+        "os_groups": os_groups,
         "scheduler_decisions": [],
         "scheduler_approvals": [],
         "jobs": [],
