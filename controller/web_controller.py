@@ -1346,7 +1346,12 @@ class WebController:
             tokens = ['nmap']
             if enable_ipv6:
                 tokens.append('-6')
+            # --min-parallelism: run multiple NSE script instances concurrently so
+            # scripts like vulners (which make external HTTP calls) don't block each
+            # other sequentially. --script-timeout caps any single script that hangs.
             tokens.extend(['-sV', f'--script={stageOpValues.strip()}', '-vvvv',
+                          '--min-parallelism', '20', '--max-parallelism', '50',
+                          '--script-timeout', '30s',
                           host_arg, '--stats-every', '10s', '-oA', outputfile])
         else:
             tokens.extend(['-vvvv', host_arg, '--stats-every', '10s', '-oA', outputfile])
