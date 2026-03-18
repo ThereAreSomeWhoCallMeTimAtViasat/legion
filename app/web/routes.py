@@ -410,7 +410,18 @@ def process_retry(process_id):
 
 @web_bp.post("/api/processes/<int:process_id>/close")
 def process_close(process_id):
-    _wc().handleProcessAction(process_id, 'clear')
+    """Qt6: storeCloseTabStatusInDB → updateProcessState(closed='True').
+    Sets closed='True' so the process is filtered from snapshot queries
+    (WHERE process.closed='False'). Previously used hideProcesses which
+    set display='False' only — process stayed in snapshot."""
+    from sqlalchemy import text as _t
+    session = _logic().activeProject.database.session()
+    try:
+        session.execute(_t("UPDATE process SET closed='True' WHERE id=:pid"),
+                        {"pid": process_id})
+        session.commit()
+    finally:
+        session.close()
     return jsonify({"status": "ok"})
 
 @web_bp.post("/api/processes/clear")

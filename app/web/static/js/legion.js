@@ -532,7 +532,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v5.6-flask – ' + title);
+        setText('window-title', 'LEGION v5.7-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -586,9 +586,11 @@ function renderDynamicToolTabs(hostIp) {
         btn.type = 'button';
         btn.dataset.tab = tabId;
         /* Use tabTitle when it adds info (e.g. "nmap (stage 1)"), else name+port */
-        btn.textContent = proc.tabTitle && proc.tabTitle !== proc.name
+        var label = proc.tabTitle && proc.tabTitle !== proc.name
             ? proc.tabTitle
             : (proc.name||'?') + (proc.port ? ' '+proc.port : '');
+        /* Qt6: closeHostToolTab — close-x button on every dynamic tab */
+        btn.innerHTML = esc(label) + '<span class="close-x" title="Close tab">\u00d7</span>';
         bar.appendChild(btn);
 
         var panel = document.createElement('div');
@@ -648,6 +650,27 @@ function initInteractions() {
         if (svcTab) svcTab.click();
         /* Load detail */
         loadHostDetail(hostId);
+    });
+
+    /* ── Host double-click → copy IP to clipboard (Qt6: hostTableDoubleClick → copyToClipboard) ── */
+    $('hosts-body').addEventListener('dblclick', function(e) {
+        var tr = e.target.closest('tr');
+        if (!tr || !tr.dataset.hostIp) return;
+        var ip = tr.dataset.hostIp || '';
+        if (!ip) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(ip).catch(function() {});
+        } else {
+            /* Fallback for environments without clipboard API */
+            var ta = document.createElement('textarea');
+            ta.value = ip; document.body.appendChild(ta);
+            ta.select(); document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
+        /* Brief visual feedback */
+        var origBg = tr.style.background;
+        tr.style.background = 'var(--highlight,#2a82da)';
+        setTimeout(function() { tr.style.background = origBg; }, 200);
     });
 
     /* ── Services table header click → sort ── */
@@ -848,7 +871,54 @@ function initInteractions() {
         }
     });
 
+    /* ── Dynamic tab close-x (Qt6: closeHostToolTab / _closeProcessTab) ── */
     $('right-tab-bar').addEventListener('click', function(e) {
+        var x = e.target.closest('.close-x');
+        if (!x) return;
+        e.stopPropagation();  /* don't activate the tab */
+        var btn = x.closest('.dynamic-tab');
+        if (!btn) return;
+        var tabId = btn.dataset.tab;
+        var procId = tabId ? tabId.replace('dyntab-', '') : null;
+        if (!procId) return;
+
+        var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
+        var status = proc ? proc.status : '';
+
+        function doClose() {
+            _stopDynPoll();
+            postJson('/api/processes/' + procId + '/close', {}).then(function() {
+                /* Remove button and panel from DOM */
+                var panel = $(tabId);
+                btn.remove();
+                if (panel) panel.remove();
+                /* Activate the Notes tab (last static tab) so something is shown */
+                var fallback = $('right-tab-bar').querySelector('[data-tab="notes-right"]');
+                if (fallback) fallback.click();
+                pollSnapshot();
+            });
+        }
+
+        if (status === 'Running') {
+            if (confirm('This process is still running. Kill it and close the tab?')) {
+                postJson('/api/processes/' + procId + '/kill', {}).then(function() {
+                    setTimeout(doClose, 300);
+                });
+            }
+        } else if (status === 'Waiting') {
+            if (confirm('This process is queued. Cancel and close the tab?')) {
+                postJson('/api/processes/' + procId + '/kill', {}).then(function() {
+                    setTimeout(doClose, 300);
+                });
+            }
+        } else {
+            doClose();
+        }
+    });
+
+    /* ── Dynamic tab click → reload output; auto-poll if process is Running ── */
+    $('right-tab-bar').addEventListener('click', function(e) {
+        if (e.target.closest('.close-x')) return;  /* handled above */
         var btn = e.target.closest('.dynamic-tab');
         if (!btn) return;
         _stopDynPoll();
@@ -863,6 +933,37 @@ function initInteractions() {
             var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
             if (proc && proc.status === 'Running') _startDynPoll(procId, outputEl);
         }
+    });
+
+    /* ── Dynamic tab right-click → Save Output (Qt6: _showToolTabContextMenu) ── */
+    $('right-tab-bar').addEventListener('contextmenu', function(e) {
+        var btn = e.target.closest('.dynamic-tab');
+        if (!btn) return;
+        e.preventDefault();
+        var tabId = btn.dataset.tab;
+        var procId = tabId ? tabId.replace('dyntab-', '') : null;
+        var tabLabel = (btn.textContent || 'output').replace(/×$/, '').trim();
+        showContextMenu(
+            [{label: 'Save Output', action: 'save-output'},
+             {separator: true},
+             {label: 'Close Tab', action: 'close-tab'}],
+            e.clientX, e.clientY,
+            function(action) {
+                if (action.action === 'save-output') {
+                    var outputEl = $('dyn-output-' + procId);
+                    var text = outputEl ? (outputEl.innerText || outputEl.textContent) : '';
+                    var blob = new Blob([text], {type: 'text/plain'});
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url; a.download = tabLabel.replace(/[\/\\:]/g,'_') + '.txt';
+                    document.body.appendChild(a); a.click();
+                    document.body.removeChild(a); URL.revokeObjectURL(url);
+                } else if (action.action === 'close-tab') {
+                    var x = btn.querySelector('.close-x');
+                    if (x) x.click();
+                }
+            }
+        );
     });
 
     /* ── Add hosts overlay click ── */
@@ -1788,16 +1889,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    /* Port right-click (in host detail services table) */
+    /* Port right-click → full port context menu (Qt6: contextMenuServicesTableView) */
     $('host-detail-ports').addEventListener('contextmenu', function(e) {
         var tr = e.target.closest('tr');
         if (!tr) return;
         e.preventDefault();
-        var port = (tr.cells[1]||{}).textContent || '';
-        var protocol = (tr.cells[2]||{}).textContent || 'tcp';
-        var svcName = (tr.cells[4]||{}).textContent || '*';
-        fetchJson('/api/menus/service?name=' + encodeURIComponent(svcName)).then(function(data) {
-            showContextMenu(data.items, e.clientX, e.clientY, function(action) {
+        var port = tr.dataset.port || (tr.cells[1]||{}).textContent || '';
+        var protocol = tr.dataset.protocol || (tr.cells[2]||{}).textContent || 'tcp';
+        var svcName = tr.dataset.service || (tr.cells[4]||{}).textContent || '*';
+        /* Use /api/menus/port for the richer port menu (terminal + port actions) */
+        fetchJson('/api/menus/port?service=' + encodeURIComponent(svcName)).then(function(data) {
+            var items = (data.port_actions || []).concat(data.suffix_actions || []);
+            showContextMenu(items, e.clientX, e.clientY, function(action) {
                 if (action.action === 'port-action' && L.selectedHostIp) {
                     postJson('/api/workspace/service-action', {
                         targets: [[L.selectedHostIp, port, protocol]],
@@ -1806,6 +1909,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
         });
+    });
+
+    /* Port double-click → switch to Hosts tab and select that host
+       (Qt6: tableDoubleClick → HostsTabWidget.setCurrentIndex(0) → hostTableClick) */
+    $('host-detail-ports').addEventListener('dblclick', function(e) {
+        var tr = e.target.closest('tr');
+        if (!tr) return;
+        /* Switch left panel to Hosts tab */
+        var hostsTab = $('left-tab-bar').querySelector('[data-tab="hosts-panel"]');
+        if (hostsTab) hostsTab.click();
+        /* Select the current host in the hosts table */
+        if (L.selectedHostId) {
+            var hostRow = $('hosts-body').querySelector('tr[data-host-id="' + L.selectedHostId + '"]');
+            if (hostRow) {
+                $('hosts-body').querySelectorAll('tr').forEach(function(r) { r.classList.remove('selected'); });
+                hostRow.classList.add('selected');
+            }
+        }
     });
 
     /* ═══════════════════════════════════════════
