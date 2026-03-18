@@ -90,23 +90,24 @@ sudo python3 tests/test_phase1_right_panel.py  # 27 — right panel APIs
 
 ## Unresolved Issues (investigate next session)
 
-### #28 — Hosts table doesn't populate after host discovery
-Diagnostic line in log after stage 1:
-```
-[Chain1] XML=NNNb  raw-DB: X hosts, Y ports, Z services
-```
-- If `XML=0b` → nmap didn't write output (scan itself failed)
-- If `XML>0b, raw-DB: 0 hosts` → NmapImporter ran but parsed no hosts (target down? all ports filtered? XML malformed?)
-- If `raw-DB: 1+ hosts` → data IS in DB, issue is SQLAlchemy session isolation (WAL fix may resolve)
+### #30 — nmap stage 2 freezes Flask while running
+**Symptom**: While nmap stage 2 (NSE|vulners) is actively running (~2-3 min), Flask appears
+frozen — UI does not update, tabs don't refresh, other processes don't progress. Everything
+resumes when stage 2 finishes.
 
-### #29 — Screenshooter not firing after port 80 discovered
-Depends on #28. Scheduler sees 0 hosts → never reaches screenshooter check. Once #28 resolved, watch for:
-```
-[Scheduler] hosts visible: N
-[Scheduler] 192.168.x.x: N open ports
-[Scheduler] checking IP:80/tcp svc='http'
-[Scheduler] Screenshot queued: IP:80
-```
+**Attempted fixes (none resolved it)**:
+- WAL mode + synchronous=NORMAL (v4.1)
+- Reduced flush to 5s/100 lines (v4.1)
+- threaded=True on Flask (v3.1)
+- Removed dynActive guard from right-panel refresh triggers (v5.5, v5.6)
+
+**Likely root cause candidates**:
+- Python GIL held during `''.join(output_parts)` on large NSE output blobs
+- SQLite write lock held during commit of large blob even with WAL
+- NSE|vulners consuming all CPU/network resources on the host system
+
+**Diagnostic**: Check if snapshot poll timestamps are delayed during stage 2, and log
+`len(combined)` in `_capture_output` to see how large the flush writes are.
 
 ## Phase 2 Plan (next)
 Remaining gap analysis phases:
