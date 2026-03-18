@@ -122,8 +122,11 @@ html,body{
 #scan-layout{display:flex;flex:1;min-height:0;overflow:hidden}
 #left-panel{display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;width:290px;min-width:120px}
 #right-panel{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
-/* Dynamic tool tab panels live here — must flex so active panel fills available height */
-#dynamic-tabs-container{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+/* Dynamic tool tab panels wrapper — hidden when no dynamic tab is active so it
+   doesn't split height 50/50 with the active static tab (Services/Scripts/etc.).
+   When a dynamic tab IS active it must flex:1 to fill the full panel height. */
+#dynamic-tabs-container{display:none;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#dynamic-tabs-container:has(.tab-content.active){display:flex}
 
 /* === TABLES (matches QTableView) === */
 .table-wrap{flex:1;overflow:auto;background:var(--base)}
