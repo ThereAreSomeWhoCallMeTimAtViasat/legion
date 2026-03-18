@@ -908,15 +908,42 @@ class WebController:
         output_parts = []
         start_time = time.monotonic()
 
+        # Write live output to a temp file during capture to avoid SQLite writes
+        # entirely during long-running processes (NSE|vulners 2-3 min).
+        # Previous approach: periodic SQLite writes grew to megabytes, causing
+        # potential lock contention and GIL pressure that froze the UI.
+        # New approach: append to temp file (OS-level, near-zero overhead),
+        # read temp file directly from the output API, write to SQLite only on finish.
+        live_output_path = getattr(proc, 'outputfile', '') + '.live_output'
+        live_file = None
+        try:
+            live_file = open(live_output_path, 'w', encoding='ISO-8859-1', errors='replace')
+            # Store the path so the API can read it
+            proc._live_output_path = live_output_path
+        except Exception:
+            live_file = None
+            live_output_path = None
+
         try:
             toolName = getattr(proc, 'name', '')
             hostIp = getattr(proc, 'hostIp', '')
             tabTitle = getattr(proc, 'tabTitle', '')
             all_matches = set()
+            line_count = 0
 
             for line in iter(proc._popen.stdout.readline, b''):
                 text = line.decode('ISO-8859-1', errors='replace')
                 output_parts.append(text)
+                line_count += 1
+
+                # Write to temp file immediately (no SQLite, no GIL pressure)
+                if live_file:
+                    try:
+                        live_file.write(text)
+                        if line_count % 50 == 0:
+                            live_file.flush()
+                    except Exception:
+                        pass
 
                 # P1: Match detection on every line (auxiliary.py:285-331)
                 try:
@@ -927,19 +954,15 @@ class WebController:
                 except Exception:
                     pass
 
-                # Periodically flush to DB (every 5 seconds or 100 lines).
-                # Cap at last 2000 lines to prevent unbounded blob growth for long NSE scans.
-                # NSE|vulners can run 2-3 min producing thousands of lines; without this cap
-                # each flush rewrites an ever-growing blob (600KB+ after 2 min at 10 lines/s).
-                if len(output_parts) % 100 == 0 or (time.monotonic() - start_time) > 5:
-                    MAX_LINES = 2000
-                    display_parts = output_parts[-MAX_LINES:] if len(output_parts) > MAX_LINES else output_parts
-                    prefix = f'[... {len(output_parts) - MAX_LINES} earlier lines truncated for display ...]\n' if len(output_parts) > MAX_LINES else ''
-                    combined = prefix + ''.join(display_parts)
-                    processRepo.storeProcessOutput(dbId, combined, preserve_status=True)
-                    start_time = time.monotonic()
+            # Process finished — close temp file and write final output to SQLite once
+            if live_file:
+                try:
+                    live_file.flush()
+                    live_file.close()
+                    live_file = None
+                except Exception:
+                    pass
 
-            # Process finished — store final output
             proc._popen.wait()
             finish_mono = time.monotonic()
             combined = ''.join(output_parts)
@@ -1002,6 +1025,13 @@ class WebController:
                 else:
                     log.warning(f"[WebController] Nmap XML not found: {outputfile}.xml")
 
+            # Clean up temp live output file (output now safely in SQLite)
+            if live_output_path and os.path.isfile(live_output_path):
+                try:
+                    os.unlink(live_output_path)
+                except Exception:
+                    pass
+
             # Clean up tracking
             if hasattr(self, '_active_processes') and int(dbId) in self._active_processes:
                 del self._active_processes[int(dbId)]
@@ -1015,6 +1045,9 @@ class WebController:
 
         except Exception as e:
             log.error(f"[WebController] _capture_output error for {dbId}: {e}")
+            if live_file:
+                try: live_file.close()
+                except Exception: pass
             processRepo.storeProcessOutput(dbId, ''.join(output_parts) + f"\n[capture error: {e}]")
 
     def killProcess(self, process_id):

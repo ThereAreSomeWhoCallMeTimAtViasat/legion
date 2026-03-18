@@ -359,14 +359,27 @@ def process_output(process_id):
     proc = repo.getProcessById(process_id)
     if not proc:
         return _err(f"Process {process_id} not found", 404)
-    from sqlalchemy import text
-    session = logic.activeProject.database.session()
-    try:
-        row = session.execute(text("SELECT output FROM process_output WHERE processId = :pid"),
-                              {"pid": process_id}).fetchone()
-        output = str(row[0] or "") if row else ""
-    finally:
-        session.close()
+    # Check for live temp file first (written by _capture_output without SQLite overhead).
+    # While a process is Running, output is in {outputfile}.live_output (near-zero latency).
+    # After process finishes, the final output is in SQLite and the temp file is cleaned up.
+    outputfile = proc.get("outputfile", "") or ""
+    live_path = outputfile + '.live_output' if outputfile else ''
+    output = ""
+    if live_path and os.path.isfile(live_path):
+        try:
+            with open(live_path, 'r', encoding='ISO-8859-1', errors='replace') as _f:
+                output = _f.read()
+        except Exception:
+            pass
+    if not output:
+        from sqlalchemy import text
+        session = logic.activeProject.database.session()
+        try:
+            row = session.execute(text("SELECT output FROM process_output WHERE processId = :pid"),
+                                  {"pid": process_id}).fetchone()
+            output = str(row[0] or "") if row else ""
+        finally:
+            session.close()
     offset = int(request.args.get("offset", 0) or 0)
     max_chars = int(request.args.get("max_chars", 24000) or 24000)
     status = proc.get("status", "")

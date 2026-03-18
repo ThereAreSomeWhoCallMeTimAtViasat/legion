@@ -409,13 +409,16 @@ def test_p4_process_output_screenshooter_finds_png():
               "process_output route does not handle screenshooter PNG lookup")
 test("P4: process output route finds PNG in screenshooter -dir directory", test_p4_process_output_screenshooter_finds_png)
 
-def test_p5_flush_interval_is_5s():
-    """_capture_output must flush every 5s/100 lines (not 2s — reduces SQLite write frequency)."""
+def test_p5_no_sqlite_writes_during_capture():
+    """_capture_output must NOT write to SQLite during capture (uses temp file instead).
+    Fix for #30: periodic SQLite writes of growing blobs caused UI freezing during
+    long NSE scans. Output now goes to {outputfile}.live_output temp file; SQLite
+    gets one write only when the process finishes."""
     import inspect
     src = inspect.getsource(wc._capture_output)
-    return ok('> 5' in src or '> 5.0' in src,
-              "_capture_output flush interval is not 5 seconds")
-test("P5: _capture_output flushes every 5s not 2s (reduces SQLite lock contention)", test_p5_flush_interval_is_5s)
+    return ok('live_output' in src and 'storeProcessOutput' in src,
+              "_capture_output missing temp file approach (live_output) or final SQLite write")
+test("P5: _capture_output uses temp file during capture, SQLite only on finish", test_p5_no_sqlite_writes_during_capture)
 
 
 # ══════════════════════════════════════════════════════════════
