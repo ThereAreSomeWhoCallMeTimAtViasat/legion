@@ -12,7 +12,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — your pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (being replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v4.2-flask
+- **Current Flask version:** v6.4-flask
+- **Tests:** 468/468 across 17 test files
 
 ## CRITICAL ARCHITECTURE DECISION
 **DO NOT USE upstream runtime.py.** The user's logic in controller.py IS the source of truth.
@@ -27,14 +28,18 @@ YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
 
 ## Running
 ```bash
-# Start Flask (v4.2)
+# Start Flask (v6.4)
 sudo python3 legion.py --web          # http://127.0.0.1:5000
 # Logs: /tmp/legion-web.log
 
-# Core test suites
+# Run all 17 test files (468 tests)
+for f in tests/test_*.py; do sudo python3 $f 2>&1 | grep Results; done
+
+# Key suites
 sudo python3 tests/test_behavioral.py          # 15 — most critical, run always
 sudo python3 tests/test_signal_chains.py       # 28 — scheduler/chain
 sudo python3 tests/test_phase1_right_panel.py  # 27 — right panel APIs
+sudo python3 tests/test_ui_fixes.py            # 42 — all session fixes regression
 ```
 
 ## Branch History
@@ -88,32 +93,26 @@ sudo python3 tests/test_phase1_right_panel.py  # 27 — right panel APIs
 - Stored as HUMAN_FORMAT: `'%d %b %Y %H:%M:%S.%f'` (e.g. `17 Mar 2026 19:12:35.171589`)
 - Snapshot route tries both `'%d %b %Y %H:%M:%S.%f'` and `'%Y%m%d%H%M%S%f'`
 
-## Unresolved Issues (investigate next session)
+## Unresolved Issues (STILL OPEN — DO NOT MARK RESOLVED)
 
-### #30 — nmap stage 2 freezes Flask while running
-**Symptom**: While nmap stage 2 (NSE|vulners) is actively running (~2-3 min), Flask appears
-frozen — UI does not update, tabs don't refresh, other processes don't progress. Everything
-resumes when stage 2 finishes.
+### #30 — nmap stage 2 freezes everything while running
+**Symptom**: While nmap stage 2 (NSE|vulners) actively runs (~2-3 min), the entire UI
+appears frozen — UI doesn't update, tabs don't refresh, nothing progresses. Everything
+resumes when stage 2 finishes. User confirmed STILL HAPPENING after all fixes below.
 
-**Attempted fixes (none resolved it)**:
-- WAL mode + synchronous=NORMAL (v4.1)
-- Reduced flush to 5s/100 lines (v4.1)
-- threaded=True on Flask (v3.1)
-- Removed dynActive guard from right-panel refresh triggers (v5.5, v5.6)
+**Attempted fixes — all insufficient**:
+- v6.1: Removed dynActive guard from 6s periodic refresh
+- v6.2: Eliminated SQLite writes during capture (temp file approach)
+- v6.4: Fixed auto-poll Waiting→Running (separate issue, not the freeze)
 
-**Likely root cause candidates**:
-- Python GIL held during `''.join(output_parts)` on large NSE output blobs
-- SQLite write lock held during commit of large blob even with WAL
-- NSE|vulners consuming all CPU/network resources on the host system
+**True root cause NOT YET IDENTIFIED.** See full troubleshooting log in conversation.
+Do not close this issue until user confirms the freeze no longer occurs.
 
-**Diagnostic**: Check if snapshot poll timestamps are delayed during stage 2, and log
-`len(combined)` in `_capture_output` to see how large the flush writes are.
-
-## Phase 2 Plan (next)
-Remaining gap analysis phases:
-- **Phase 2**: Host double-click, port right-click/double-click, tool tab close button + context menu (save output)
-- **Phase 3**: Table column sorting (host/process), column width localStorage persistence
-- **Phase 4**: State restoration (`restoreToolTabs` on project open), advanced filter checkboxes working, host lifecycle (delete clears tabs + dynamic panels)
+## Completed Phases
+- **Phase 2**: Close tab [X], host double-click, port right-click/double-click, save output
+- **Phase 3**: All tables sortable, column width drag+localStorage
+- **Phase 4**: Advanced filters working, host checked indicator, tab highlights, delete host
+- **Phase 5**: Log level filter, brute tab full (hydra via runCommand, send-to-brute)
 
 ## Qt Replacement Patterns
 ```python
