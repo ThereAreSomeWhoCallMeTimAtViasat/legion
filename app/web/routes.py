@@ -73,7 +73,7 @@ def snapshot():
     filters = _filters()
 
     # ── Hosts: single SQL query with port counts (no ORM, no N+1 queries) ──
-    # Previous: getHosts() + getPortsByHostId(hid) per host = N+1 ORM queries
+    # Previous: getHosts() + portRepository.getPortsByHostId per host = N+1 ORM queries
     # Fix: one raw SQL with LEFT JOIN count — eliminates the per-host query loop
     from sqlalchemy import text as _st
     _sess = logic.activeProject.database.session()
