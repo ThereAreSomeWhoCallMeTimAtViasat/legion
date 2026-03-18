@@ -703,6 +703,76 @@ def settings_save():
         f.write(text)
     return jsonify({"status": "ok", "path": path})
 
+@web_bp.get("/api/logs")
+def get_logs():
+    """Qt6: reloadLogFile reads log file and filters by INFO/DEBUG level.
+    Serves /tmp/legion-web.log filtered by level query param."""
+    level = request.args.get('level', 'INFO').upper()
+    log_path = '/tmp/legion-web.log'
+    lines = []
+    if os.path.isfile(log_path):
+        try:
+            with open(log_path, 'r', errors='replace') as f:
+                for line in f:
+                    stripped = line.rstrip()
+                    if not stripped:
+                        continue
+                    if level == 'DEBUG':
+                        lines.append(stripped)
+                    else:  # INFO — include INFO, WARNING, ERROR, CRITICAL but not DEBUG
+                        if any(lvl in stripped for lvl in
+                               (' INFO ', ' WARNING ', ' ERROR ', ' CRITICAL ', 'INFO', 'ERROR')):
+                            if ' DEBUG ' not in stripped:
+                                lines.append(stripped)
+        except Exception as e:
+            lines = [f"Error reading log: {e}"]
+    return jsonify({'lines': lines[-500:], 'level': level,
+                    'file': log_path, 'total': len(lines)})
+
+
+@web_bp.post("/api/brute/run")
+def brute_run():
+    """Qt6: callHydra → buildHydraCommand → controller.runCommand('hydra').
+    Builds the hydra command and runs it via wc.runCommand so the process
+    appears in the process table and output is captured."""
+    wc = _wc()
+    payload = request.get_json(silent=True) or {}
+    ip       = str(payload.get('ip', '')).strip()
+    port     = str(payload.get('port', '')).strip()
+    service  = str(payload.get('service', '')).strip()
+    userlist = str(payload.get('userlist', '')).strip()
+    passlist = str(payload.get('passlist', '')).strip()
+    options  = str(payload.get('options', '')).strip()
+
+    if not ip or not port or not service:
+        return _err("ip, port, and service are required")
+
+    from app.timing import getTimestamp
+    output_folder = wc.logic.activeProject.properties.outputFolder
+    outputfile = os.path.join(output_folder, f"{getTimestamp()}-hydra-{ip}-{port}")
+
+    # Qt6: bWidget.buildHydraCommand(runningFolder, userlistPath, passlistPath)
+    parts = ['hydra', '-s', port]
+    if userlist and passlist:
+        parts += ['-L', userlist, '-P', passlist]
+    elif userlist:
+        parts += ['-C', userlist]
+    else:
+        return _err("at least a userlist is required")
+    if options:
+        parts += options.split()
+    parts += ['-u', '-o', outputfile + '.txt', '-f', ip, service]
+
+    command = ' '.join(parts)
+    tab_title = f"hydra ({port}/tcp)"
+    result = wc.runCommand(command=command, name='hydra',
+                           tabTitle=tab_title, hostIp=ip,
+                           port=port, protocol='tcp',
+                           outputfile=outputfile, run_actions=False)
+    return jsonify({"status": "ok", "process_id": result.get('process_id'),
+                    "command": command})
+
+
 @web_bp.get("/api/export/json")
 def export_json():
     # Reuse snapshot

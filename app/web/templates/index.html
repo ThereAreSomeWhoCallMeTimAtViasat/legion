@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v5.9-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v6.0-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -314,6 +314,15 @@
 
 <!-- Log panel -->
 <div class="tab-content" id="log-panel">
+    <div style="display:flex;align-items:center;padding:2px 6px;gap:8px;border-bottom:1px solid var(--border);flex-shrink:0">
+        <label style="font-size:9pt;color:var(--disabled)">Level:</label>
+        <select id="log-level" style="font:inherit;background:var(--midlight);color:var(--text);border:1px solid var(--border);padding:2px 4px">
+            <option value="INFO">INFO</option>
+            <option value="DEBUG">DEBUG (all)</option>
+        </select>
+        <button id="log-refresh" type="button" style="font:inherit;padding:2px 8px">&#8635; Refresh</button>
+        <span id="log-line-count" style="font-size:9pt;color:var(--disabled)"></span>
+    </div>
     <div class="tool-output-area ansi" id="log-output" style="flex:1"></div>
 </div>
 

@@ -663,7 +663,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v5.9-flask – ' + title);
+        setText('window-title', 'LEGION v6.0-flask – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -2069,6 +2069,16 @@ document.addEventListener('DOMContentLoaded', function() {
                         targets: [[L.selectedHostIp, port, protocol]],
                         action_index: action.action_index || 0
                     }).then(function() { pollSnapshot(); });
+                } else if (action.action === 'send-to-brute') {
+                    /* Qt6: createNewBruteTab(ip, port, service) → switches to Brute tab */
+                    var brutIp = $('brute-ip'), brutPort = $('brute-port'), brutSvc = $('brute-service');
+                    if (brutIp) brutIp.value = L.selectedHostIp || '';
+                    if (brutPort) brutPort.value = port;
+                    if (brutSvc) brutSvc.value = svcName !== '*' ? svcName : '';
+                    /* Switch to Brute main tab */
+                    var bruteBtn = $('main-tab-bar') && $('main-tab-bar').querySelector('[data-tab="brute-tab"]');
+                    if (bruteBtn) bruteBtn.click();
+                    setText('brute-status', 'Ready — fill in wordlist and click Run Hydra');
                 }
             });
         });
@@ -2307,21 +2317,54 @@ document.addEventListener('DOMContentLoaded', function() {
     var helpClose = $('help-close');
     if (helpClose) helpClose.addEventListener('click', function() { closeModal('help-modal'); });
 
-    /* ── Brute force tab ── */
+    /* ── Log tab — load, filter and auto-refresh (Qt6: reloadLogFile) ── */
+    var _logTimer = null;
+    function loadLog() {
+        var level = ($('log-level')||{}).value || 'INFO';
+        fetchJson('/api/logs?level=' + encodeURIComponent(level)).then(function(d) {
+            var out = $('log-output');
+            if (out) {
+                out.textContent = (d.lines || []).join('\n');
+                out.scrollTop = out.scrollHeight;
+            }
+            setText('log-line-count', (d.lines||[]).length + ' lines');
+        }).catch(function() {});
+    }
+    /* Load and start refresh timer when Log tab becomes active */
+    $('bottom-tab-bar').addEventListener('click', function(e) {
+        var btn = e.target.closest('[data-tab="log-panel"]');
+        if (btn) {
+            loadLog();
+            if (_logTimer) clearInterval(_logTimer);
+            _logTimer = setInterval(loadLog, 5000);
+        } else {
+            if (_logTimer) { clearInterval(_logTimer); _logTimer = null; }
+        }
+    });
+    var logLevel = $('log-level');
+    if (logLevel) logLevel.addEventListener('change', loadLog);
+    var logRefresh = $('log-refresh');
+    if (logRefresh) logRefresh.addEventListener('click', loadLog);
+
+    /* ── Brute force tab (Qt6: callHydra → buildHydraCommand → runCommand) ── */
     var bruteRun = $('brute-run');
     if (bruteRun) bruteRun.addEventListener('click', function() {
-        var ip = ($('brute-ip')||{}).value||'';
-        var port = ($('brute-port')||{}).value||'';
-        var service = ($('brute-service')||{}).value||'';
-        var userlist = ($('brute-userlist')||{}).value||'./wordlists/ssh-betterdefaultpasslist.txt';
+        var ip       = ($('brute-ip')||{}).value||'';
+        var port     = ($('brute-port')||{}).value||'';
+        var service  = ($('brute-service')||{}).value||'';
+        var userlist = ($('brute-userlist')||{}).value||'';
         var passlist = ($('brute-passlist')||{}).value||'';
-        var options = ($('brute-options')||{}).value||'';
+        var options  = ($('brute-options')||{}).value||'';
         if (!ip||!port||!service) { setText('brute-status','Fill in IP, port, and service'); return; }
-        var command = 'hydra -s '+port+' -C '+userlist+' '+options+' -u -o "[OUTPUT].txt" -f '+ip+' '+service;
-        postJson('/api/workspace/service-action', {
-            targets:[[ip,port,'tcp']], action_index:0
-        }).then(function() {
-            setText('brute-status','Hydra started');
+        if (!userlist) { setText('brute-status','Enter a username wordlist'); return; }
+        setText('brute-status','Starting Hydra...');
+        /* Qt6: buildHydraCommand → controller.runCommand('hydra', ...) */
+        postJson('/api/brute/run', {ip:ip, port:port, service:service,
+                                    userlist:userlist, passlist:passlist, options:options})
+        .then(function(d) {
+            setText('brute-status', d.process_id
+                ? 'Hydra started (process ' + d.process_id + ')'
+                : 'Hydra started');
             pollSnapshot();
         }).catch(function(e) { setText('brute-status','Error: '+e.message); });
     });
