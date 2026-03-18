@@ -918,7 +918,7 @@ class WebController:
         live_output_path = getattr(proc, 'outputfile', '') + '.live_output'
         live_file = None
         try:
-            live_file = open(live_output_path, 'w', encoding='ISO-8859-1', errors='replace')
+            live_file = open(live_output_path, 'w', encoding='ISO-8859-1', errors='replace', buffering=1)
             # Store the path so the API can read it
             proc._live_output_path = live_output_path
         except Exception:
@@ -948,12 +948,13 @@ class WebController:
                 if line_count % 100 == 0 or gap > 10:
                     log.info(f"[Capture:{dbId}] line={line_count} gap={gap:.1f}s total_chars={sum(len(p) for p in output_parts)}")
 
-                # Write to temp file immediately (no SQLite, no GIL pressure)
+                # Write to temp file immediately — line-buffered (buffering=1) so
+                # every line is flushed to disk instantly for the API to read.
+                # Previous bug: default 8KB buffer meant 44 lines of nmap output
+                # stayed in memory, API read empty file, user saw no output.
                 if live_file:
                     try:
                         live_file.write(text)
-                        if line_count % 50 == 0:
-                            live_file.flush()
                     except Exception:
                         pass
 
