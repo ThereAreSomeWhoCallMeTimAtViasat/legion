@@ -1,8 +1,8 @@
 # Legion Flask — Master Test Plan
 
-**Version:** v9.1-flask
+**Version:** v9.2-flask
 **Branch:** flask-clean
-**Total tests:** 804 all passing
+**Total tests:** 852 all passing (808 without live)
 **Last updated:** 2026-03-19
 
 This document is the single source of truth for what is tested, how it is tested,
@@ -306,11 +306,11 @@ sudo env LEGION_TEST_TARGET=192.168.85.11 python3 -m pytest tests/test_selenium_
 
 | Item | How to test manually |
 |------|---------------------|
-| **Tab completion in terminal** | Open Terminal → type `ls /us` → Tab → `/usr/` should complete |
-| **Arrow key history** | Run command in terminal → press ↑ → previous command appears |
-| **Ctrl+C interrupt** | `sleep 100` → Ctrl+C → `^C` shown, new prompt |
-| **Ctrl+D logout** | Empty prompt → Ctrl+D → session closes |
-| **Terminal resize** | Drag browser window → xterm.js reflows to fill |
+| **Tab completion in terminal** | ✅ T6.1 automated via input API |
+| **Arrow key history** | ✅ T6.2 automated via input API |
+| **Ctrl+C interrupt** | ✅ T6.3 automated via input API |
+| **Ctrl+D logout** | ✅ T6.4 automated via input API |
+| **Terminal resize** | ✅ T6.5 automated (stty size check) |
 | **ANSI colours** | `ls --color` → verify colours rendered |
 | **Paste into terminal** | Ctrl+V → clipboard text pasted |
 | **File → Export JSON download** | Click Export JSON → file downloads to disk with correct content |
