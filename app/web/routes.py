@@ -163,6 +163,8 @@ def snapshot():
         match_list = getattr(wc, '_matches', {}).get(match_key) or []
         proc['has_match'] = bool(match_list)
         proc['match_text'] = ', '.join(str(m) for m in match_list) if match_list else ''
+        # Terminal session_id (null for regular processes, set for Interactive PTY sessions)
+        proc['session_id'] = _terminal_process_sessions.get(proc.get('id') or proc.get('pid'))
         processes.append(proc)
 
     tool_list = [{"label": n, "tool_id": n, "run_count": c,
@@ -965,4 +967,203 @@ def config_delete(name):
     path = os.path.join(_PROFILES_DIR, f'{name}.conf')
     if not os.path.exists(path): return _err("Not found", 404)
     os.remove(path)
+    return jsonify({"status": "ok"})
+
+
+# ═══════════════════════════════════════════
+# PTY Terminal sessions
+# ═══════════════════════════════════════════
+
+import pty as _pty
+import uuid as _uuid
+import select as _select
+import struct as _struct
+import fcntl as _fcntl
+import termios as _termios
+import threading as _threading
+import subprocess as _subprocess
+import logging as _logging
+
+_term_log = _logging.getLogger('legion')
+
+# Maps session_id → _TerminalSession
+_terminal_sessions: dict = {}
+# Maps process_id (int) → session_id (str) — so snapshot can attach session_id to processes
+_terminal_process_sessions: dict = {}
+
+
+class _TerminalSession:
+    """Manages a PTY bash session. Bash always hosts the PTY; the tool command
+    (if any) is written to bash's stdin after 500ms — exactly as Qt6 does."""
+
+    def __init__(self, session_id: str, command: str = None):
+        self.id = session_id
+        self.command = command
+        self._buf = bytearray()
+        self._lock = _threading.Lock()
+        self._alive = True
+
+        master_fd, slave_fd = _pty.openpty()
+        env = os.environ.copy()
+        env['TERM'] = 'xterm-256color'
+        self.proc = _subprocess.Popen(
+            ['bash', '--login'],
+            stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+            preexec_fn=os.setsid, env=env
+        )
+        os.close(slave_fd)
+        self.master_fd = master_fd
+
+        # Background reader thread
+        t = _threading.Thread(target=self._reader, daemon=True, name=f'term-{session_id[:8]}')
+        t.start()
+
+        # Dispatch command after 500ms (mirrors Qt6 QTimer.singleShot(500, sendCommand))
+        if command:
+            _threading.Timer(0.5, self._send_command).start()
+
+    def _reader(self):
+        while self._alive and self.proc.poll() is None:
+            try:
+                r, _, _ = _select.select([self.master_fd], [], [], 0.05)
+                if r:
+                    data = os.read(self.master_fd, 4096)
+                    if data:
+                        with self._lock:
+                            self._buf.extend(data)
+            except OSError:
+                break
+        self._alive = False
+
+    def _send_command(self):
+        if self.command and self._alive:
+            try:
+                os.write(self.master_fd, (self.command + '\n').encode('utf-8'))
+                _term_log.info(f'[Terminal {self.id[:8]}] Dispatched: {self.command[:80]}')
+            except OSError as e:
+                _term_log.error(f'[Terminal {self.id[:8]}] Command dispatch failed: {e}')
+
+    def write(self, data: bytes):
+        os.write(self.master_fd, data)
+
+    def read_from(self, offset: int) -> bytes:
+        with self._lock:
+            return bytes(self._buf[offset:])
+
+    def resize(self, rows: int, cols: int):
+        try:
+            winsize = _struct.pack('HHHH', rows, cols, 0, 0)
+            _fcntl.ioctl(self.master_fd, _termios.TIOCSWINSZ, winsize)
+        except Exception:
+            pass
+
+    @property
+    def alive(self) -> bool:
+        return self._alive and self.proc.poll() is None
+
+    def close(self):
+        self._alive = False
+        try:
+            self.proc.terminate()
+        except Exception:
+            pass
+        try:
+            os.close(self.master_fd)
+        except Exception:
+            pass
+
+
+@web_bp.post("/api/terminal/start")
+def terminal_start():
+    """Start a new PTY bash session, optionally with a command to execute."""
+    payload = request.get_json(silent=True) or {}
+    label = str(payload.get('label', 'terminal'))
+    host_ip = str(payload.get('host_ip', ''))
+    command = payload.get('command')  # None = plain bash; string = dispatched after 500ms
+
+    session_id = str(_uuid.uuid4())
+    session = _TerminalSession(session_id, command=command)
+    _terminal_sessions[session_id] = session
+
+    # Create a process row in the DB with status='Interactive'
+    wc = _wc()
+    logic = _logic()
+    from app.timing import getTimestamp
+    from controller.web_controller import WebProcessStub
+
+    start_time = getTimestamp(True)
+    output_folder = logic.activeProject.properties.outputFolder
+    outputfile = os.path.join(output_folder, f'{getTimestamp()}-terminal')
+
+    proc_stub = WebProcessStub(
+        name=label, tabTitle=label, hostIp=host_ip,
+        port='', protocol='tcp',
+        command=command or 'bash --login',
+        startTime=start_time, outputfile=outputfile
+    )
+
+    processRepo = logic.activeProject.repositoryContainer.processRepository
+    db_id = str(processRepo.storeProcess(proc_stub))
+    processRepo.storeProcessInteractiveStatus(db_id)
+
+    _terminal_process_sessions[int(db_id)] = session_id
+
+    _term_log.info(f'[Terminal] Started session {session_id[:8]} process_id={db_id} label={label}')
+
+    return jsonify({
+        "status": "ok",
+        "session_id": session_id,
+        "process_id": int(db_id),
+    })
+
+
+@web_bp.get("/api/terminal/<session_id>/output")
+def terminal_output(session_id):
+    session = _terminal_sessions.get(session_id)
+    if not session:
+        return _err("Session not found", 404)
+    offset = int(request.args.get('offset', 0))
+    data = session.read_from(offset)
+    return jsonify({
+        "data": data.decode('utf-8', errors='replace'),
+        "offset": offset,
+        "alive": session.alive,
+    })
+
+
+@web_bp.post("/api/terminal/<session_id>/input")
+def terminal_input(session_id):
+    session = _terminal_sessions.get(session_id)
+    if not session:
+        return _err("Session not found", 404)
+    payload = request.get_json(silent=True) or {}
+    data = payload.get('data', '')
+    if data:
+        session.write(data.encode('utf-8'))
+    return jsonify({"status": "ok"})
+
+
+@web_bp.post("/api/terminal/<session_id>/resize")
+def terminal_resize(session_id):
+    session = _terminal_sessions.get(session_id)
+    if not session:
+        return _err("Session not found", 404)
+    payload = request.get_json(silent=True) or {}
+    rows = int(payload.get('rows', 24))
+    cols = int(payload.get('cols', 80))
+    session.resize(rows, cols)
+    return jsonify({"status": "ok"})
+
+
+@web_bp.delete("/api/terminal/<session_id>")
+def terminal_delete(session_id):
+    session = _terminal_sessions.pop(session_id, None)
+    if not session:
+        return _err("Session not found", 404)
+    session.close()
+    # Remove from process→session map
+    to_remove = [pid for pid, sid in _terminal_process_sessions.items() if sid == session_id]
+    for pid in to_remove:
+        del _terminal_process_sessions[pid]
+    _term_log.info(f'[Terminal] Deleted session {session_id[:8]}')
     return jsonify({"status": "ok"})
