@@ -1283,7 +1283,7 @@ class TestLiveScan:
         """CVEs tab should have rows if vulners.nse found CVEs."""
         click_right_tab(driver, 'cves-right')
         time.sleep(POLL)
-        rows = driver.find_elements(By.CSS_SELECTOR, '#cves-body tr')
+        rows = driver.find_elements(By.CSS_SELECTOR, '#host-detail-cves tr')
         # Not asserting count > 0 (target may have no CVEs)
         # Just verify the tab rendered without error
         assert driver.find_element(By.ID, 'cves-right').is_displayed()
@@ -1359,16 +1359,44 @@ class TestLiveScan:
             pytest.skip("No dynamic tab for screenshooter")
 
         js_click(driver, shoot_tab)
-        time.sleep(POLL + 0.5)  # wait for image to load
 
-        # Find the screenshot img inside the active dynamic panel
-        imgs = driver.find_elements(By.CSS_SELECTOR,
-            '#dynamic-tabs-container .tab-content.active img[src*="screenshots"]')
-        if not imgs:
-            pytest.skip("No screenshot image in dynamic tab")
+        # Wait for the screenshot image to appear.
+        # The snapshot poll (every 1.5s) re-runs renderDynamicToolTabs which wipes
+        # container.innerHTML — the img is only present between the tab click and
+        # the next re-render. Use WebDriverWait with retry to catch it.
+        img_src = None
+        for _ in range(6):   # try for up to ~9s across poll cycles
+            time.sleep(1.5)
+            result = driver.execute_script("""
+                var panels = document.querySelectorAll('#dynamic-tabs-container .tab-content.active');
+                for (var p of panels) {
+                    var img = p.querySelector('img[src*="screenshots"]');
+                    if (img) return img.src;
+                }
+                return null;
+            """)
+            if result:
+                img_src = result
+                break
+            # Re-click the tab so loadProcessOutput fires again after the re-render
+            driver.execute_script("""
+                var tabs = document.querySelectorAll('#right-tab-bar .dynamic-tab');
+                for (var t of tabs) {
+                    if (t.textContent.toLowerCase().includes('screenshooter')) { t.click(); break; }
+                }
+            """)
 
-        # Click the image — should open screenshot-modal
-        js_click(driver, imgs[0])
+        if not img_src:
+            pytest.skip("No screenshot image appeared in dynamic tab — possible timing issue")
+
+        # Click the image via JS — should open screenshot-modal
+        driver.execute_script("""
+            var panels = document.querySelectorAll('#dynamic-tabs-container .tab-content.active');
+            for (var p of panels) {
+                var img = p.querySelector('img[src*="screenshots"]');
+                if (img) { img.click(); break; }
+            }
+        """)
         time.sleep(0.3)
 
         modal_class = driver.find_element(By.ID, 'screenshot-modal').get_attribute('class')
@@ -1383,28 +1411,35 @@ class TestLiveScan:
         driver.find_element(By.ID, 'screenshot-modal-close').click()
         time.sleep(0.2)
 
-    def test_17_cves_tab_loads_after_nse(self, driver, live_target):
-        """CVEs tab loads without error; skips if target has no CVEs."""
+    def test_17_cves_populated_after_nse(self, driver, live_target):
+        """CVEs tab must have real CVE data after NSE/vulners stage completes.
+        test_08 guarantees all stages finished before this runs.
+        loadHostDetail is async — wait up to 10s for rows to appear."""
         row = wait_for_host_row(driver, live_target)
         js_click(driver, row)
         time.sleep(POLL)
         click_right_tab(driver, 'cves-right')
-        time.sleep(POLL)
-        assert driver.find_element(By.ID, 'cves-right').is_displayed()
-        rows = driver.find_elements(By.CSS_SELECTOR, '#cves-body tr')
-        if not rows:
-            pytest.skip(f"{live_target} has no CVEs — target may be fully patched")
+        # Wait for loadHostDetail async response to render CVE rows
+        W(driver, 10).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, '#host-detail-cves tr')) > 0,
+        )
+        rows = driver.find_elements(By.CSS_SELECTOR, '#host-detail-cves tr')
+        assert len(rows) > 0,             f"CVEs tab has 0 rows after NSE scan completed — vulners.nse may not have stored results"
         cells = rows[0].find_elements(By.TAG_NAME, 'td')
-        assert any(c.text.strip() for c in cells), "CVE row cells are all empty"
-    def test_18_scripts_tab_has_rows_after_scan(self, driver, live_target):
-        """Scripts tab loads; skips if no scripts ran on this target."""
+        assert any(c.text.strip() for c in cells), "First CVE row has no cell content"
+
+    def test_18_scripts_populated_after_scan(self, driver, live_target):
+        """Scripts tab must have nmap script rows after the full scan.
+        test_08 guarantees all stages finished before this runs."""
         row = wait_for_host_row(driver, live_target)
         js_click(driver, row)
         time.sleep(POLL)
         click_right_tab(driver, 'scripts-right')
-        time.sleep(POLL)
+        # Wait for loadHostDetail async response to render script rows
+        W(driver, 10).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, '#host-detail-scripts tr')) > 0,
+        )
         rows = driver.find_elements(By.CSS_SELECTOR, '#host-detail-scripts tr')
-        if not rows:
-            pytest.skip(f"No scripts found on {live_target} — nmap scripts may not have run")
+        assert len(rows) > 0,             f"Scripts tab has 0 rows after scan completed — nmap scripts may not have stored results"
         cells = rows[0].find_elements(By.TAG_NAME, 'td')
-        assert any(c.text.strip() for c in cells), "Script row cells are all empty"
+        assert any(c.text.strip() for c in cells), "First script row has no cell content"
