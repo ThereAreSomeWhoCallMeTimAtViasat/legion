@@ -337,6 +337,7 @@ if $RUN_LIVE; then
     hydra_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
                          LEGION_SSH_PORT=22 \
                          LEGION_MYSQL_PORT=3306 \
+                         LEGION_FTP_PORT=21 \
                     python3 tests/test_export_and_hydra.py 2>&1) || true
     spinner_stop
     hydra_line=$(echo "$hydra_out" | grep "^Results:" | tail -1)
