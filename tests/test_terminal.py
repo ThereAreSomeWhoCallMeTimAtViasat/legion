@@ -305,6 +305,113 @@ test("T1.12: two sessions are independent", test_t1_two_sessions_independent)
 
 # ══════════════════════════════════════════════════════════════════════════════
 print("\n" + "="*60)
+print("T2: Interactive detection in runCommand")
+print("="*60 + "\n")
+
+def test_t2_bash_command_starts_terminal():
+    """runCommand with bash in command must create an Interactive process with session_id."""
+    wc.start()
+    result = wc.runCommand('bash -c "echo bash_detect_test"', name='bash-detect',
+                           hostIp='10.99.99.1')
+    pid = result.get('process_id')
+    sid = result.get('session_id')
+    if not pid:
+        return "no process_id"
+    return ok(sid is not None and len(str(sid)) > 10,
+              f"Expected session_id for bash command, got: {sid!r}")
+test("T2.1: bash command creates terminal session", test_t2_bash_command_starts_terminal)
+
+def test_t2_msfconsole_command_starts_terminal():
+    """runCommand with msfconsole in command must create a terminal session."""
+    result = wc.runCommand(
+        'msfconsole -q -x "echo msfconsole_detect_test; exit"',
+        name='msf-detect', hostIp='10.99.99.1')
+    sid = result.get('session_id')
+    return ok(sid is not None, f"msfconsole command should produce session_id, got: {sid!r}")
+test("T2.2: msfconsole command creates terminal session", test_t2_msfconsole_command_starts_terminal)
+
+def test_t2_plain_command_no_terminal():
+    """runCommand with nmap/nikto/etc. must NOT create a terminal session."""
+    result = wc.runCommand('echo no_terminal_test', name='plain-detect', hostIp='10.99.99.1')
+    sid = result.get('session_id')
+    return ok(sid is None, f"Plain echo should NOT have session_id, got: {sid!r}")
+test("T2.3: plain command has no terminal session", test_t2_plain_command_no_terminal)
+
+def test_t2_interactive_excluded_from_queue():
+    """Interactive processes must not count against process queue limits."""
+    snap = client.get('/api/snapshot').get_json()
+    procs = snap.get('processes', [])
+    interactive = [p for p in procs if p.get('status') == 'Interactive']
+    if not interactive:
+        return "SKIP"
+    # The interactive process should exist but NOT block queue from starting regular processes
+    result = wc.runCommand('echo queue_check', name='queue-test', hostIp='10.99.99.1')
+    pid = result.get('process_id')
+    time.sleep(1.5)
+    snap2 = client.get('/api/snapshot').get_json()
+    proc = next((p for p in snap2.get('processes', []) if p.get('id') == pid), None)
+    return ok(proc and proc.get('status') == 'Finished',
+              f"Regular process should have finished despite interactive sessions. status={proc.get('status') if proc else 'not found'}")
+test("T2.4: interactive processes excluded from queue count", test_t2_interactive_excluded_from_queue)
+
+def test_t2_interactive_process_has_correct_snapshot_status():
+    """Interactive process created by runCommand must appear in snapshot with status=Interactive."""
+    result = wc.runCommand('bash -c "sleep 2"', name='status-check', hostIp='10.99.99.1')
+    pid = result.get('process_id')
+    sid = result.get('session_id')
+    if not pid or not sid:
+        return "SKIP"
+    time.sleep(0.5)
+    snap = client.get('/api/snapshot').get_json()
+    proc = next((p for p in snap.get('processes', []) if p.get('id') == pid), None)
+    if not proc:
+        return f"process {pid} not in snapshot"
+    results = []
+    if proc.get('status') != 'Interactive':
+        results.append(f"status={proc.get('status')}, expected Interactive")
+    if proc.get('session_id') != sid:
+        results.append(f"session_id mismatch: snapshot={proc.get('session_id')}, expected={sid}")
+    return ok(not results, "; ".join(results))
+test("T2.5: interactive process has correct status and session_id in snapshot", test_t2_interactive_process_has_correct_snapshot_status)
+
+def test_t2_kill_interactive_cleans_terminal():
+    """Killing an Interactive process must also close its terminal session."""
+    result = wc.runCommand('bash -c "sleep 60"', name='kill-term-check', hostIp='10.99.99.1')
+    pid = result.get('process_id')
+    sid = result.get('session_id')
+    if not pid or not sid:
+        return "SKIP"
+    time.sleep(0.5)
+    # Kill it
+    wc.killProcess(pid)
+    time.sleep(0.5)
+    # Terminal session should be gone
+    r = client.get(f'/api/terminal/{sid}/output?offset=0')
+    return ok(r.status_code == 404,
+              f"Terminal session should be cleaned up after kill, got status={r.status_code}")
+test("T2.6: killing interactive process cleans up terminal session", test_t2_kill_interactive_cleans_terminal)
+
+def test_t2_retry_interactive_stays_interactive():
+    """Retrying an Interactive process must create a new Interactive session."""
+    result = wc.runCommand('bash -c "echo retry_source"', name='retry-int-check', hostIp='10.99.99.1')
+    pid = result.get('process_id')
+    sid = result.get('session_id')
+    if not pid or not sid:
+        return "SKIP"
+    time.sleep(2)  # let it finish
+    # Retry via the process action handler
+    retry_result = wc.handleProcessAction(pid, 'retry')
+    if not retry_result or not retry_result.get('new_result'):
+        return f"retry returned: {retry_result}"
+    new_result = retry_result['new_result']
+    new_sid = new_result.get('session_id')
+    return ok(new_sid is not None and new_sid != sid,
+              f"Retry of interactive should create new session. new_sid={new_sid!r}, old_sid={sid!r}")
+test("T2.7: retrying interactive process creates new interactive session", test_t2_retry_interactive_stays_interactive)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
 print("T3: Regression — regular processes unaffected")
 print("="*60 + "\n")
 

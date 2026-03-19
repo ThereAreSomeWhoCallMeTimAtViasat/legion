@@ -852,12 +852,17 @@ class WebController:
     # ──────────────────────────────────────────────────────────────
     def runCommand(self, command, name='process', tabTitle=None, hostIp='', port='',
                    protocol='tcp', startTime=None, outputfile='', run_actions=True,
-                   _is_staged=False):
+                   _is_staged=False, force_interactive=False):
         """
         Run a system command, store it in the DB, capture output in a background thread.
-        Returns dict with process_id and pid.
+        Returns dict with process_id, pid, and optionally session_id.
 
         Maps to controller.py:runCommand but uses subprocess instead of QProcess.
+
+        Interactive detection (controller.py:1921):
+        If the command contains 'bash' or 'msfconsole', it is started as a PTY
+        terminal session instead of a plain Popen. This lets the user interact
+        with msfconsole prompts, SSH sessions, etc. via xterm.js.
         """
         from app.timing import getTimestamp
 
@@ -871,6 +876,21 @@ class WebController:
 
         log.info(f"[WebController] runCommand: {command}")
         log.info(f"  name={name}, host={hostIp}, port={port}")
+
+        # controller.py:1921 — detect interactive commands
+        is_interactive = ('bash' in str(command).lower() or 'msfconsole' in str(command).lower())
+        if force_interactive:
+            is_interactive = True
+
+        if is_interactive:
+            log.info(f"[WebController] Interactive command detected — starting PTY terminal session")
+            return self._startInteractiveProcess(
+                command=command, name=name, tabTitle=tabTitle, hostIp=hostIp,
+                port=port, protocol=protocol, startTime=startTime, outputfile=outputfile,
+                force_interactive=force_interactive,
+            )
+
+        # ── Non-interactive path (unchanged) ──
 
         # Create process stub (replaces MyQProcess)
         proc = WebProcessStub(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile)
@@ -899,6 +919,63 @@ class WebController:
         self.checkProcessQueue()
 
         return {'process_id': int(dbId), 'pid': proc.pid}
+
+    def _startInteractiveProcess(self, command, name, tabTitle, hostIp, port,
+                                  protocol, startTime, outputfile, force_interactive=False):
+        """Start a PTY terminal session for an interactive command (bash/msfconsole).
+
+        Creates a _TerminalSession via the /api/terminal/start route logic,
+        and applies the Qt6 interactive rules:
+        - msfconsole with 'run -j': mark as Interactive after 10s (controller.py:1956-1969)
+        - force_interactive: mark immediately (controller.py:1973-1977)
+        - All interactive processes are excluded from process queue counting
+        """
+        import uuid
+        from app.web.routes import _terminal_sessions, _terminal_process_sessions, _TerminalSession
+
+        session_id = str(uuid.uuid4())
+        session = _TerminalSession(session_id, command=command)
+        _terminal_sessions[session_id] = session
+
+        # Create the DB process row
+        proc = WebProcessStub(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile)
+        processRepo = self.logic.activeProject.repositoryContainer.processRepository
+        dbId = str(processRepo.storeProcess(proc))
+        proc.id = int(dbId)
+        proc.isInteractive = True
+
+        # controller.py:1956-1969 — msfconsole with 'run -j': delay 10s then mark Interactive
+        # controller.py:1973-1977 — force_interactive: mark immediately
+        if force_interactive:
+            processRepo.storeProcessInteractiveStatus(dbId)
+            log.info(f"[WebController] Force-marked process {dbId} as Interactive (retry)")
+        elif 'msfconsole' in str(command).lower() and 'run -j' in str(command).lower():
+            # Wait 10 seconds for exploit to start, then mark as Interactive
+            def _delayed_mark():
+                try:
+                    processRepo.storeProcessInteractiveStatus(dbId)
+                    log.info(f"[WebController] Marked msfconsole process {dbId} as Interactive after 10s delay")
+                except Exception as e:
+                    log.error(f"[WebController] delayed markAsInteractive error: {e}")
+            import threading
+            threading.Timer(10.0, _delayed_mark).start()
+            # Store as Running initially (will become Interactive after 10s)
+            processRepo.storeProcessRunningStatus(dbId, str(session.proc.pid))
+            log.info(f"[WebController] msfconsole process {dbId} starts as Running, will be Interactive in 10s")
+        else:
+            processRepo.storeProcessInteractiveStatus(dbId)
+            log.info(f"[WebController] Marked process {dbId} as Interactive")
+
+        # Track in active processes (excluded from queue counting via isInteractive flag)
+        proc._popen = session.proc  # so killProcess can terminate it
+        self._active_processes[int(dbId)] = proc
+
+        # Map process_id → session_id for snapshot
+        _terminal_process_sessions[int(dbId)] = session_id
+
+        log.info(f"[WebController] Interactive session {session_id[:8]} process_id={dbId} label={name}")
+
+        return {'process_id': int(dbId), 'pid': session.proc.pid, 'session_id': session_id}
 
     def _capture_output(self, proc, processRepo):
         """
@@ -1067,7 +1144,8 @@ class WebController:
             processRepo.storeProcessOutput(dbId, ''.join(output_parts) + f"\n[capture error: {e}]")
 
     def killProcess(self, process_id):
-        """Kill a running process by DB id. Replaces controller.py:killProcess."""
+        """Kill a running process by DB id. Replaces controller.py:killProcess.
+        Also cleans up any associated PTY terminal session (Interactive processes)."""
         processRepo = self.logic.activeProject.repositoryContainer.processRepository
         proc = self._active_processes.get(int(process_id)) if hasattr(self, '_active_processes') else None
 
@@ -1082,6 +1160,18 @@ class WebController:
                 pass
             except Exception as e:
                 log.error(f"[WebController] Error killing process: {e}")
+
+        # Clean up terminal session if this was an Interactive process
+        try:
+            from app.web.routes import _terminal_sessions, _terminal_process_sessions
+            session_id = _terminal_process_sessions.pop(int(process_id), None)
+            if session_id:
+                session = _terminal_sessions.pop(session_id, None)
+                if session:
+                    session.close()
+                    log.info(f"[WebController] Cleaned up terminal session {session_id[:8]} for process {process_id}")
+        except Exception as e:
+            log.error(f"[WebController] Error cleaning up terminal session: {e}")
 
         processRepo.storeProcessKillStatus(str(process_id))
 
@@ -1275,10 +1365,15 @@ class WebController:
             if not proc_data or not proc_data.get('command'):
                 log.warning(f"[WebController] Cannot retry process {process_id}: no command")
                 return None
-            # Kill if still running
+            # Kill if still running (controller.py:1279 — handles Running, Waiting, Interactive)
+            original_status = proc_data.get('status', '')
             if process_id in self._active_processes:
                 self.killProcess(process_id)
                 time.sleep(0.5)
+            # controller.py:1351-1353 — if original was Interactive, force retry to be Interactive too
+            force_interactive = (original_status == 'Interactive')
+            if force_interactive:
+                log.info(f"[WebController] Retry of Interactive process {process_id} — will force_interactive")
             # Re-run the same command
             result = self.runCommand(
                 command=proc_data['command'],
@@ -1288,6 +1383,7 @@ class WebController:
                 port=proc_data.get('port', ''),
                 protocol=proc_data.get('protocol', 'tcp'),
                 outputfile=proc_data.get('outputfile', ''),
+                force_interactive=force_interactive,
             )
             return {'action': 'retry', 'old_id': process_id, 'new_result': result}
 
