@@ -1,6 +1,6 @@
 # Legion Flask — Master Test Plan
 
-**Version:** v9.7-flask
+**Version:** v9.8-flask
 **Branch:** flask-clean
 **Last updated:** 2026-03-19
 
@@ -14,14 +14,14 @@ and `TERMINAL_TEST_PLAN.md`.
 
 | Layer | Tests | Method |
 |-------|-------|--------|
-| Unit / API (no live target) | 627 passing, 7 skipped | Flask test client + source inspection |
-| Unit / API (with LEGION_TEST_TARGET) | 634 passing | Same + T7 live terminal tests |
+| Unit / API (no live target) | 668 passing, 7 skipped | Flask test client + source inspection |
+| Unit / API (with LEGION_TEST_TARGET) | 675 passing | Same + T7 live terminal tests |
 | Selenium offline | 178 | Headless Firefox via geckodriver |
 | Selenium live scan | 19 | Headless Firefox + real nmap against 192.168.85.11 |
-| **Total (offline)** | **805 passing, 7 skipped** | |
-| **Total (with live VM)** | **831 passing** | |
+| **Total (offline)** | **846 passing, 7 skipped** | |
+| **Total (with live VM)** | **872 passing** | |
 
-All passing on `flask-clean` at v9.7-flask. The 7 "skipped" unit tests are T7.1–7.7
+All passing on `flask-clean` at v9.8-flask. The 7 "skipped" unit tests are T7.1–7.7
 — they skip automatically when `LEGION_TEST_TARGET` is not set and pass when it is.
 
 ---
@@ -31,6 +31,10 @@ All passing on `flask-clean` at v9.7-flask. The 7 "skipped" unit tests are T7.1�
 ```bash
 # All unit tests (one line)
 for f in tests/test_*.py; do echo -n "$f: "; sudo python3 $f 2>&1 | grep "^Results:" | tail -1; done
+
+# Or use the test runner script (colour summary report)
+sudo bash run_tests.sh                          # offline only
+sudo bash run_tests.sh 192.168.85.11            # + live terminal + live scan
 
 # Selenium offline suites (no network needed)
 sudo python3 -m pytest tests/test_selenium_ui.py -v -m "not live"
@@ -77,6 +81,7 @@ sudo python3 tests/test_behavioral.py
 | `test_multihost_isolation.py` | 14 | Ports, notes, processes, OS — per-host at API/DB level |
 | `test_terminal.py` | 38+7 | PTY session lifecycle, interactive detection, port menus, snapshot integrity, keyboard (7 live skipped) |
 | `test_gap_implementations.py` | 28 | Python script routing, dup check layer 2, file import, PostgreSQL adapter, ORDER BY whitelist |
+| `test_qt6_gaps.py` | 41 | Settings .bak, XML archive, screenshot blacklist, CSV export, applySettings, custom command, Hydra verification, duplicate check for user actions |
 
 ---
 
@@ -100,16 +105,34 @@ sudo python3 tests/test_behavioral.py
 |-----------|---------|--------|-----------|
 | Nmap staged scan chain (6 stages) | ✅ | Unit: signal chain simulation | `test_signal_chains.py` |
 | Nmap XML import → host/port storage | ✅ | Unit | `test_behavioral.py`, `test_phase1_right_panel.py` |
+| Nmap XML archived to outputFolder | ✅ | Unit: source inspection + E2E | `test_qt6_gaps.py` A2.1–A2.3 |
 | Process queue: concurrency limits, dedup | ✅ | Unit | `test_webcontroller.py` |
 | Process output capture (temp file, 5s flush) | ✅ | Unit: source + E2E | `test_v6_v7_fixes.py`, `test_api_gaps.py` |
 | Scheduler: auto-run tools after scan | ✅ | Unit: signal chain | `test_signal_chains.py` |
 | Duplicate check: process level (name+host+port) | ✅ | Unit | `test_webcontroller_remaining.py` |
 | Duplicate check: script level (l1ScriptObj) | ✅ | Unit source inspection | `test_gap_implementations.py` |
+| Duplicate check: user-triggered host actions | ✅ | Unit | `test_qt6_gaps.py` A8.4, A8.6 |
+| Duplicate check: user-triggered port actions | ✅ | Unit source inspection | `test_qt6_gaps.py` A8.5 |
 | SQLite WAL mode enabled | ✅ | Unit: pragma check | `test_behavioral.py` |
 | ORM session management (no detachment) | ✅ | Unit | `test_behavioral.py` |
 | Screenshot deduplication (_screenshots_taken) | ✅ | Unit | `test_webcontroller_remaining.py` |
+| Screenshot host-deletion blacklist | ✅ | Unit | `test_qt6_gaps.py` A3.1–A3.4 |
 | Match detection (hydra credentials) | ✅ | Unit | `test_webcontroller.py`, `test_v6_v7_fixes.py` |
 | nmap -oA flag appended for host actions | ✅ | Unit source inspection | `test_v6_v7_fixes.py` |
+
+### Settings Management
+
+| Capability | Tested? | Method | Test File |
+|-----------|---------|--------|-----------|
+| Load settings from legion.conf at startup | ✅ | Unit | `test_phase1_settings.py` |
+| Save raw legion.conf text | ✅ | Unit API | `test_api_gaps.py` P5.3 |
+| Settings backup (.bak) created on save | ✅ | Unit API | `test_qt6_gaps.py` A1.1–A1.3 |
+| .bak contains previous content | ✅ | Unit API | `test_qt6_gaps.py` A1.2 |
+| .bak rotated correctly on second save | ✅ | Unit API | `test_qt6_gaps.py` A1.3 |
+| applySettings hot-reload (no restart needed) | ✅ | Unit | `test_qt6_gaps.py` A5.1–A5.5 |
+| Profile activate also hot-reloads settings | ✅ | Unit source inspection | `test_qt6_gaps.py` A5.5 |
+| Config profiles (save/load/rename/duplicate/delete) | ✅ | Unit API | `test_api_gaps.py` P7.x |
+| Config validation rejects malformed input | ✅ | Unit API | `test_api_gaps.py` P7.1–P7.8 |
 
 ### Input Validation (Security)
 
@@ -127,20 +150,7 @@ sudo python3 tests/test_behavioral.py
 | Staged nmap port: accepts valid expression | ✅ | Unit API (200 response) | `test_api_gaps.py` P8.10 |
 | ORDER BY injection prevention (whitelist) | ✅ | Unit: whitelist check | `test_gap_implementations.py` G8.1–G8.4 |
 | LIKE clause injection (sanitise()) | ✅ | Unit source inspection | `test_gap_implementations.py` G8.5 |
-
-### Config Validation
-
-| Capability | Tested? | Method | Test File |
-|-----------|---------|--------|-----------|
-| Valid config saves successfully | ✅ | Unit API | `test_api_gaps.py` P7.1 |
-| Unclosed quote rejected (400) | ✅ | Unit API | `test_api_gaps.py` P7.2 |
-| Wrong element count rejected (400) | ✅ | Unit API | `test_api_gaps.py` P7.3 |
-| Unknown section name rejected (400) | ✅ | Unit API | `test_api_gaps.py` P7.4 |
-| Unclosed section header rejected (400) | ✅ | Unit API | `test_api_gaps.py` P7.5 |
-| Line without '=' rejected (400) | ✅ | Unit API | `test_api_gaps.py` P7.6 |
-| Unknown key in [GeneralSettings] rejected | ✅ | Unit API | `test_api_gaps.py` P7.7 |
-| Validation errors include line numbers | ✅ | Unit API | `test_api_gaps.py` P7.8 |
-| Config save writes to disk / GET reads back | ✅ | Unit API | `test_api_gaps.py` P5.3 |
+| Custom command: empty rejected | ✅ | Unit API (400 response) | `test_qt6_gaps.py` A6.5 |
 
 ### Project Save / Open / New
 
@@ -158,55 +168,62 @@ sudo python3 tests/test_behavioral.py
 | File browser modal opens for Open | ✅ | Selenium | `test_selenium_project.py` |
 | Title bar shows project filename after save/open | ✅ | Selenium | `test_selenium_project.py` |
 | Export JSON: 200, correct structure | ✅ | Unit API | `test_api_gaps.py` P6.1–6.8 |
+| Export CSV: text/csv, correct rows + header | ✅ | Unit API | `test_qt6_gaps.py` A4.1–A4.7 |
 | Export JSON download in browser | ❌ | Not automatable | Blob download inaccessible in headless Firefox |
+| Export CSV download in browser | ❌ | Not automatable | Same reason; content verified via API |
 | Notes persist across server restart | ❌ | Manual | Requires stop/restart server mid-test |
 | Hosts persist across server restart | ❌ | Manual | Same reason |
 
-### Text File Import (Gap #5)
+### Text File Import
 
 | Capability | Tested? | Method | Test File |
 |-----------|---------|--------|-----------|
-| Route exists (not 404) | ✅ | Unit API | `test_gap_implementations.py` G5.1 |
-| JSON path import: 200 + status:ok | ✅ | Unit API | `test_gap_implementations.py` G5.2 |
+| JSON path import: 200 + status:ok | ✅ | Unit API | `test_gap_implementations.py` G5.1–G5.2 |
 | Imported hosts appear in snapshot | ✅ | Unit API | `test_gap_implementations.py` G5.3 |
 | Comment lines (#) skipped | ✅ | Unit API | `test_gap_implementations.py` G5.4 |
 | Empty lines skipped | ✅ | Unit API | `test_gap_implementations.py` G5.5 |
 | Nonexistent file returns 404 | ✅ | Unit API | `test_gap_implementations.py` G5.6 |
 | Missing path returns 400 | ✅ | Unit API | `test_gap_implementations.py` G5.7 |
 | Multipart file upload works | ✅ | Unit API | `test_gap_implementations.py` G5.8 |
-| Duplicate targets skipped | ✅ | Inherent (getHostInformation guard) | `cli_utils.import_targets_from_textfile` |
-| File import UI button in web interface | ❌ | Not yet wired | No "Import from file" button in Add Hosts modal |
+| File import UI button in Add Hosts modal | ❌ | Not yet wired | API endpoint exists; no UI button |
 
-### Python Script Host Actions (Gap #3)
+### Python Script Host Actions
 
 | Capability | Tested? | Method | Test File |
 |-----------|---------|--------|-----------|
-| macvendors.py exists | ✅ | Unit: file existence | `test_gap_implementations.py` G3.1 |
-| pyShodan.py exists | ✅ | Unit: file existence | `test_gap_implementations.py` G3.2 |
+| macvendors.py and pyShodan.py exist | ✅ | Unit: file existence | `test_gap_implementations.py` G3.1–G3.2 |
 | handleHostToolAction routes python-script-* | ✅ | Unit source inspection | `test_gap_implementations.py` G3.3 |
-| pyShodan action builds python3 command | ✅ | Unit: mock capture | `test_gap_implementations.py` G3.4 |
-| macvendors action builds python3 command | ✅ | Unit: mock capture | `test_gap_implementations.py` G3.5 |
+| pyShodan action builds correct python3 command | ✅ | Unit: mock capture | `test_gap_implementations.py` G3.4 |
+| macvendors action builds correct python3 command | ✅ | Unit: mock capture | `test_gap_implementations.py` G3.5 |
 | Unknown script name does not crash | ✅ | Unit | `test_gap_implementations.py` G3.6 |
-| macvendors.py actually runs and returns vendor | ❌ | Needs network + MAC address | External API call to api.macvendors.com |
-| pyShodan.py actually runs and returns data | ❌ | Needs Shodan API key + network | External API; key embedded in script |
+| macvendors.py actually runs and returns vendor | ❌ | Needs network + MAC | External API at api.macvendors.com |
+| pyShodan.py actually runs and returns data | ❌ | Needs Shodan API key | External API; key embedded in script |
 
-### Database Adapters (Gap #6)
+### Hydra / Brute Force
 
 | Capability | Tested? | Method | Test File |
 |-----------|---------|--------|-----------|
-| Default (no env var) uses SQLite | ✅ | Unit | `test_gap_implementations.py` G6.1 |
-| Empty db_url uses SQLite | ✅ | Unit | `test_gap_implementations.py` G6.2 |
-| LEGION_DB_URL env var routes to PostgreSQL | ✅ | Unit source inspection | `test_gap_implementations.py` G6.3 |
-| postgresDbAdapter imports without NameError | ✅ | Unit import | `test_gap_implementations.py` G6.4 |
-| postgresDbAdapter has correct interface | ✅ | Unit source inspection | `test_gap_implementations.py` G6.5 |
-| postgresDbAdapter has no syntax errors | ✅ | Unit: ast.parse | `test_gap_implementations.py` G6.6 |
-| Full PostgreSQL connection and queries | ❌ | Needs PostgreSQL server | No PostgreSQL installed in test environment |
+| Hydra output parsed for credentials | ✅ | Unit | `test_qt6_gaps.py` A7.1–A7.2 |
+| Found username written to wordlist file | ✅ | Unit | `test_qt6_gaps.py` A7.3 |
+| Found password written to wordlist file | ✅ | Unit | `test_qt6_gaps.py` A7.4 |
+| Wordlist has no duplicate entries | ✅ | Unit | `test_qt6_gaps.py` A7.5 |
+| _capture_output calls hydra extraction | ✅ | Unit source inspection | `test_qt6_gaps.py` A7.6 |
+| Run Hydra via Brute tab | ✅ | Unit: route exists | `test_api_gaps.py` |
+| Hydra brute-force against real target | ❌ | Manual | Needs vulnerable target with weak creds |
+
+### Database Adapters
+
+| Capability | Tested? | Method | Test File |
+|-----------|---------|--------|-----------|
+| Default uses SQLite | ✅ | Unit | `test_gap_implementations.py` G6.1–G6.2 |
+| LEGION_DB_URL routes to PostgreSQL adapter | ✅ | Unit source inspection | `test_gap_implementations.py` G6.3–G6.6 |
+| Full PostgreSQL connection and queries | ❌ | Needs PostgreSQL server | Not installed in test environment |
 
 ### Multi-Host Data Isolation
 
 | Capability | Tested? | Method | Test File |
 |-----------|---------|--------|-----------|
-| Ports are per-host (no bleed between hosts) | ✅ | Unit API + Selenium | `test_multihost_isolation.py`, `test_selenium_multihost.py` |
+| Ports are per-host (no bleed) | ✅ | Unit API + Selenium | `test_multihost_isolation.py`, `test_selenium_multihost.py` |
 | Notes are per-host | ✅ | Unit API + Selenium | `test_multihost_isolation.py`, `test_selenium_multihost.py` |
 | Processes are per-host | ✅ | Unit API | `test_multihost_isolation.py` |
 | OS shown is per-host | ✅ | Unit API + Selenium | `test_multihost_isolation.py`, `test_selenium_multihost.py` |
@@ -214,7 +231,6 @@ sudo python3 tests/test_behavioral.py
 | Tab indicators are per-host | ✅ | Selenium | `test_selenium_multihost.py` |
 | OS tab filters to correct host only | ✅ | Selenium | `test_selenium_multihost.py` |
 | Notes blur race condition fixed | ✅ | Selenium | `test_selenium_multihost.py` |
-| Writing note on A does not affect B | ✅ | Unit API + Selenium | `test_multihost_isolation.py`, `test_selenium_multihost.py` |
 
 ### User Interface — Menus and Modals
 
@@ -240,14 +256,14 @@ sudo python3 tests/test_behavioral.py
 |-----------|---------|--------|-----------|
 | Host right-click menu appears | ✅ | Selenium | `test_selenium_ui.py` |
 | Host delete: confirm, row removed, DB cleared | ✅ | Selenium + Unit API | `test_selenium_gaps.py`, `test_api_gaps.py` |
+| Host delete adds IP to screenshot blacklist | ✅ | Unit | `test_qt6_gaps.py` A3.1 |
 | Host double-click copies IP to clipboard | ✅ | Selenium (JS intercept) | `test_selenium_gaps.py` |
 | Mark as checked: CSS class applied | ✅ | Selenium | `test_selenium_gaps.py` |
 | Mark as unchecked: class removed | ✅ | Selenium | `test_selenium_gaps.py` |
-| Checked status in snapshot | ✅ | Selenium | `test_selenium_gaps.py` |
 | Open Terminal creates Interactive process | ✅ | Selenium + Unit API | `test_selenium_terminal.py`, `test_terminal.py` |
 | Host action python-script-* routes to real script | ✅ | Unit: mock capture | `test_gap_implementations.py` |
 | Portscan submenu nmap actions import XML | ✅ | Unit source inspection | `test_v6_v7_fixes.py` |
-| Add Port via host right-click menu | ❌ | Not in host menu | Feature tested via Add Port modal only |
+| Duplicate check before user-triggered host action | ✅ | Unit | `test_qt6_gaps.py` A8.4, A8.6 |
 
 ### User Interface — Port Actions
 
@@ -258,9 +274,11 @@ sudo python3 tests/test_behavioral.py
 | Send to Brute: tab switches, IP/port/service filled | ✅ | Selenium | `test_selenium_gaps.py` |
 | [term] actions appear in port menu | ✅ | Unit API | `test_terminal.py` |
 | [term] actions start terminal session | ✅ | Unit API + Selenium | `test_terminal.py`, `test_selenium_terminal.py` |
+| Run custom command: route exists, [IP]/[PORT] substituted | ✅ | Unit API | `test_qt6_gaps.py` A6.1–A6.5 |
+| Run custom command: JS prompts for input | ✅ | Unit source inspection | `test_qt6_gaps.py` A6.6–A6.7 |
+| Duplicate check before user-triggered port action | ✅ | Unit source inspection | `test_qt6_gaps.py` A8.5 |
 | Dynamic tab: right-click → Save Output / Close Tab | ✅ | Selenium | `test_selenium_ui.py` |
-| Run custom nmap/nikto/etc. from port menu | ✅ (process starts) | Selenium confirms menu item exists + starts | `test_selenium_ui.py` |
-| Actual tool output correct | ❌ | Manual or live | Requires network and open port |
+| Dynamic tab Save Output download | ❌ | Manual | Blob download not accessible in headless |
 
 ### User Interface — Process Actions
 
@@ -276,7 +294,6 @@ sudo python3 tests/test_behavioral.py
 | Process output scrolls to bottom | ✅ | Selenium | `test_selenium_ui.py` |
 | Process status filter (Running / All) | ✅ | Selenium | `test_selenium_ui.py` |
 | Auto-select new Running/Interactive process | ✅ | Unit source inspection | `test_v6_v7_fixes.py` |
-| Dynamic tab Save Output download | ❌ | Manual | Blob download not accessible in headless |
 
 ### User Interface — Notes
 
@@ -337,8 +354,8 @@ sudo python3 tests/test_behavioral.py
 | Byte-correct offset (multi-byte UTF-8 safe) | ✅ | Unit API | `test_terminal.py` |
 | Command dispatched to bash stdin after 500ms | ✅ | Unit API | `test_terminal.py` |
 | Keystroke input via POST | ✅ | Unit API | `test_terminal.py` |
-| Ctrl+C does not crash session | ✅ | Unit API | `test_terminal.py` |
-| Resize sends TIOCSWINSZ to PTY | ✅ | Unit API | `test_terminal.py` |
+| Ctrl+C does not crash session | ✅ | Unit API | `test_terminal.py` T6.3 |
+| Resize sends TIOCSWINSZ to PTY | ✅ | Unit API | `test_terminal.py` T6.5 |
 | DELETE terminates bash, marks process Killed | ✅ | Unit API | `test_terminal.py` |
 | Two sessions buffer independently | ✅ | Unit API | `test_terminal.py` |
 | bash command → Interactive in runCommand | ✅ | Unit API | `test_terminal.py` |
@@ -400,7 +417,7 @@ sudo python3 tests/test_behavioral.py
 | Hydra brute-force + credential extraction | ❌ | Manual | Needs vulnerable target with weak creds |
 | IPv6 host scanning | ❌ | Manual | No IPv6 test network |
 | Hard / FIN / NULL / Xmas nmap modes | ❌ | Manual | No automated verification of flags used |
-| unicornscan results import | ❌ | Manual | Not nmap; no XML output to import |
+| unicornscan results import | ❌ | Not implemented | Different binary format; no parser exists |
 
 ### Snapshot and API Performance
 
@@ -410,6 +427,10 @@ sudo python3 tests/test_behavioral.py
 | Snapshot uses single SQL (not N+1 ORM) | ✅ | Unit source inspection | `test_v6_v7_fixes.py` |
 | Snapshot includes os_groups | ✅ | Selenium | `test_selenium_ui.py` |
 | Snapshot includes session_id per process | ✅ | Unit API | `test_terminal.py` |
+| /api/check-duplicate preflight route | ✅ | Unit API | `test_qt6_gaps.py` A8.1–A8.3 |
+| /api/processes/custom route | ✅ | Unit API | `test_qt6_gaps.py` A6.1–A6.5 |
+| /api/export/csv route | ✅ | Unit API | `test_qt6_gaps.py` A4.1–A4.7 |
+| /api/workspace/hosts/import-file route | ✅ | Unit API | `test_gap_implementations.py` G5.1–G5.8 |
 
 ---
 
@@ -434,7 +455,7 @@ is set. They are skipped (not failed) when the env var is absent.
 | netcat session | Needs real listener on target |
 | macvendors.py real API lookup | External HTTPS call to api.macvendors.com; host MAC rarely populated |
 | pyShodan.py real lookup | Shodan API key + external network |
-| Full PostgreSQL connection | No PostgreSQL server in test env |
+| Full PostgreSQL connection | No PostgreSQL server in test environment |
 | IPv6 scanning | No IPv6 test network |
 
 ### Requires visual inspection
@@ -444,7 +465,8 @@ is set. They are skipped (not failed) when the env var is absent.
 | Screenshot shows correct web page | PNG loads confirmed; content requires human eye |
 | ANSI colour rendering in terminal | Canvas pixel comparison not implemented |
 | Terminal resize reflows correctly | Visual verification required |
-| Export JSON file saves to user's download folder | Blob download inaccessible in headless |
+| Custom command JS prompt appears | window.prompt() tested via source inspection; visual behaviour manual |
+| Export CSV / JSON browser download | Blob download inaccessible in headless; content verified via API |
 
 ### Requires server restart
 
@@ -453,15 +475,24 @@ is set. They are skipped (not failed) when the env var is absent.
 | Notes survive restart | Add note → stop server → start server → confirm note present |
 | Hosts survive restart | Same pattern |
 | Process output readable after restart | Run process → restart → check output via API |
+| Settings .bak survives restart | .bak file on disk, unaffected by restart |
 
 ### Features not yet wired in UI
 
 | Item | Status |
 |------|--------|
-| Import from file button in Add Hosts modal | API endpoint exists; no UI button |
+| Import from file button in Add Hosts modal | API endpoint (`/api/workspace/hosts/import-file`) exists; no UI button |
 | Nmap Scan modal trigger | Modal HTML exists; no button to open it |
 | Manual Tool Run modal trigger | Modal HTML exists; no button to open it |
-| CSV export | Stub returns "not yet implemented" |
+
+### Genuine architecture differences (not implementable in Flask)
+
+| Item | Reason |
+|------|--------|
+| Process append mode | Flask output model is fundamentally different; each retry creates a new process |
+| unicornscan result import | unicornscan uses its own binary format; no nmap XML produced; no parser |
+| Python importer pipeline | Qt6 passed ORM objects to scripts; Flask runs scripts as subprocess |
+| URL tracking (BrowserOpener queue) | Internal Qt state; `window.open()` is the functional equivalent |
 
 ---
 
@@ -483,28 +514,34 @@ open http://127.0.0.1:5000
 - [ ] Clicking screenshot thumbnail opens full-size modal
 
 ### Project persistence
-- [ ] File → Save → file created at shown path
+- [ ] File → Save → file created at shown path, `.bak` file also created
 - [ ] File → New → hosts table empty
 - [ ] File → Open → hosts, ports, notes all restored
+- [ ] File → Export CSV → file downloads with correct IP/port rows
 - [ ] Restart server → all data still present
+
+### Settings
+- [ ] F2 → Config modal → change a setting → Save → no error → setting takes effect immediately (no restart)
+- [ ] Profile switch (activate another profile) → settings hot-reload, scheduler uses new config
 
 ### Terminal
 - [ ] Right-click host → Open Terminal → xterm.js fills lower panel, full-width, typing works
-- [ ] Right-click FTP port → vsftpd234-Meta → `msf6 >` prompt appears in lower panel
+- [ ] Right-click FTP port → vsftpd234-Meta → `msf6 >` prompt appears
 - [ ] Type `sessions` → response shown
 - [ ] Right-click SSH port (if open) → SSH prompt appears, can log in
 - [ ] Tab completion, arrow key history, Ctrl+C all work
 
 ### UI actions
-- [ ] Host right-click → Delete → confirm → row gone from table, absent from DB
+- [ ] Host right-click → Delete → confirm → row gone, IP blacklisted (screenshooter won't fire)
 - [ ] Host double-click → IP copied to clipboard (paste to confirm)
+- [ ] Port right-click → Run custom command → prompt appears → enter `echo test` → process in table
 - [ ] Port right-click → Send to Brute → Brute tab opens with IP/port/service pre-filled
+- [ ] Running same tool twice on same host → second run skipped (if skip mode configured)
 - [ ] Process right-click → Kill → status changes to Killed
 - [ ] Process right-click → Retry → new row appears
 - [ ] Dynamic tab right-click → Save Output → .txt file downloads
 - [ ] Filters modal → keyword filter → only matching hosts shown → clear → all restored
 - [ ] Column resize → drag handle → reload page → column at same width
-- [ ] F2 → Config modal → edit staging ports → save → no error
 
 ---
 
@@ -514,7 +551,7 @@ open http://127.0.0.1:5000
 |-----------|--------|
 | NSE/vulners takes ~6.8s/port | Stage 2 is 2–3 min; cannot be reduced without skipping CVE detection |
 | eyewitness required at /usr/bin/eyewitness | Screenshot tests skip if not installed |
-| Live tests require 192.168.85.11 to be reachable | All 19 live tests fail if VM is down |
+| Live tests require 192.168.85.11 to be reachable | All 19 live tests + 7 T7 tests fail if VM is down |
 | xterm.js served from CDN | Headless tests skip canvas check if CDN unreachable |
 | /tmp/legion/ accumulates | Run `sudo rm -rf /tmp/legion/legion-*` before live test runs |
 | Orphaned nmap/eyewitness processes | live_target fixture kills stray PIDs; still possible if VM disconnects mid-scan |
