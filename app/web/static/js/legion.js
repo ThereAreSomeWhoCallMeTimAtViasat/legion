@@ -934,6 +934,21 @@ function loadProcessOutput(processId, targetEl) {
    INTERACTIONS (mirrors view.py signal connections)
    ================================================================ */
 
+/* ── Modal open/close helpers (global scope — used by JS and execute_script) ── */
+function openModal(id) {
+    var el = $(id);
+    if (!el) return;
+    el.classList.add('is-open'); el.style.display = 'flex';
+    setTimeout(function() {
+        var inp = el.querySelector('input[type="text"]:not([disabled]),textarea:not([disabled])');
+        if (inp) inp.focus();
+    }, 50);
+}
+function closeModal(id) {
+    var el = $(id);
+    if (el) { el.classList.remove('is-open'); el.style.display = 'none'; }
+}
+
 function initInteractions() {
     /* ── Host click (view.py:hostTableClick) ── */
     $('hosts-body').addEventListener('click', function(e) {
@@ -1484,22 +1499,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /* ════════════════════════════════════════════════
        MODAL WIRING — connect menu buttons to dialogs
+       (openModal/closeModal defined at global scope above)
        ════════════════════════════════════════════════ */
-
-    function openModal(id) {
-        var el = $(id);
-        if (!el) return;
-        el.classList.add('is-open'); el.style.display = 'flex';
-        /* Auto-focus first text input or textarea in the modal */
-        setTimeout(function() {
-            var inp = el.querySelector('input[type="text"]:not([disabled]),textarea:not([disabled])');
-            if (inp) inp.focus();
-        }, 50);
-    }
-    function closeModal(id) {
-        var el = $(id);
-        if (el) { el.classList.remove('is-open'); el.style.display = 'none'; }
-    }
 
     /* ── Add Hosts ── */
     var addHostsBtn = $('action-add-hosts');
@@ -2265,7 +2266,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var svcName = tr.dataset.service || (tr.cells[4]||{}).textContent || '*';
         /* Use /api/menus/port for the richer port menu (terminal + port actions) */
         fetchJson('/api/menus/port?service=' + encodeURIComponent(svcName)).then(function(data) {
-            var items = (data.port_actions || []).concat(data.suffix_actions || []);
+            var items = (data.port_actions || []).concat(data.fixed_actions || []).concat(data.suffix_actions || []);
             showContextMenu(items, e.clientX, e.clientY, function(action) {
                 if (action.action === 'port-action' && L.selectedHostIp) {
                     postJson('/api/workspace/service-action', {
