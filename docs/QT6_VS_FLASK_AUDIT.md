@@ -26,11 +26,11 @@ Legend:
 | `applySettings(newSettings)` | ⚠️ | Settings can be saved via `/api/settings/legion-conf` but `applySettings` logic (applying to running state) not implemented |
 | `saveSettings(saveBackup)` | ⚠️ | Raw text save works; backup copy not implemented |
 | `exportAsJson(filename)` | ✅ | Implemented in `/api/export/json` (fixed this session) — includes hosts, ports, notes, CVEs |
-| CSV export | ❌ | Stub returns "not yet implemented" |
+| CSV export | ✅ v9.8 | Implemented — text/csv, one row per port |  # was: Stub returns "not yet implemented" |
 | `copyToClipboard(data)` | N/A | Done in browser JS via `navigator.clipboard` |
 | `isTempProject()` | ✅ | Used internally |
-| `updateOutputFolder()` | ❌ | Qt6 tells screenshooter to update its output folder; Flask screenshooter uses current folder directly |
-| `copyNmapXMLToOutputFolder(filename)` | ❌ | Qt6 copies nmap XML to the project output folder after import; Flask does not |
+| `updateOutputFolder()` | ✅ v9.8 | Qt6 tells screenshooter to update its output folder; Flask screenshooter uses current folder directly |
+| `copyNmapXMLToOutputFolder(filename)` | ✅ v9.8 | Qt6 copies nmap XML to the project output folder after import; Flask does not |
 
 ---
 
