@@ -2446,6 +2446,29 @@ document.addEventListener('DOMContentLoaded', function() {
     var ssClose = $('screenshot-modal-close');
     if (ssClose) ssClose.addEventListener('click', function() { closeModal('screenshot-modal'); });
 
+    /* Click a screenshot image in any dynamic tab → open full-size in modal */
+    document.addEventListener('click', function(e) {
+        var img = e.target.closest('img');
+        if (!img) return;
+        /* Only fire for images inside the dynamic tabs output area */
+        if (!img.closest('#dynamic-tabs-container')) return;
+        var src = img.src || '';
+        if (!src.includes('/api/screenshots')) return;
+        var modalImg = $('screenshot-modal-image');
+        var modalMeta = $('screenshot-modal-meta');
+        if (modalImg) modalImg.src = src;
+        if (modalMeta) {
+            /* Extract host:port from URL param for display */
+            try {
+                var path = decodeURIComponent(src.split('path=')[1] || '');
+                modalMeta.textContent = path || 'Screenshot';
+            } catch(e2) {
+                modalMeta.textContent = 'Screenshot';
+            }
+        }
+        openModal('screenshot-modal');
+    });
+
     /* ── Process output modal (fallback — we use inline, but wire close) ── */
     var poClose = $('process-output-modal-close');
     if (poClose) poClose.addEventListener('click', function() { closeModal('process-output-modal'); });

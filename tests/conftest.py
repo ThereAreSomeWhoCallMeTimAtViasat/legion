@@ -102,10 +102,19 @@ def driver(legion_server):
 
 @pytest.fixture(scope="session")
 def live_target():
-    """IP of the live test VM. Skip live tests when not set."""
+    """IP of the live test VM. Skip live tests when not set.
+    Kills any orphaned nmap/eyewitness processes from previous test runs."""
+    import subprocess
     target = os.environ.get('LEGION_TEST_TARGET', '').strip()
     if not target:
         pytest.skip("Set LEGION_TEST_TARGET=<ip> to run live scan tests")
+    # Kill any orphaned nmap/eyewitness processes left by previous test sessions
+    try:
+        subprocess.run(['pkill', '-f', f'nmap.*{target}'], capture_output=True)
+        subprocess.run(['pkill', '-f', f'eyewitness.*{target}'], capture_output=True)
+        time.sleep(1)
+    except Exception:
+        pass
     return target
 
 
