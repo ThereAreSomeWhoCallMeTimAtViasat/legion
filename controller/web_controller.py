@@ -71,7 +71,20 @@ class WebController:
         self.slowProcessesRunning = 0
         self._state_changed = False
         self._matches = {}
+        self._deleted_hosts = set()   # Qt6: screenshooter blacklist for deleted hosts
         log.info("[WebController] initialized")
+
+    def applySettings(self):
+        """Qt6: applySettings() — hot-reload settings from disk into running state.
+        Called after saving legion.conf or activating a config profile so the
+        scheduler, screenshooter, and other components see new values immediately
+        without a server restart."""
+        from app.settings import AppSettings, Settings
+        try:
+            self.settings = Settings(AppSettings())
+            log.info("[WebController] applySettings: settings reloaded from disk")
+        except Exception as e:
+            log.error(f"[WebController] applySettings error: {e}")
 
     # ──────────────────────────────────────────────────────────────
     # GROUP A: Lifecycle methods
@@ -357,10 +370,16 @@ class WebController:
     def _run_screenshot(self, ip, port):
         """Run eyewitness via runCommand so the process appears in the Processes/Tools
         table immediately (Waiting → Running → Finished), matching Qt6 visibility.
-        Qt6 used a QThread (Screenshooter); Flask uses the normal subprocess pipeline."""
+        Qt6 used a QThread (Screenshooter); Flask uses the normal subprocess pipeline.
+        Qt6: Screenshooter blacklist — skip if host was deleted mid-scan."""
         from app.httputil.isHttps import isHttps
         from app.timing import getTimestamp
         from app.auxiliary import isKali
+
+        # Qt6: screenshooter blacklist — do not screenshot deleted hosts
+        if ip in getattr(self, '_deleted_hosts', set()):
+            log.info(f"[WebController] Screenshot skipped — {ip} is in deletion blacklist")
+            return
 
         # Check eyewitness is installed before queuing anything
         eyewitness = '/usr/bin/eyewitness' if isKali() else '/usr/local/bin/eyewitness'
@@ -1136,6 +1155,17 @@ class WebController:
                             output=combined,
                         )
                         log.info(f"[WebController] Nmap XML imported: {xml_path}")
+                        # Qt6: copyNmapXMLToOutputFolder — archive XML in project output dir
+                        try:
+                            import shutil as _shutil
+                            dest_name = os.path.basename(xml_path)
+                            dest = os.path.join(
+                                self.logic.activeProject.properties.outputFolder, dest_name)
+                            if xml_path != dest:
+                                _shutil.copy2(xml_path, dest)
+                                log.info(f"[WebController] Nmap XML archived to {dest}")
+                        except Exception as _e:
+                            log.warning(f"[WebController] copyNmapXMLToOutputFolder: {_e}")
                         # Run automated attacks after import (scheduler)
                         # isNmapImport=False because this is a live nmap run (has output),
                         # matching Qt6: NmapImporter.schedule.emit(parser, self.output == '')
@@ -1260,6 +1290,9 @@ class WebController:
             return {'action': 'rescan', 'ip': ip}
 
         if action_name == 'delete':
+            # Qt6: add to screenshooter blacklist so in-flight screenshots are discarded
+            self._deleted_hosts.add(ip)
+            log.info(f"[WebController] Host {ip} added to _deleted_hosts blacklist")
             # Simplified delete: kill processes, delete from DB
             # Kill running processes for this host
             for proc_id, proc in list(self._active_processes.items()):
@@ -1345,6 +1378,12 @@ class WebController:
         outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{name}-{ip}")
         command = command.replace('[OUTPUT]', outputfile)
 
+        # Qt6: checkDuplicate before running user-triggered host actions
+        dup_mode = self.checkDuplicate(name, ip, '')
+        if dup_mode != 'run':
+            log.info(f"[WebController] handleHostToolAction: duplicate {name} on {ip} — mode={dup_mode}, skipping")
+            return {'skipped': True, 'reason': dup_mode, 'tool': name, 'ip': ip}
+
         # Detect python-script-* host actions and route to real Python scripts
         # Qt6: PythonImporter.run() ran scripts/python/<name>.py with dbHost + session
         # Flask: run the script as a subprocess so it appears in the process table
@@ -1393,6 +1432,12 @@ class WebController:
         results = []
         for target in targets:
             ip, port, protocol = target[0], target[1], target[2] if len(target) > 2 else 'tcp'
+            # Qt6: checkDuplicate before running user-triggered port actions
+            dup_mode = self.checkDuplicate(tool, ip, port, protocol)
+            if dup_mode != 'run':
+                log.info(f"[WebController] handleServiceNameAction: duplicate {tool} on {ip}:{port} — mode={dup_mode}, skipping")
+                results.append({'skipped': True, 'reason': dup_mode, 'tool': tool, 'ip': ip, 'port': port})
+                continue
             command = str(action[2])
             runningFolder = self.logic.activeProject.properties.runningFolder
             outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{tool}-{ip}-{port}")

@@ -2593,6 +2593,18 @@ document.addEventListener('DOMContentLoaded', function() {
                         host_ip: L.selectedHostIp,
                         command: 'xvfb-run -a /usr/bin/eyewitness --single http://' + L.selectedHostIp + ':' + port + ' --no-prompt --web --delay 5 -d /tmp/screenshot-' + L.selectedHostIp + '-' + port + '-dir',
                     }).then(function() { pollSnapshot(); });
+                } else if (action.action === 'run-custom' && L.selectedHostIp) {
+                    /* Qt6: "Run custom command" — prompt user for command string,
+                       substitute [IP] and [PORT], run via /api/processes/custom */
+                    var cmd = prompt('Enter command ([IP] and [PORT] will be substituted):');
+                    if (cmd && cmd.trim()) {
+                        postJson('/api/processes/custom', {
+                            command: cmd.trim(),
+                            host_ip: L.selectedHostIp,
+                            port: port,
+                            protocol: protocol
+                        }).then(function() { pollSnapshot(); });
+                    }
                 } else if (action.action === 'port-action' && L.selectedHostIp) {
                     postJson('/api/workspace/service-action', {
                         targets: [[L.selectedHostIp, port, protocol]],

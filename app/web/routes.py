@@ -802,8 +802,16 @@ def settings_save():
         return _err("text required")
     s = AppSettings()
     path = str(s.actions.fileName() or "")
+    # Qt6: saveSettings(saveBackup=True) — write .bak before overwriting
+    if os.path.isfile(path):
+        try:
+            shutil.copy2(path, path + '.bak')
+        except Exception:
+            pass
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
+    # Qt6: applySettings() — hot-reload running WebController state from new file
+    _wc().applySettings()
     return jsonify({"status": "ok", "path": path})
 
 @web_bp.get("/api/logs")
@@ -831,6 +839,41 @@ def get_logs():
             lines = [f"Error reading log: {e}"]
     return jsonify({'lines': lines[-500:], 'level': level,
                     'file': log_path, 'total': len(lines)})
+
+
+@web_bp.post("/api/processes/custom")
+def run_custom_command():
+    """Qt6: 'Run custom command' from port right-click menu.
+    Substitutes [IP] and [PORT] in the command string, then runs via runCommand."""
+    wc = _wc()
+    payload = request.get_json(silent=True) or {}
+    command = str(payload.get("command", "")).strip()
+    host_ip  = str(payload.get("host_ip", ""))
+    port     = str(payload.get("port", ""))
+    protocol = str(payload.get("protocol", "tcp"))
+    if not command:
+        return _err("command required")
+    command = command.replace('[IP]', host_ip).replace('[PORT]', port)
+    result = wc.runCommand(command=command, name='custom-command',
+                           tabTitle=f'custom ({port}/{protocol})',
+                           hostIp=host_ip, port=port, protocol=protocol)
+    pid = result.get('process_id') if isinstance(result, dict) else None
+    return jsonify({"status": "ok", "process_id": pid, "result": result})
+
+
+@web_bp.get("/api/check-duplicate")
+def check_duplicate():
+    """Qt6: checkDuplicate preflight for user-triggered tool actions.
+    JS calls this before running a tool to decide skip/run/prompt."""
+    wc = _wc()
+    tool     = request.args.get('tool', '')
+    host_ip  = request.args.get('host_ip', '')
+    port     = request.args.get('port', '')
+    protocol = request.args.get('protocol', 'tcp')
+    if not tool or not host_ip:
+        return _err("tool and host_ip required")
+    result = wc.checkDuplicate(tool, host_ip, port, protocol)
+    return jsonify({"result": result})
 
 
 @web_bp.post("/api/brute/run")
@@ -943,7 +986,43 @@ def export_json():
 
 @web_bp.get("/api/export/csv")
 def export_csv():
-    return jsonify({"status": "ok", "note": "CSV export not yet implemented"})
+    """Qt6: CSV export — one row per host+port combination.
+    Columns: ip, hostname, os, port, protocol, state, service, product, version."""
+    import csv, io, datetime
+    logic = _logic()
+    filters = _filters()
+
+    hosts = logic.activeProject.repositoryContainer.hostRepository.getHosts(filters)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['ip', 'hostname', 'os', 'port', 'protocol', 'state', 'service', 'product', 'version'])
+
+    for h in (hosts or []):
+        ip       = h.get('ip', '')       if isinstance(h, dict) else getattr(h, 'ip', '')
+        hostname = h.get('hostname', '') if isinstance(h, dict) else getattr(h, 'hostname', '')
+        os_name  = h.get('os', '')       if isinstance(h, dict) else getattr(h, 'osMatch', '')
+        host_id  = h.get('id')           if isinstance(h, dict) else getattr(h, 'id', None)
+        ports = logic.activeProject.repositoryContainer.portRepository.getPortsAndServicesByHostIP(ip, filters)
+        if ports:
+            for p in ports:
+                writer.writerow([
+                    ip, hostname, os_name,
+                    p.get('portId', ''), p.get('protocol', ''),
+                    p.get('state', ''), p.get('name', ''),
+                    p.get('product', ''), p.get('version', ''),
+                ])
+        else:
+            writer.writerow([ip, hostname, os_name, '', '', '', '', '', ''])
+
+    csv_text = output.getvalue()
+    filename = f"legion-export-{datetime.date.today()}.csv"
+    from flask import Response
+    return Response(
+        csv_text,
+        status=200,
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename={filename}'}
+    )
 
 
 # ═══════════════════════════════════════════
@@ -1123,7 +1202,7 @@ def config_activate(name):
     if not os.path.exists(path): return _err(f"Profile '{name}' not found", 404)
     shutil.copy(path, _WORKING_CONF)
     open(_ACTIVE_FILE, 'w').write(name)
-    _wc().settings = Settings(AppSettings())
+    _wc().applySettings()
     return jsonify({"status": "ok", "active": name})
 
 @web_bp.post("/api/config/profiles/create")
