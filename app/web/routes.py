@@ -1004,8 +1004,30 @@ class _TerminalSession:
         self._alive = True
 
         master_fd, slave_fd = _pty.openpty()
+
+        # Set initial terminal size BEFORE starting bash (Qt6: view.py:5769-5779)
+        # Without this bash thinks terminal is 0 cols → readline breaks
+        try:
+            winsize = _struct.pack('HHHH', 24, 80, 0, 0)
+            _fcntl.ioctl(slave_fd, _termios.TIOCSWINSZ, winsize)
+        except Exception:
+            pass
+
+        # Set proper terminal attributes on slave PTY (Qt6: view.py:5769-5779)
+        try:
+            attrs = _termios.tcgetattr(slave_fd)
+            attrs[0] = attrs[0] | _termios.BRKINT | _termios.ICRNL | _termios.IXON
+            attrs[1] = attrs[1] | _termios.OPOST
+            attrs[3] = (attrs[3] | _termios.ECHO | _termios.ECHOE | _termios.ECHOK
+                        | _termios.ICANON | _termios.ISIG)
+            _termios.tcsetattr(slave_fd, _termios.TCSANOW, attrs)
+        except Exception:
+            pass
+
         env = os.environ.copy()
         env['TERM'] = 'xterm-256color'
+        env['COLUMNS'] = '80'
+        env['LINES'] = '24'
         self.proc = _subprocess.Popen(
             ['bash', '--login'],
             stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
@@ -1127,6 +1149,7 @@ def terminal_output(session_id):
     return jsonify({
         "data": data.decode('utf-8', errors='replace'),
         "offset": offset,
+        "next_offset": offset + len(data),   # byte length — NOT string length
         "alive": session.alive,
     })
 

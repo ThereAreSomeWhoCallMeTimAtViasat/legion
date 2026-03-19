@@ -98,6 +98,225 @@ var L = {
     version: 'v1.0-rewrite',
 };
 
+/* ── xterm.js terminal manager ──
+   Manages the xterm.js instance in #terminal-output for Interactive processes.
+   Only one terminal is displayed at a time (the selected process). */
+var _termState = {
+    xterm: null,         /* Terminal instance */
+    fitAddon: null,      /* FitAddon instance */
+    sessionId: null,     /* Current terminal session_id */
+    pollTimer: null,     /* Output polling interval */
+    offset: 0,           /* Read offset into PTY buffer */
+};
+
+function _showPlainOutput() {
+    var p = $('plain-output'), t = $('terminal-output');
+    if (p) p.style.display = '';
+    if (t) t.style.display = 'none';
+    _stopTerminal();
+}
+
+function _showTerminalOutput(sessionId) {
+    var p = $('plain-output'), t = $('terminal-output');
+    if (p) p.style.display = 'none';
+    if (t) t.style.display = '';
+    _connectTerminal(sessionId);
+}
+
+function _connectTerminal(sessionId) {
+    /* If already connected to this session, do nothing */
+    if (_termState.sessionId === sessionId && _termState.xterm) return;
+    _stopTerminal();
+
+    var container = $('terminal-output');
+    if (!container) return;
+    container.innerHTML = '';
+
+    /* Bail if xterm.js not loaded (CDN failed) */
+    if (typeof Terminal === 'undefined') {
+        container.textContent = 'xterm.js not loaded — check network/CDN';
+        return;
+    }
+
+    _termState.sessionId = sessionId;
+    _termState.offset = 0;
+
+    var term = new Terminal({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: "'Courier New', monospace",
+        theme: {
+            background: '#191919',
+            foreground: '#d4d4d4',
+            cursor: '#d4d4d4',
+        },
+        scrollback: 5000,
+    });
+
+    var fitAddon = null;
+    if (typeof FitAddon !== 'undefined') {
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+    }
+
+    term.open(container);
+
+    _termState.xterm = term;
+    _termState.fitAddon = fitAddon;
+
+    /* Send user keystrokes to the PTY backend */
+    term.onData(function(data) {
+        postJson('/api/terminal/' + sessionId + '/input', { data: data });
+    });
+
+    /* Delay fit + resize until after browser reflow so the container has real dimensions.
+       Without this, xterm.js only fills half the space and bash cursor breaks. */
+    function _doFitAndResize() {
+        if (!fitAddon || !_termState.xterm || _termState.sessionId !== sessionId) return;
+        try { fitAddon.fit(); } catch(e) {}
+        try {
+            var dims = fitAddon.proposeDimensions();
+            if (dims && dims.cols > 0 && dims.rows > 0) {
+                postJson('/api/terminal/' + sessionId + '/resize',
+                         { rows: dims.rows, cols: dims.cols });
+            }
+        } catch(e) {}
+    }
+    /* First fit after reflow */
+    requestAnimationFrame(function() { setTimeout(_doFitAndResize, 100); });
+    /* Second fit after content starts arriving (xterm.js may adjust after first write) */
+    setTimeout(_doFitAndResize, 800);
+
+    /* Poll for output every 50ms */
+    _termState.pollTimer = setInterval(function() {
+        fetchJson('/api/terminal/' + sessionId + '/output?offset=' + _termState.offset)
+        .then(function(d) {
+            if (d.data && d.data.length > 0) {
+                term.write(d.data);
+                /* Use byte-based next_offset from server — NOT d.data.length which
+                   counts JS string chars (wrong for multi-byte UTF-8 like ┌└─㉿) */
+                _termState.offset = d.next_offset;
+            }
+        }).catch(function() {});
+    }, 50);
+
+    /* Resize on window resize */
+    window.addEventListener('resize', _onTermResize);
+}
+
+function _onTermResize() {
+    if (_termState.fitAddon && _termState.xterm) {
+        try {
+            _termState.fitAddon.fit();
+            var dims = _termState.fitAddon.proposeDimensions();
+            if (dims && _termState.sessionId) {
+                postJson('/api/terminal/' + _termState.sessionId + '/resize',
+                         { rows: dims.rows, cols: dims.cols });
+            }
+        } catch(e) {}
+    }
+}
+
+function _stopTerminal() {
+    if (_termState.pollTimer) {
+        clearInterval(_termState.pollTimer);
+        _termState.pollTimer = null;
+    }
+    if (_termState.xterm) {
+        _termState.xterm.dispose();
+        _termState.xterm = null;
+    }
+    _termState.fitAddon = null;
+    _termState.sessionId = null;
+    _termState.offset = 0;
+    window.removeEventListener('resize', _onTermResize);
+}
+
+/* ── Upper panel (dynamic tool tabs) terminal — independent from the lower one ── */
+var _dynTermState = {
+    xterm: null, fitAddon: null, sessionId: null, pollTimer: null, offset: 0, containerId: null,
+};
+
+function _connectDynTerminal(sessionId, container) {
+    /* If already connected to this session in this container, skip */
+    if (_dynTermState.sessionId === sessionId && _dynTermState.xterm) return;
+    _stopDynTerminal();
+
+    if (!container) return;
+    container.innerHTML = '';
+    /* Keep flex:1 + height:100% from .tool-output-area but override incompatible styles */
+    container.style.overflow = 'hidden';
+    container.style.padding = '0';
+    container.style.whiteSpace = '';
+    container.style.wordBreak = '';
+
+    if (typeof Terminal === 'undefined') {
+        container.textContent = 'xterm.js not loaded';
+        return;
+    }
+
+    _dynTermState.sessionId = sessionId;
+    _dynTermState.offset = 0;
+    _dynTermState.containerId = container.id;
+
+    var term = new Terminal({
+        cursorBlink: true, fontSize: 13,
+        fontFamily: "'Courier New', monospace",
+        theme: { background: '#191919', foreground: '#d4d4d4', cursor: '#d4d4d4' },
+        scrollback: 5000,
+    });
+    var fitAddon = null;
+    if (typeof FitAddon !== 'undefined') {
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+    }
+    term.open(container);
+    _dynTermState.xterm = term;
+    _dynTermState.fitAddon = fitAddon;
+
+    term.onData(function(data) {
+        postJson('/api/terminal/' + sessionId + '/input', { data: data });
+    });
+
+    function _doDynFit() {
+        if (!fitAddon || !_dynTermState.xterm || _dynTermState.sessionId !== sessionId) return;
+        try { fitAddon.fit(); } catch(e) {}
+        try {
+            var dims = fitAddon.proposeDimensions();
+            if (dims && dims.cols > 0 && dims.rows > 0) {
+                postJson('/api/terminal/' + sessionId + '/resize',
+                         { rows: dims.rows, cols: dims.cols });
+            }
+        } catch(e) {}
+    }
+    requestAnimationFrame(function() { setTimeout(_doDynFit, 100); });
+    setTimeout(_doDynFit, 800);
+
+    _dynTermState.pollTimer = setInterval(function() {
+        fetchJson('/api/terminal/' + sessionId + '/output?offset=' + _dynTermState.offset)
+        .then(function(d) {
+            if (d.data && d.data.length > 0) {
+                term.write(d.data);
+                _dynTermState.offset = d.next_offset;
+            }
+        }).catch(function() {});
+    }, 50);
+}
+
+function _stopDynTerminal() {
+    if (_dynTermState.pollTimer) { clearInterval(_dynTermState.pollTimer); _dynTermState.pollTimer = null; }
+    if (_dynTermState.xterm) { _dynTermState.xterm.dispose(); _dynTermState.xterm = null; }
+    /* Restore original styles on the container */
+    if (_dynTermState.containerId) {
+        var c = $(_dynTermState.containerId);
+        if (c) { c.style.overflow = ''; c.style.padding = ''; c.style.whiteSpace = ''; c.style.wordBreak = ''; }
+    }
+    _dynTermState.fitAddon = null;
+    _dynTermState.sessionId = null;
+    _dynTermState.offset = 0;
+    _dynTermState.containerId = null;
+}
+
 /* ── Utilities ── */
 function $(id) { return document.getElementById(id); }
 function esc(s) { var d = document.createElement('div'); d.textContent = String(s||''); return d.innerHTML; }
@@ -504,23 +723,22 @@ function _drawProcesses() {
                          (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : ''));
     });
 
-    /* Auto-select: when a new Running process appears, switch to it so output shows.
-       Bug was: only auto-selected on 0→N transition. When stage 2 started while stage 1
-       output was shown, user had to manually click stage 2 to see its output.
-       Fix: track running process IDs; when a NEW running ID appears, click its row. */
-    var curRunningIds = L.processes.filter(function(p){return p.status==='Running';})
+    /* Auto-select: when a new Running or Interactive process appears, click its row
+       so the output panel shows it. Include Interactive so terminal sessions auto-display.
+       Fix: track active process IDs; when a NEW one appears, click its row. */
+    var curActiveIds = L.processes.filter(function(p){return p.status==='Running' || p.status==='Interactive';})
                                    .map(function(p){return String(p.id);}).sort().join(',');
     if (!L._prevRunningIds) L._prevRunningIds = '';
-    if (curRunningIds !== L._prevRunningIds) {
-        /* Find newly-running process IDs */
+    if (curActiveIds !== L._prevRunningIds) {
+        /* Find newly-active process IDs */
         var prevSet = L._prevRunningIds ? L._prevRunningIds.split(',') : [];
-        var newRunning = curRunningIds.split(',').filter(function(id){
+        var newActive = curActiveIds.split(',').filter(function(id){
             return id && prevSet.indexOf(id) < 0;
         });
-        if (newRunning.length > 0) {
+        if (newActive.length > 0) {
             /* Only auto-switch if the new process is different from what's selected.
                Don't restart the poll timer unnecessarily — that kills live output. */
-            var newest = newRunning[newRunning.length-1];
+            var newest = newActive[newActive.length-1];
             if (L.selectedProcessId !== parseInt(newest)) {
                 var newRow = body.querySelector('tr[data-process-id="' + newest + '"]');
                 if (newRow) newRow.click();
@@ -530,7 +748,7 @@ function _drawProcesses() {
             if (firstProc) firstProc.click();
         }
     }
-    L._prevRunningIds = curRunningIds;
+    L._prevRunningIds = curActiveIds;
     L._lastProcCount = L.processes.length;
 }
 
@@ -1166,7 +1384,7 @@ function initInteractions() {
         }
     });
 
-    /* ── Process row click → show output inline ── */
+    /* ── Process row click → show output inline (plain or xterm.js terminal) ── */
     $('processes-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.processId) return;
@@ -1174,23 +1392,33 @@ function initInteractions() {
         $('processes-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
         });
-        loadProcessOutput(tr.dataset.processId, $('process-output-inline'));
-        /* Auto-poll output — keep running through Waiting→Running transition.
-           Bug: process may be Waiting when first auto-selected; old code stopped
-           immediately on !Running, so output never appeared until manual click. */
-        if (L.procPollTimer) clearInterval(L.procPollTimer);
-        L.procPollTimer = setInterval(function() {
-            var proc = L.processes.find(function(p) { return parseInt(p.id) === L.selectedProcessId; });
-            if (!proc) { clearInterval(L.procPollTimer); L.procPollTimer = null; return; }
-            if (proc.status === 'Running') {
-                loadProcessOutput(L.selectedProcessId, $('process-output-inline'));
-            } else if (proc.status !== 'Waiting') {
-                /* Finished/Crashed — one final load then stop */
-                loadProcessOutput(L.selectedProcessId, $('process-output-inline'));
-                clearInterval(L.procPollTimer); L.procPollTimer = null;
-            }
-            /* If Waiting: keep polling, output will appear when process starts */
-        }, 2000);
+
+        /* Check if this is an Interactive process with a terminal session */
+        var proc = L.processes.find(function(p) { return String(p.id) === tr.dataset.processId; });
+        var sessionId = proc ? proc.session_id : null;
+
+        if (sessionId && proc.status === 'Interactive') {
+            /* ── Interactive process → show xterm.js terminal ── */
+            _showTerminalOutput(sessionId);
+            /* No procPollTimer needed — the terminal polls its own output */
+            if (L.procPollTimer) { clearInterval(L.procPollTimer); L.procPollTimer = null; }
+        } else {
+            /* ── Regular process → show plain text output ── */
+            _showPlainOutput();
+            loadProcessOutput(tr.dataset.processId, $('plain-output'));
+            /* Auto-poll output — keep running through Waiting→Running transition. */
+            if (L.procPollTimer) clearInterval(L.procPollTimer);
+            L.procPollTimer = setInterval(function() {
+                var proc = L.processes.find(function(p) { return parseInt(p.id) === L.selectedProcessId; });
+                if (!proc) { clearInterval(L.procPollTimer); L.procPollTimer = null; return; }
+                if (proc.status === 'Running') {
+                    loadProcessOutput(L.selectedProcessId, $('plain-output'));
+                } else if (proc.status !== 'Waiting') {
+                    loadProcessOutput(L.selectedProcessId, $('plain-output'));
+                    clearInterval(L.procPollTimer); L.procPollTimer = null;
+                }
+            }, 2000);
+        }
     });
 
     /* ── Process status filter ── */
@@ -1303,15 +1531,24 @@ function initInteractions() {
         var btn = e.target.closest('.dynamic-tab');
         if (!btn) return;
         _stopDynPoll();
+        _stopDynTerminal();
         var tabId = btn.dataset.tab;
         if (!tabId) return;
         var procId = tabId.replace('dyntab-', '');
         var outputEl = $('dyn-output-' + procId);
-        if (outputEl) {
+        if (!outputEl) return;
+
+        /* Check if this is an Interactive process with a terminal session */
+        var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
+        var sessionId = proc ? proc.session_id : null;
+
+        if (sessionId && proc.status === 'Interactive') {
+            /* Mount xterm.js in the dynamic tab output area */
+            _connectDynTerminal(sessionId, outputEl);
+        } else {
             outputEl.textContent = 'Loading...';
             loadProcessOutput(procId, outputEl);
             /* Auto-refresh while Running or Waiting (survives Waiting→Running transition) */
-            var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
             if (proc && (proc.status === 'Running' || proc.status === 'Waiting')) {
                 _startDynPoll(procId, outputEl);
             }
@@ -2030,12 +2267,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     sourceEl = $('script-output-inline');
                     break;
                 }
-                if (node.id === 'process-output-inline') {
-                    /* Processes tab */
+                if (node.id === 'process-output-inline' || node.id === 'plain-output') {
+                    /* Processes tab — plain output */
                     var procRow = $('processes-body').querySelector('tr.selected');
                     var procName = procRow ? (procRow.cells[1]||{}).textContent : '';
                     title = 'Process ' + (procName || String(L.selectedProcessId || ''));
-                    sourceEl = $('process-output-inline');
+                    sourceEl = $('plain-output');
                     break;
                 }
                 if (node.id === 'tool-output-text') {
@@ -2225,6 +2462,28 @@ document.addEventListener('DOMContentLoaded', function() {
         fetchJson('/api/menus/host?checked=' + (tr.classList.contains('host-checked') ? 'True' : 'False')).then(function(data) {
             showContextMenu(data.items, e.clientX, e.clientY, function(action) {
                 if (action.action === 'delete' && !confirm('Delete host ' + hostIp + '?')) return;
+                /* Open Terminal → start PTY bash session, auto-click the process row
+                   so it goes through the same path as msfconsole (which works correctly) */
+                if (action.action === 'open-terminal') {
+                    postJson('/api/terminal/start', {
+                        label: 'Terminal - ' + hostIp,
+                        host_ip: hostIp,
+                    }).then(function(d) {
+                        pollSnapshot();
+                        if (d.process_id) {
+                            setTimeout(function() {
+                                var rows = document.querySelectorAll('#processes-body tr');
+                                for (var r of rows) {
+                                    if (r.dataset.processId === String(d.process_id)) {
+                                        r.click();
+                                        break;
+                                    }
+                                }
+                            }, 2000);
+                        }
+                    });
+                    return;
+                }
                 postJson('/api/workspace/hosts/' + hostId + '/action', {
                     action: action.action, ip: hostIp, action_index: action.action_index || 0
                 }).then(function() { pollSnapshot(); });
@@ -2279,8 +2538,33 @@ document.addEventListener('DOMContentLoaded', function() {
         var svcName = tr.dataset.service || (tr.cells[4]||{}).textContent || '*';
         /* Use /api/menus/port for the richer port menu (terminal + port actions) */
         fetchJson('/api/menus/port?service=' + encodeURIComponent(svcName)).then(function(data) {
-            var items = (data.port_actions || []).concat(data.fixed_actions || []).concat(data.suffix_actions || []);
+            var items = (data.terminal_actions || []).concat(data.port_actions || []).concat(data.fixed_actions || []).concat(data.suffix_actions || []);
             showContextMenu(items, e.clientX, e.clientY, function(action) {
+                /* [term] terminal actions → start PTY session, auto-click process row */
+                if (action.action === 'terminal-action' && L.selectedHostIp) {
+                    var cmd = (action.command || '').replace('[term]','').trim()
+                        .replace(/\[IP\]/g, L.selectedHostIp)
+                        .replace(/\[PORT\]/g, port);
+                    postJson('/api/terminal/start', {
+                        label: action.label || cmd.split(' ')[0],
+                        host_ip: L.selectedHostIp,
+                        command: cmd,
+                    }).then(function(d) {
+                        pollSnapshot();
+                        if (d.process_id) {
+                            setTimeout(function() {
+                                var rows = document.querySelectorAll('#processes-body tr');
+                                for (var r of rows) {
+                                    if (r.dataset.processId === String(d.process_id)) {
+                                        r.click();
+                                        break;
+                                    }
+                                }
+                            }, 2000);
+                        }
+                    });
+                    return;
+                }
                 if (action.action === 'port-action' && L.selectedHostIp) {
                     postJson('/api/workspace/service-action', {
                         targets: [[L.selectedHostIp, port, protocol]],

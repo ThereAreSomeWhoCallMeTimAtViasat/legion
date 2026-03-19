@@ -70,7 +70,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v8.4-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v9.0-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -325,7 +325,10 @@
             <tbody id="processes-body"></tbody></table>
         </div>
         <div class="vsplitter" id="proc-vsplitter"></div>
-        <div class="tool-output-area ansi" id="process-output-inline" style="flex:1;min-width:0">Click a process to view output</div>
+        <div id="process-output-inline" style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden">
+            <div class="tool-output-area ansi" id="plain-output" style="flex:1;overflow:auto">Click a process to view output</div>
+            <div id="terminal-output" style="display:none;flex:1;min-height:0;overflow:hidden;width:100%;height:100%"></div>
+        </div>
     </div>
 </div>
 
