@@ -91,6 +91,14 @@ class ProcessRepository:
     def getProcesses(self, filters, showProcesses: Union[str, bool] = 'noNmap', sort: str = 'desc', ncol: str = 'id',
                      status_filter=None):
         # Modified: return consistent column aliases across all query paths so UI models can rely on keys.
+        # Gap #8: Whitelist ncol and sort to prevent ORDER BY injection
+        # (db/validation.py sanitise() handles LIKE-clause strings; whitelist handles ORDER BY)
+        _VALID_COLS = {'id', 'name', 'status', 'hostIp', 'port', 'startTime', 'endTime', 'elapsed'}
+        _VALID_SORT = {'asc', 'desc'}
+        if ncol not in _VALID_COLS:
+            ncol = 'id'
+        if sort.lower() not in _VALID_SORT:
+            sort = 'desc'
         session = self.dbAdapter.session()
         def normalize_status_filter(filter_value):
             if not filter_value:

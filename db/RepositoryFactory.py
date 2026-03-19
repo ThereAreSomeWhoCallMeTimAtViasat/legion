@@ -14,9 +14,16 @@ Copyright (c) 2025 Shane William Scott
     If not, see <http://www.gnu.org/licenses/>.
 
 Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@gmail.com)
+
+Gap #6: buildRepositories() now selects PostgreSQL vs SQLite based on
+the LEGION_DB_URL environment variable (or explicit db_url parameter).
+Default remains SQLite (unchanged behaviour for all existing users).
 """
+
+import os
+
 from db.RepositoryContainer import RepositoryContainer
-from db.SqliteDbAdapter import Database
+from db.SqliteDbAdapter import Database as SqliteDatabase
 from db.repositories.CVERepository import CVERepository
 from db.repositories.HostRepository import HostRepository
 from db.repositories.NoteRepository import NoteRepository
@@ -30,7 +37,13 @@ class RepositoryFactory:
     def __init__(self, logger):
         self.logger = logger
 
-    def buildRepositories(self, database: Database) -> RepositoryContainer:
+    def buildRepositories(self, database) -> RepositoryContainer:
+        """Wire all repositories to the supplied database adapter.
+
+        The adapter must expose a `session` scoped_session (same interface as
+        SqliteDbAdapter.Database).  Pass a SqliteDbAdapter.Database or
+        postgresDbAdapter.Database — repositories work unchanged with both.
+        """
         hostRepository = HostRepository(database)
         processRepository = ProcessRepository(database, self.logger)
         serviceRepository = ServiceRepository(database)
@@ -40,3 +53,21 @@ class RepositoryFactory:
         scriptRepository: ScriptRepository = ScriptRepository(database)
         return RepositoryContainer(serviceRepository, processRepository, hostRepository,
                                    portRepository, cveRepository, noteRepository, scriptRepository)
+
+    @staticmethod
+    def create_database(sqlite_path: str, db_url: str = None):
+        """Factory: create the appropriate Database adapter.
+
+        Args:
+            sqlite_path: Path to the .legion SQLite file (used when no db_url).
+            db_url:      Full SQLAlchemy URL.  If None, falls back to the
+                         LEGION_DB_URL environment variable, then SQLite.
+
+        Returns:
+            A Database adapter instance compatible with all repositories.
+        """
+        url = db_url or os.environ.get('LEGION_DB_URL', '').strip()
+        if url and url.startswith('postgresql'):
+            from db.postgresDbAdapter import Database as PgDatabase
+            return PgDatabase(url)
+        return SqliteDatabase(sqlite_path)

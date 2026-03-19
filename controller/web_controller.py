@@ -242,12 +242,18 @@ class WebController:
 
     def checkDuplicate(self, toolName, hostIp, port, protocol='tcp'):
         """Check if this tool was already run on this host:port.
-        Returns: 'run' | 'skip' | 'newTab' | 'append' | 'askMe'"""
+        Returns: 'run' | 'skip' | 'newTab' | 'append' | 'askMe'
+
+        Checks two layers (Qt6: controller.py:checkDuplicate):
+        1. Process table — same name+hostIp+port already ran
+        2. Script table — nmap NSE scripts already stored for this port
+           (Qt6: scriptRepository.getScriptsByPortId before running scheduler tools)
+        """
         mode = getattr(self.settings, 'general_tool_duplication', 'skip')
         if mode not in ('skip', 'newTab', 'append', 'askMe'):
             mode = 'skip'
 
-        # Query DB for existing process with same tool+host+port
+        # Layer 1: Process-level duplicate check
         try:
             from sqlalchemy import text
             session = self.logic.activeProject.database.session()
@@ -262,9 +268,33 @@ class WebController:
         except Exception:
             existing = 0
 
-        if existing == 0:
-            return 'run'  # No duplicate, run it
-        return mode  # Return the configured action
+        if existing > 0:
+            return mode  # Process-level duplicate found
+
+        # Layer 2: Script-level duplicate check (Qt6: scriptRepository.getScriptsByPortId)
+        # If nmap NSE scripts exist for this port, the port has already been fully scanned.
+        # Apply the duplicate mode so scheduler tools don't re-run against already-scanned ports.
+        try:
+            from sqlalchemy import text as _text
+            session2 = self.logic.activeProject.database.session()
+            try:
+                result2 = session2.execute(_text(
+                    "SELECT COUNT(*) FROM l1ScriptObj AS s "
+                    "INNER JOIN portObj AS p ON p.id = s.portId "
+                    "INNER JOIN hostObj AS h ON h.id = p.hostId "
+                    "WHERE h.ip = :ip AND p.portId = :port AND p.protocol = :protocol"
+                ), {"ip": hostIp, "port": str(port), "protocol": protocol}).fetchone()
+                script_count = int(result2[0]) if result2 else 0
+            finally:
+                session2.close()
+        except Exception:
+            script_count = 0
+
+        if script_count > 0:
+            log.debug(f"[checkDuplicate] {toolName} on {hostIp}:{port} — {script_count} NSE scripts exist, mode={mode}")
+            return mode
+
+        return 'run'  # No duplicate at either level
 
     def cleanupPurgedHost(self, ip):
         """controller.py:2783 — delayed validation after purge. No QTimer."""
@@ -1301,7 +1331,9 @@ class WebController:
     def handleHostToolAction(self, ip, action_index):
         """Run a host action from settings.hostActions by index.
         For nmap commands that lack -oA, appends -oA [outputfile] so
-        _capture_output can import the XML and populate the Services table."""
+        _capture_output can import the XML and populate the Services table.
+        For python-script-* actions, routes to the actual Python script file
+        instead of echoing a stub (Qt6: PythonImporter)."""
         from app.timing import getTimestamp
         if action_index < 0 or action_index >= len(self.settings.hostActions):
             return None
@@ -1312,6 +1344,38 @@ class WebController:
         runningFolder = self.logic.activeProject.properties.runningFolder
         outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{name}-{ip}")
         command = command.replace('[OUTPUT]', outputfile)
+
+        # Detect python-script-* host actions and route to real Python scripts
+        # Qt6: PythonImporter.run() ran scripts/python/<name>.py with dbHost + session
+        # Flask: run the script as a subprocess so it appears in the process table
+        first_word = command.strip().split()[0] if command.strip() else ''
+        if first_word.startswith('python-script-'):
+            script_slug = first_word[len('python-script-'):]
+            script_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                'scripts', 'python', f'{script_slug}.py'
+            )
+            if os.path.isfile(script_path):
+                if script_slug == 'macvendors':
+                    # macvendors.py takes MAC address — look up from host record
+                    arg = ip  # fallback to IP if no MAC recorded
+                    try:
+                        h = self.logic.activeProject.repositoryContainer.hostRepository.getHostInformation(ip)
+                        mac = ''
+                        if h:
+                            mac = (h.get('macaddr') if isinstance(h, dict)
+                                   else getattr(h, 'macaddr', '')) or ''
+                        if mac.strip():
+                            arg = mac.strip()
+                    except Exception:
+                        pass
+                else:
+                    arg = ip
+                command = f'python3 {script_path} {arg}'
+                log.info(f"[WebController] python-script-{script_slug} → {command}")
+            else:
+                log.warning(f"[WebController] python-script-{script_slug}: script not found at {script_path}")
+
         # If nmap and no -oA flag, append it so results get imported into DB
         if 'nmap' in command.lower() and '-oA' not in command:
             command = command + f' -oA {outputfile}'

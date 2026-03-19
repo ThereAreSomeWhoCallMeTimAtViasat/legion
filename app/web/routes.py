@@ -515,6 +515,47 @@ def nmap_scan():
     return jsonify({"status": "ok", "result": result})
 
 
+@web_bp.post("/api/workspace/hosts/import-file")
+def import_hosts_from_file():
+    """Import target hosts from a text file (one target per line).
+    Qt6/CLI gap: cli_utils.import_targets_from_textfile was only reachable via --input-file.
+    Accepts JSON body: {"path": "/path/to/targets.txt"}
+    OR multipart form upload with field name "file".
+    Lines starting with # are skipped. Hosts already in DB are skipped."""
+    from app.cli_utils import import_targets_from_textfile
+    logic = _logic()
+
+    # Support both JSON path and multipart file upload
+    tmp_path = None
+    if request.content_type and 'multipart' in request.content_type:
+        f = request.files.get('file')
+        if not f:
+            return _err("file field required for multipart upload")
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.txt', delete=False) as tmp:
+            f.save(tmp)
+            tmp_path = tmp.name
+        path = tmp_path
+    else:
+        payload = request.get_json(silent=True) or {}
+        path = str(payload.get("path", "")).strip()
+        if not path:
+            return _err("path required")
+        if not os.path.isfile(path):
+            return _err(f"file not found: {path}", 404)
+
+    try:
+        session = logic.activeProject.database.session()
+        host_repo = logic.activeProject.repositoryContainer.hostRepository
+        added = import_targets_from_textfile(session, host_repo, path)
+        return jsonify({"status": "ok", "added": added})
+    except Exception as e:
+        return _err(f"import failed: {e}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 @web_bp.post("/api/nmap/import-xml")
 def nmap_import_xml():
     """Import an nmap XML file via the UI modal (legion.js → import-nmap-modal)."""

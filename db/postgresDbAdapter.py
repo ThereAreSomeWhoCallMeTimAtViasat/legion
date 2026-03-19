@@ -13,78 +13,76 @@ Copyright (c) 2025 Shane William Scott
     You should have received a copy of the GNU General Public License along with this program.
     If not, see <http://www.gnu.org/licenses/>.
 
+Gap #6 fix: corrected bugs in original file (NameError 'password', syntax errors,
+missing import, wrong method name) and made Database interface match SqliteDbAdapter.Database
+so all repositories work unchanged with PostgreSQL.
+
+Usage: set LEGION_DB_URL=postgresql://user:pass@host:5432/legion
+       RepositoryFactory.buildRepositories() selects this adapter automatically.
 """
 
 import threading
-import time
-from random import randint
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.scoping import scoped_session
 
 from app.logging.legionLog import getDbLogger
 
+# Import all entity classes so their tables are registered with Base
+from db.entities.host import hostObj        # noqa: F401
+from db.entities.note import note           # noqa: F401
+from db.entities.os import osObj            # noqa: F401
+from db.entities.port import portObj        # noqa: F401
+from db.entities.service import serviceObj  # noqa: F401
+from db.entities.nmapSession import nmapSessionObj  # noqa: F401
+from db.entities.l1script import l1ScriptObj        # noqa: F401
+
 
 class Database:
-    def __init__(self, user: str, passw: str, db: str, host='localhost', port=5432):
+    """PostgreSQL adapter — interface matches SqliteDbAdapter.Database.
+
+    Construct with a full SQLAlchemy URL:
+        db = Database("postgresql://user:pass@localhost:5432/legion")
+    """
+
+    def __init__(self, db_url: str):
         from db.database import Base
         self.log = getDbLogger()
         self.base = Base
+        self._lock = threading.Lock()
         try:
-            self.establishSqliteConnection(user, passw. db. host, port)
+            self._establish_connection(db_url)
         except Exception as e:
-            self.log.error('Could not create SQLite database. Please try again.')
-            self.log.info(e)
+            self.log.error(f'[PostgresAdapter] Could not connect: {e}')
+            raise
 
-    def openDB(self, dbfilename):
+    def _establish_connection(self, db_url: str):
+        self.db_url = db_url
+        self.engine = create_engine(
+            db_url,
+            pool_pre_ping=True,   # reconnect on stale connections
+            pool_size=5,
+            max_overflow=10,
+        )
+        self.session = scoped_session(sessionmaker(bind=self.engine, autoflush=False))
+        # Create all tables that don't exist yet
+        self.base.metadata.create_all(self.engine)
+        self.log.info(f"[PostgresAdapter] Connected to {db_url.split('@')[-1]}")
+
+    def openDB(self, db_url: str):
+        """Re-open with a different URL (e.g. after project switch)."""
         try:
-            self.log.error('Not implemented for Postgres yet.')
-        except:
-            self.log.error('Could not open SQLite database file. Is the file corrupted?')
-
-    def establishSqliteConnection(self, user: str, passw: str, db: str, host='localhost', port=5432):
-        self.name = db
-        self.port = port
-        self.host = host
-        self.user = user
-        self.passw = passw
-        self.dbsemaphore = threading.Semaphore(1)  # to control concurrent write access to db
-        url = 'postgresql://{}:{}@{}:{}/{}'
-        url = url.format(user, password, host, port, db)
-        # The return value of create_engine() is our connection object
-        self.engine = sqlalchemy.create_engine(
-            url, client_encoding='utf8')
-        # We then bind the connection to MetaData()
-        #meta = sqlalchemy.MetaData(bind=con, reflect=True)
-        self.session = scoped_session(sessionmaker())
-        self.session.configure(bind=self.engine, autoflush=False)
-        self.metadata = self.base.metadata
-        self.metadata.create_all(self.engine)
-        self.metadata.echo = True
-        self.metadata.bind = self.engine
-        self.log.info(f"Established SQLite connection on file '{dbFileName}'")
+            self.session.remove()
+            self.engine.dispose()
+        except Exception:
+            pass
+        self._establish_connection(db_url)
 
     def commit(self):
-        self.dbsemaphore.acquire()
-        self.log.debug("DB lock acquired")
-        try:
-            session = self.session()
-            rnd = float(randint(1, 99)) / 1000.00
-            self.log.debug("Waiting {0}s before commit...".format(str(rnd)))
-            time.sleep(rnd)
-            session.commit()
-        except Exception as e:
-            self.log.error("DB Commit issue")
-            self.log.error(str(e))
+        with self._lock:
             try:
-                rnd = float(randint(1, 99)) / 100.00
-                time.sleep(rnd)
-                self.log.debug("Waiting {0}s before commit...".format(str(rnd)))
-                session.commit()
+                self.session().commit()
             except Exception as e:
-                self.log.error("DB Commit issue on retry")
-                self.log.error(str(e))
-                pass
-        self.dbsemaphore.release()
-        self.log.debug("DB lock released")
+                self.log.error(f'[PostgresAdapter] Commit failed: {e}')
+                self.session().rollback()
