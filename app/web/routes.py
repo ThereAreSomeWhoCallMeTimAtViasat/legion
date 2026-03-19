@@ -12,6 +12,7 @@ import stat
 from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 from app.settings import AppSettings, Settings
 from app.auxiliary import Filters
+from app.validation import validateNmapInput, validateNmapPorts
 
 web_bp = Blueprint("web", __name__)
 
@@ -490,6 +491,8 @@ def nmap_scan():
     targets = str(payload.get("targets", "")).strip()
     if not targets:
         return _err("targets required")
+    if not validateNmapInput(targets):
+        return _err("Invalid target: only IPs, CIDRs, and hostnames are accepted")
     scan_mode = str(payload.get("scan_mode", "Easy"))
     staged = payload.get("staged", False)
     discovery = payload.get("discovery", True)
@@ -599,8 +602,14 @@ def host_action(host_id):
     if action == 'host-action':
         result = wc.handleHostToolAction(ip, int(payload.get("action_index", -1)))
     elif action == 'add-port':
+        port_str = str(payload.get('port', ''))
+        if not port_str.isdigit():
+            return _err("port must be a number")
+        port_num = int(port_str)
+        if port_num < 1 or port_num > 65535:
+            return _err("port must be between 1 and 65535")
         port_data = {
-            'port': str(payload.get('port', '')),
+            'port': port_str,
             'state': str(payload.get('state', 'open')),
             'protocol': str(payload.get('protocol', 'tcp')),
             'service': str(payload.get('service', '')),
@@ -1035,6 +1044,11 @@ def _validate_legion_conf(config_text):
         if current_section in fixed_section_keys and key not in fixed_section_keys[current_section]:
             errors.append(f"Line {line_num}: Unknown setting '{key}' in [{current_section}] — "
                            f"valid: {', '.join(sorted(fixed_section_keys[current_section]))}")
+        # Staged nmap port value validation
+        if current_section == 'StagedNmapSettings' and key in fixed_section_keys.get('StagedNmapSettings', set()):
+            if value and not validateNmapPorts(value):
+                errors.append(f"Line {line_num}: Invalid nmap port expression in '{key}': {value!r} "
+                               f"— only digits, commas, hyphens, colons, and wildcards are allowed")
         # Element count validation for dynamic sections
         if current_section in section_element_counts:
             expected = section_element_counts[current_section]

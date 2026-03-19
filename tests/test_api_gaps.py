@@ -647,6 +647,111 @@ test("P7.8: validation errors include line numbers", test_p35_error_response_con
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("P8: Input validation — Add Hosts and Add Port")
+print("="*60 + "\n")
+
+def test_p36_addhost_rejects_special_chars():
+    """POST /api/nmap/scan with XSS payload must return 400."""
+    r = client.post('/api/nmap/scan',
+                    json={'targets': '<script>alert(1)</script>'})
+    return ok(r.status_code == 400,
+              f"Expected 400 for XSS target, got {r.status_code}: {r.get_data(as_text=True)[:80]}")
+test("P8.1: add-hosts rejects XSS/special-char target → 400", test_p36_addhost_rejects_special_chars)
+
+def test_p37_addhost_accepts_valid_cidr():
+    """POST /api/nmap/scan with valid CIDR must return 200."""
+    r = client.post('/api/nmap/scan',
+                    json={'targets': '192.168.1.0/24'})
+    return ok(r.status_code == 200,
+              f"Expected 200 for valid CIDR, got {r.status_code}: {r.get_data(as_text=True)[:80]}")
+test("P8.2: add-hosts accepts valid CIDR (192.168.1.0/24) → 200", test_p37_addhost_accepts_valid_cidr)
+
+def test_p38_addhost_accepts_hostname():
+    """POST /api/nmap/scan with hostname must return 200."""
+    r = client.post('/api/nmap/scan',
+                    json={'targets': 'metasploitable.local'})
+    return ok(r.status_code == 200,
+              f"Expected 200 for hostname, got {r.status_code}: {r.get_data(as_text=True)[:80]}")
+test("P8.3: add-hosts accepts hostname (metasploitable.local) → 200", test_p38_addhost_accepts_hostname)
+
+def test_p39_addhost_rejects_empty():
+    """POST /api/nmap/scan with empty targets must return 400."""
+    r = client.post('/api/nmap/scan', json={'targets': ''})
+    return ok(r.status_code == 400,
+              f"Expected 400 for empty target, got {r.status_code}")
+test("P8.4: add-hosts rejects empty target string → 400", test_p39_addhost_rejects_empty)
+
+def test_p40_addhost_rejects_semicolon():
+    """POST /api/nmap/scan with semicolon injection must return 400."""
+    r = client.post('/api/nmap/scan',
+                    json={'targets': '127.0.0.1; rm -rf /'})
+    return ok(r.status_code == 400,
+              f"Expected 400 for semicolon injection, got {r.status_code}")
+test("P8.5: add-hosts rejects semicolon injection → 400", test_p40_addhost_rejects_semicolon)
+
+# For add-port tests we need a host in the DB
+def _get_any_host_ip():
+    snap = client.get('/api/snapshot').get_json()
+    hosts = snap.get('hosts', [])
+    return hosts[0].get('ip') if hosts else None
+
+def test_p41_addport_rejects_nonnumeric():
+    """add-port with non-numeric port string must return 400."""
+    ip = _get_any_host_ip()
+    if not ip: return "SKIP"
+    r = client.post(f'/api/workspace/hosts/1/action',
+                    json={'action': 'add-port', 'ip': ip, 'port': 'abc', 'protocol': 'tcp'})
+    return ok(r.status_code == 400,
+              f"Expected 400 for non-numeric port, got {r.status_code}: {r.get_data(as_text=True)[:80]}")
+test("P8.6: add-port rejects non-numeric port ('abc') → 400", test_p41_addport_rejects_nonnumeric)
+
+def test_p42_addport_rejects_out_of_range():
+    """add-port with port > 65535 must return 400."""
+    ip = _get_any_host_ip()
+    if not ip: return "SKIP"
+    r = client.post(f'/api/workspace/hosts/1/action',
+                    json={'action': 'add-port', 'ip': ip, 'port': '99999', 'protocol': 'tcp'})
+    return ok(r.status_code == 400,
+              f"Expected 400 for out-of-range port 99999, got {r.status_code}: {r.get_data(as_text=True)[:80]}")
+test("P8.7: add-port rejects out-of-range port (99999) → 400", test_p42_addport_rejects_out_of_range)
+
+def test_p43_addport_rejects_zero():
+    """add-port with port 0 must return 400."""
+    ip = _get_any_host_ip()
+    if not ip: return "SKIP"
+    r = client.post(f'/api/workspace/hosts/1/action',
+                    json={'action': 'add-port', 'ip': ip, 'port': '0', 'protocol': 'tcp'})
+    return ok(r.status_code == 400,
+              f"Expected 400 for port 0, got {r.status_code}: {r.get_data(as_text=True)[:80]}")
+test("P8.8: add-port rejects port 0 → 400", test_p43_addport_rejects_zero)
+
+def test_p44_staged_port_rejects_invalid_chars():
+    """StagedNmapSettings stage1-ports with special chars must be rejected."""
+    _make_test_profile('')
+    bad = "[StagedNmapSettings]\nstage1-ports=80,443,<evil>\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 400 and data.get('errors'),
+              f"Invalid port chars should be rejected: status={r.status_code} body={data}")
+test("P8.9: staged nmap port with '<' chars rejected → 400", test_p44_staged_port_rejects_invalid_chars)
+
+def test_p45_staged_port_accepts_valid_expression():
+    """StagedNmapSettings stage1-ports with valid nmap expression must be accepted."""
+    _make_test_profile('')
+    good = "[StagedNmapSettings]\nstage1-ports=80,443,8080-8090\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': good})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 200 and data.get('status') == 'ok',
+              f"Valid stage port expression rejected: status={r.status_code} body={data}")
+test("P8.10: staged nmap port '80,443,8080-8090' accepted → 200", test_p45_staged_port_accepts_valid_expression)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 total = PASS + FAIL + SKIP
 print(f"\n{'='*60}")
 print(f"Results: {PASS} passed, {FAIL} failed, {SKIP} skipped out of {total}")
