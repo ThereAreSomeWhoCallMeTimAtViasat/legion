@@ -14,12 +14,15 @@ and `TERMINAL_TEST_PLAN.md`.
 
 | Layer | Tests | Method |
 |-------|-------|--------|
-| Unit / API | 627 passing, 7 skipped | Flask test client + source inspection |
+| Unit / API (no live target) | 627 passing, 7 skipped | Flask test client + source inspection |
+| Unit / API (with LEGION_TEST_TARGET) | 634 passing | Same + T7 live terminal tests |
 | Selenium offline | 178 | Headless Firefox via geckodriver |
 | Selenium live scan | 19 | Headless Firefox + real nmap against 192.168.85.11 |
-| **Total** | **824** | |
+| **Total (offline)** | **805 passing, 7 skipped** | |
+| **Total (with live VM)** | **831 passing** | |
 
-All 824 tests pass on `flask-clean` at v9.7-flask.
+All passing on `flask-clean` at v9.7-flask. The 7 "skipped" unit tests are T7.1–7.7
+— they skip automatically when `LEGION_TEST_TARGET` is not set and pass when it is.
 
 ---
 
@@ -33,6 +36,9 @@ for f in tests/test_*.py; do echo -n "$f: "; sudo python3 $f 2>&1 | grep "^Resul
 sudo python3 -m pytest tests/test_selenium_ui.py -v -m "not live"
 sudo python3 -m pytest tests/test_selenium_project.py tests/test_selenium_multihost.py \
     tests/test_selenium_gaps.py tests/test_selenium_terminal.py -v
+
+# Live terminal tests: SSH, MySQL, msfconsole against 192.168.85.11
+sudo env LEGION_TEST_TARGET=192.168.85.11 python3 tests/test_terminal.py
 
 # Selenium live scan (~4 min, requires VM at 192.168.85.11)
 sudo rm -rf /tmp/legion/legion-*    # clear stale temp dirs
@@ -350,15 +356,24 @@ sudo python3 tests/test_behavioral.py
 | Open Terminal creates Interactive row | ✅ | Selenium | `test_selenium_terminal.py` |
 | Upper dynamic tab mounts xterm.js | ✅ | Selenium | `test_selenium_terminal.py` |
 | msfconsole typing works (confirmed by user) | ✅ | Manual (confirmed) | — |
-| Tab key completion | ❌ | Manual only | Keyboard events unreliable in headless |
-| Arrow key command history | ❌ | Manual only | Same reason |
-| Ctrl+D session logout | ❌ | Manual only | Same reason |
+| Tab key completion | ✅ | Unit API (POST /input with \t) | `test_terminal.py` T6.1 |
+| Arrow key command history | ✅ | Unit API (POST /input with \x1b[A) | `test_terminal.py` T6.2 |
+| Ctrl+C interrupts running command | ✅ | Unit API (POST /input with \x03) | `test_terminal.py` T6.3 |
+| Ctrl+D exits subshell | ✅ | Unit API (POST /input with \x04) | `test_terminal.py` T6.4 |
+| Terminal resize updates dimensions (stty) | ✅ | Unit API (POST /resize) | `test_terminal.py` T6.5 |
+| Ctrl+L clears screen | ✅ | Unit API (POST /input with \x0c) | `test_terminal.py` T6.6 |
+| SSH connects + authenticates (msfadmin) | ✅ | Live terminal API (LEGION_TEST_TARGET) | `test_terminal.py` T7.1 |
+| SSH shell executes whoami → msfadmin | ✅ | Live terminal API | `test_terminal.py` T7.2 |
+| MySQL connects as root (no password) | ✅ | Live terminal API (LEGION_TEST_TARGET) | `test_terminal.py` T7.3 |
+| MySQL SELECT VERSION() returns version | ✅ | Live terminal API | `test_terminal.py` T7.4 |
+| msfconsole starts and shows msf6 prompt | ✅ | Live terminal API (LEGION_TEST_TARGET) | `test_terminal.py` T7.5 |
+| vsftpd exploit runs, shows session output | ✅ | Live terminal API | `test_terminal.py` T7.6 |
+| msfconsole sessions command works | ✅ | Live terminal API | `test_terminal.py` T7.7 |
 | Terminal resize on browser window resize | ❌ | Manual only | Visual verification required |
 | ANSI colour rendering | ❌ | Manual only | Canvas pixel comparison not implemented |
 | msfconsole 10-second Interactive delay | ❌ | Manual only | Timing-sensitive |
-| SSH interactive session (login + commands) | ❌ | Manual only | Requires real SSH service |
-| mysql / psql / netcat sessions | ❌ | Manual only | Requires real listening services |
-| msfconsole exploit execution | ❌ | Manual only | Requires vulnerable target |
+| netcat session | ❌ | Manual only | Requires real listener |
+| Clipboard paste into terminal | ❌ | Manual only | Browser security blocks headless clipboard |
 
 ### Live Network Scan (192.168.85.11)
 
@@ -400,15 +415,24 @@ sudo python3 tests/test_behavioral.py
 
 ## What Is NOT Tested — Summary
 
+### Requires live VM (automated when LEGION_TEST_TARGET is set)
+
+These run as part of `test_terminal.py` T7 tests when `LEGION_TEST_TARGET=192.168.85.11`
+is set. They are skipped (not failed) when the env var is absent.
+
+| Item | Test | Run command |
+|------|------|-------------|
+| SSH login + shell command (whoami) | T7.1, T7.2 | `sudo env LEGION_TEST_TARGET=192.168.85.11 python3 tests/test_terminal.py` |
+| MySQL connect + SELECT VERSION() | T7.3, T7.4 | Same |
+| msfconsole vsftpd exploit + sessions | T7.5, T7.6, T7.7 | Same |
+
 ### Requires live external services (no substitute)
 
 | Item | Reason not automated |
 |------|---------------------|
 | Run Hydra (real brute-force) | Needs vulnerable target with weak creds |
-| SSH interactive session | Needs real SSH service listening |
-| mysql / psql / netcat sessions | Needs real listening services |
-| msfconsole exploit + session list | Needs vulnerable target |
-| macvendors.py real API lookup | External HTTPS call to api.macvendors.com |
+| netcat session | Needs real listener on target |
+| macvendors.py real API lookup | External HTTPS call to api.macvendors.com; host MAC rarely populated |
 | pyShodan.py real lookup | Shodan API key + external network |
 | Full PostgreSQL connection | No PostgreSQL server in test env |
 | IPv6 scanning | No IPv6 test network |
