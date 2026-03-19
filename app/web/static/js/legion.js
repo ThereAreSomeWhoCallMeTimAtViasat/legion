@@ -347,8 +347,8 @@ function _drawHosts() {
     var tbl = $('hosts-table');
     if (tbl) tbl.querySelectorAll('th[data-sort]').forEach(function(th) {
         var isActive = th.dataset.sort === col;
-        th.textContent = (th.dataset.sort === 'os' ? 'OS' : 'Host') +
-                         (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : '');
+        _setThText(th, (th.dataset.sort === 'os' ? 'OS' : 'Host') +
+                         (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : ''));
     });
 
     /* Auto-click first host when none selected */
@@ -390,8 +390,8 @@ function _drawServices() {
     var tbl = $('services-table');
     if (tbl) tbl.querySelectorAll('th[data-sort]').forEach(function(th) {
         var isActive = th.dataset.sort === col;
-        th.textContent = (th.dataset.sort === 'service' ? 'Name' : 'Port') +
-                         (isActive ? (dir === 1 ? ' ▲' : ' ▼') : '');
+        _setThText(th, (th.dataset.sort === 'service' ? 'Name' : 'Port') +
+                         (isActive ? (dir === 1 ? ' ▲' : ' ▼') : ''));
     });
 }
 
@@ -500,8 +500,8 @@ function _drawProcesses() {
     var colLabels = {id:'ID', name:'Name', target:'Target', status:'Status', elapsed:'Elapsed'};
     if (ptbl) ptbl.querySelectorAll('th[data-sort]').forEach(function(th) {
         var isActive = th.dataset.sort === col;
-        th.textContent = (colLabels[th.dataset.sort] || th.dataset.sort) +
-                         (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : '');
+        _setThText(th, (colLabels[th.dataset.sort] || th.dataset.sort) +
+                         (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : ''));
     });
 
     /* Auto-select: when a new Running process appears, switch to it so output shows.
@@ -675,11 +675,24 @@ var _portsData=[], _scriptsData=[], _cvesData=[], _osHostsData=[];
 function _sortArrow(sort, col, label) {
     return label + (sort.col===col ? (sort.dir===1?' \u25b2':' \u25bc') : '');
 }
+/* Update a th's label text without destroying child elements (e.g. resize handles).
+   Using th.textContent would wipe the handle divs appended by initColResizers. */
+function _setThText(th, text) {
+    /* Find the first text node and update it, or prepend a new one */
+    for (var i = 0; i < th.childNodes.length; i++) {
+        if (th.childNodes[i].nodeType === 3) {   /* TEXT_NODE */
+            th.childNodes[i].textContent = text;
+            return;
+        }
+    }
+    th.insertBefore(document.createTextNode(text), th.firstChild);
+}
+
 function _updateSortHeaders(tblId, sort, colMap) {
     var tbl = $(tblId);
     if (!tbl) return;
     tbl.querySelectorAll('th[data-sort]').forEach(function(th) {
-        th.textContent = _sortArrow(sort, th.dataset.sort, colMap[th.dataset.sort] || th.dataset.sort);
+        _setThText(th, _sortArrow(sort, th.dataset.sort, colMap[th.dataset.sort] || th.dataset.sort));
     });
 }
 function _sortClick(sort, col, drawFn) {

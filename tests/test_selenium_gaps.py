@@ -595,7 +595,13 @@ class TestColumnResize:
     STORAGE_KEY = 'col-hosts-table-0'   # first column of hosts-table
 
     def _drag_handle(self, driver, table_id='hosts-table', col_idx=0, dx=60):
-        """Simulate mousedown+mousemove+mouseup on a column resize handle via JS."""
+        """Simulate mousedown+mousemove+mouseup on the actual column resize handle.
+
+        The handle is a div appended to each th by initColResizers(). It was previously
+        destroyed by th.textContent = ... in _updateSortHeaders (run on every snapshot poll).
+        Fixed by replacing th.textContent with _setThText() which preserves child elements.
+        Now the handle div persists and can be found and clicked properly.
+        """
         result = driver.execute_script("""
             var tableId = arguments[0], colIdx = arguments[1], dx = arguments[2];
             var tbl = document.getElementById(tableId);
@@ -603,20 +609,15 @@ class TestColumnResize:
             var headers = tbl.querySelectorAll('thead th');
             if (colIdx >= headers.length) return 'no header at index ' + colIdx;
             var th = headers[colIdx];
-            // Find handle by cursor style (both attribute and style property)
+            // Find the resize handle div — the div with cursor:col-resize
             var handle = null;
-            var children = th.querySelectorAll('div');
-            for (var i = 0; i < children.length; i++) {
-                var s = children[i].style.cursor || window.getComputedStyle(children[i]).cursor;
-                if (s && s.indexOf('col-resize') >= 0) { handle = children[i]; break; }
+            for (var i = 0; i < th.children.length; i++) {
+                var child = th.children[i];
+                if (child.tagName === 'DIV' && child.style.cursor === 'col-resize') {
+                    handle = child; break;
+                }
             }
-            if (!handle) {
-                // Last resort: create handle simulation at the right edge of th
-                var newW = Math.max(40, th.offsetWidth + dx);
-                th.style.width = newW + 'px';
-                localStorage.setItem('col-' + tableId + '-' + colIdx, newW);
-                return 'ok-direct';
-            }
+            if (!handle) return 'no handle (th has ' + th.children.length + ' children, innerHTML.len=' + th.innerHTML.length + ')';
             var rect = handle.getBoundingClientRect();
             var startX = rect.left + rect.width / 2;
             var startY = rect.top + rect.height / 2;
@@ -640,7 +641,7 @@ class TestColumnResize:
         gap_driver.execute_script(f"localStorage.removeItem('{self.STORAGE_KEY}')")
 
         result = self._drag_handle(gap_driver)
-        assert result in ('ok', 'ok-direct'), f"Drag simulation failed: {result}"
+        assert result == 'ok', f"Drag simulation failed: {result}"
         time.sleep(0.2)
 
         saved = gap_driver.execute_script(f"return localStorage.getItem('{self.STORAGE_KEY}')")
