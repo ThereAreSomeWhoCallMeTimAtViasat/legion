@@ -1184,9 +1184,15 @@ def terminal_delete(session_id):
     if not session:
         return _err("Session not found", 404)
     session.close()
-    # Remove from process→session map
+    # Remove from process→session map and mark process as Killed in DB
     to_remove = [pid for pid, sid in _terminal_process_sessions.items() if sid == session_id]
     for pid in to_remove:
         del _terminal_process_sessions[pid]
+        try:
+            logic = _logic()
+            processRepo = logic.activeProject.repositoryContainer.processRepository
+            processRepo.storeProcessKillStatus(str(pid))
+        except Exception as e:
+            _term_log.error(f'[Terminal] Failed to mark process {pid} as killed: {e}')
     _term_log.info(f'[Terminal] Deleted session {session_id[:8]}')
     return jsonify({"status": "ok"})

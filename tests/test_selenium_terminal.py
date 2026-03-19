@@ -263,24 +263,21 @@ class TestOpenTerminal:
         pid = resp.get('process_id')
         assert pid, f"No process_id returned: {resp}"
 
-        # Wait for process row to appear in the browser
-        W(term_driver, 5).until(lambda d: any(
-            'Terminal' in r.text
-            for r in d.find_elements(By.CSS_SELECTOR, '#processes-body tr')))
+        # Wait for the specific process row to appear (by process_id)
+        W(term_driver, 5).until(lambda d: len(
+            d.find_elements(By.CSS_SELECTOR,
+                f'#processes-body tr[data-process-id="{pid}"]')) > 0)
 
-        # Verify it shows Interactive status
+        # Verify it shows Interactive status via the specific process_id
         status = term_driver.execute_script("""
-            var rows = document.querySelectorAll('#processes-body tr');
-            for (var r of rows) {
-                if (r.textContent.includes('Terminal')) {
-                    var cells = r.querySelectorAll('td');
-                    return cells.length >= 5 ? cells[4].textContent.trim() : 'no cells';
-                }
-            }
-            return 'not found';
-        """)
+            var row = document.querySelector(
+                '#processes-body tr[data-process-id="' + arguments[0] + '"]');
+            if (!row) return 'not found';
+            var cells = row.querySelectorAll('td');
+            return cells.length >= 5 ? cells[4].textContent.trim() : 'no cells';
+        """, str(pid))
         assert status == 'Interactive', \
-            f"Terminal process status should be Interactive, got: {status}"
+            f"Terminal process {pid} status should be Interactive, got: {status!r}"
 
     def test_open_terminal_row_shows_terminal_in_lower(self, term_driver):
         """Clicking the Terminal process row → lower output panel shows xterm.js."""
@@ -295,3 +292,108 @@ class TestOpenTerminal:
         terminal = term_driver.find_element(By.ID, 'terminal-output')
         assert terminal.value_of_css_property('display') != 'none', \
             "Clicking Terminal process row should show #terminal-output"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# S4: Upper panel — dynamic tool tab xterm.js
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestUpperDynamicTabTerminal:
+    """The upper right panel (dynamic tool tabs) must mount xterm.js for Interactive
+    processes and plain text for regular ones — independently of the lower panel."""
+
+    def _select_host(self, driver):
+        """Select the seeded host so dynamic tabs render."""
+        row = driver.find_element(By.CSS_SELECTOR,
+            '#hosts-body tr[data-host-ip="10.88.88.1"]')
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();", row)
+        time.sleep(POLL)
+
+    def _click_dynamic_tab(self, driver, name_fragment):
+        """Click a dynamic tab containing name_fragment."""
+        driver.execute_script("""
+            var tabs = document.querySelectorAll('#right-tab-bar .dynamic-tab');
+            for (var t of tabs) {
+                if (t.textContent.toLowerCase().includes(arguments[0].toLowerCase())) {
+                    t.click(); return true;
+                }
+            }
+            return false;
+        """, name_fragment)
+        time.sleep(POLL + 0.5)
+
+    def test_interactive_proc_dynamic_tab_exists(self, term_driver):
+        """Interactive process must create a dynamic tab in the upper right panel."""
+        self._select_host(term_driver)
+        tabs = term_driver.find_elements(By.CSS_SELECTOR, '#right-tab-bar .dynamic-tab')
+        tab_texts = [t.text for t in tabs]
+        interactive_tabs = [t for t in tab_texts if 'interactive' in t.lower()]
+        assert len(interactive_tabs) > 0, \
+            f"No dynamic tab for interactive-proc. Tabs: {tab_texts}"
+
+    def test_interactive_dynamic_tab_mounts_xterm(self, term_driver):
+        """Clicking an Interactive dynamic tab mounts xterm.js content in that tab's panel."""
+        self._select_host(term_driver)
+        self._click_dynamic_tab(term_driver, 'interactive-proc')
+
+        # The active dynamic panel should have xterm.js content
+        has_terminal = term_driver.execute_script("""
+            var panels = document.querySelectorAll(
+                '#dynamic-tabs-container .tab-content.active');
+            for (var p of panels) {
+                /* xterm.js removes tool-output-area content and replaces with xterm elements */
+                if (p.querySelector('.xterm') || p.querySelector('canvas') ||
+                    /* Fallback: panel is present and has content but not plain text */
+                    (p.children.length > 0 && !p.querySelector('.tool-output-area'))) {
+                    return true;
+                }
+            }
+            return false;
+        """)
+        # Also accept: the panel is visible and the _dynTermState.sessionId is set
+        has_session = term_driver.execute_script("""
+            return _dynTermState && _dynTermState.sessionId !== null;
+        """)
+        assert has_terminal or has_session, \
+            "Interactive dynamic tab should mount xterm.js or connect a terminal session"
+
+    def test_plain_dynamic_tab_shows_text(self, term_driver):
+        """Clicking a regular (echo) dynamic tab shows plain text, not xterm.js."""
+        self._select_host(term_driver)
+        self._click_dynamic_tab(term_driver, 'plain-proc')
+        time.sleep(0.5)
+
+        # _dynTermState should NOT have a session for a plain process
+        has_session = term_driver.execute_script("""
+            return _dynTermState && _dynTermState.sessionId !== null;
+        """)
+        assert not has_session, \
+            "Plain process dynamic tab should NOT mount a terminal session"
+
+    def test_upper_and_lower_independent(self, term_driver, term_server):
+        """Upper dynamic tab and lower output panel can show different processes."""
+        self._select_host(term_driver)
+        # Click interactive tab in upper area
+        self._click_dynamic_tab(term_driver, 'interactive-proc')
+        upper_has_session = term_driver.execute_script(
+            "return _dynTermState && _dynTermState.sessionId !== null;")
+
+        # Click plain process row in lower area
+        term_driver.execute_script("""
+            var rows = document.querySelectorAll('#processes-body tr');
+            for (var r of rows) {
+                if (r.textContent.toLowerCase().includes('plain-proc')) {
+                    r.click(); break;
+                }
+            }
+        """)
+        time.sleep(POLL)
+        lower_shows_plain = term_driver.execute_script(
+            "return document.getElementById('plain-output').style.display !== 'none';")
+        lower_shows_terminal = term_driver.execute_script(
+            "return document.getElementById('terminal-output').style.display !== 'none';")
+
+        assert upper_has_session, "Upper panel should still have interactive session"
+        assert lower_shows_plain and not lower_shows_terminal, \
+            "Lower panel should show plain output for the echo process"

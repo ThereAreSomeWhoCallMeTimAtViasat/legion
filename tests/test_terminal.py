@@ -451,6 +451,170 @@ test("T3.2: regular processes have no session_id", test_t3_snapshot_no_session_i
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("T4: Port menu terminal actions ([term] wiring)")
+print("="*60 + "\n")
+
+def test_t4_ssh_service_has_terminal_actions():
+    """Port menu for ssh service must include terminal_actions."""
+    r = client.get('/api/menus/port?service=ssh')
+    data = r.get_json()
+    term_actions = data.get('terminal_actions', [])
+    return ok(len(term_actions) > 0,
+              f"Expected terminal_actions for ssh, got: {term_actions}")
+test("T4.1: ssh service has terminal_actions in port menu", test_t4_ssh_service_has_terminal_actions)
+
+def test_t4_terminal_actions_have_correct_structure():
+    """terminal_actions must have label, action='terminal-action', and command fields."""
+    r = client.get('/api/menus/port?service=ssh')
+    data = r.get_json()
+    term_actions = data.get('terminal_actions', [])
+    if not term_actions:
+        return "SKIP"
+    missing = []
+    for a in term_actions:
+        if not a.get('label'): missing.append(f"no label: {a}")
+        if a.get('action') != 'terminal-action': missing.append(f"wrong action: {a}")
+        if not a.get('command'): missing.append(f"no command: {a}")
+    return ok(not missing, "; ".join(missing))
+test("T4.2: terminal_actions have label/action/command fields", test_t4_terminal_actions_have_correct_structure)
+
+def test_t4_ssh_action_command_contains_ssh():
+    """The ssh terminal action command must contain 'ssh'."""
+    r = client.get('/api/menus/port?service=ssh')
+    data = r.get_json()
+    term_actions = data.get('terminal_actions', [])
+    ssh_actions = [a for a in term_actions if 'ssh' in a.get('label', '').lower()
+                   or 'ssh' in a.get('command', '').lower()]
+    return ok(len(ssh_actions) > 0,
+              f"No ssh-related terminal action found. Actions: {[a.get('label') for a in term_actions]}")
+test("T4.3: ssh service has an ssh terminal action", test_t4_ssh_action_command_contains_ssh)
+
+def test_t4_ftp_service_has_terminal_actions():
+    """Port menu for ftp service must include terminal_actions."""
+    r = client.get('/api/menus/port?service=ftp')
+    data = r.get_json()
+    term_actions = data.get('terminal_actions', [])
+    return ok(len(term_actions) > 0,
+              f"Expected terminal_actions for ftp, got empty list")
+test("T4.4: ftp service has terminal_actions in port menu", test_t4_ftp_service_has_terminal_actions)
+
+def test_t4_wildcard_service_has_all_terminal_actions():
+    """Port menu for service='*' must return all terminal_actions."""
+    r_ssh = client.get('/api/menus/port?service=ssh')
+    r_all = client.get('/api/menus/port?service=*')
+    ssh_count = len(r_ssh.get_json().get('terminal_actions', []))
+    all_count = len(r_all.get_json().get('terminal_actions', []))
+    return ok(all_count >= ssh_count,
+              f"Wildcard should have >= ssh actions. ssh={ssh_count} all={all_count}")
+test("T4.5: wildcard service returns all terminal_actions", test_t4_wildcard_service_has_all_terminal_actions)
+
+def test_t4_start_with_term_command_creates_session():
+    """Starting a terminal with a [term] command (e.g. ssh) correctly creates a PTY session."""
+    r = client.post('/api/terminal/start', json={
+        'label': 'Open with ssh client',
+        'host_ip': '10.99.99.1',
+        'command': 'ssh root@10.99.99.1 -p 22',
+    })
+    data = r.get_json()
+    sid = data.get('session_id')
+    pid = data.get('process_id')
+    return ok(r.status_code == 200 and sid and pid,
+              f"status={r.status_code}, session_id={sid}, process_id={pid}")
+test("T4.6: terminal/start with ssh command creates session", test_t4_start_with_term_command_creates_session)
+
+def test_t4_term_command_dispatched_after_delay():
+    """Command passed to /api/terminal/start is dispatched to bash after delay."""
+    r = client.post('/api/terminal/start', json={
+        'label': 'netcat-test',
+        'host_ip': '10.99.99.1',
+        'command': 'echo TERM_CMD_DISPATCH_TEST',
+    })
+    sid = r.get_json().get('session_id')
+    if not sid:
+        return "start failed"
+    # Wait for command to be dispatched (500ms delay) and output to appear
+    output = ''
+    for _ in range(30):
+        time.sleep(0.1)
+        r2 = client.get(f'/api/terminal/{sid}/output?offset=0')
+        if r2.status_code == 200:
+            output = r2.get_json().get('data', '')
+            if 'TERM_CMD_DISPATCH_TEST' in output:
+                break
+    return ok('TERM_CMD_DISPATCH_TEST' in output,
+              f"Command not dispatched. Output ({len(output)}b): {output[:200]!r}")
+test("T4.7: command is dispatched to bash stdin after 500ms", test_t4_term_command_dispatched_after_delay)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("T5: Snapshot — session_id correctly present/absent")
+print("="*60 + "\n")
+
+def test_t5_interactive_in_snapshot_has_session_id():
+    """Every Interactive process in snapshot must have a non-null session_id."""
+    snap = client.get('/api/snapshot').get_json()
+    procs = snap.get('processes', [])
+    interactive = [p for p in procs if p.get('status') == 'Interactive']
+    if not interactive:
+        return "SKIP"
+    missing_sid = [p.get('name') for p in interactive if not p.get('session_id')]
+    return ok(not missing_sid,
+              f"Interactive processes without session_id: {missing_sid}")
+test("T5.1: all Interactive processes have session_id in snapshot", test_t5_interactive_in_snapshot_has_session_id)
+
+def test_t5_finished_processes_no_session_id():
+    """Finished processes must have session_id=null."""
+    snap = client.get('/api/snapshot').get_json()
+    procs = snap.get('processes', [])
+    finished = [p for p in procs if p.get('status') == 'Finished']
+    with_sid = [p.get('name') for p in finished if p.get('session_id')]
+    return ok(not with_sid,
+              f"Finished processes should not have session_id: {with_sid}")
+test("T5.2: Finished processes have no session_id", test_t5_finished_processes_no_session_id)
+
+def test_t5_session_id_format():
+    """session_id must be a valid UUID format."""
+    import re
+    r = client.post('/api/terminal/start', json={
+        'label': 'uuid-check',
+        'host_ip': '10.99.99.1',
+    })
+    sid = r.get_json().get('session_id', '')
+    uuid_pattern = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+    return ok(bool(uuid_pattern.match(sid)),
+              f"session_id not a valid UUID: {sid!r}")
+test("T5.3: session_id is a valid UUID", test_t5_session_id_format)
+
+def test_t5_delete_removes_session_from_snapshot():
+    """After DELETE, the Interactive process must be gone from snapshot."""
+    r = client.post('/api/terminal/start', json={
+        'label': 'snapshot-delete-check',
+        'host_ip': '10.99.99.1',
+    })
+    pid = r.get_json().get('process_id')
+    sid = r.get_json().get('session_id')
+    if not pid or not sid:
+        return "SKIP"
+    # Verify it's in snapshot
+    snap = client.get('/api/snapshot').get_json()
+    found = any(p.get('session_id') == sid for p in snap.get('processes', []))
+    if not found:
+        return "FAIL: process not in snapshot before delete"
+    # Delete
+    client.delete(f'/api/terminal/{sid}')
+    time.sleep(0.3)
+    # Should be gone from snapshot (closed)
+    snap2 = client.get('/api/snapshot').get_json()
+    still_there = any(p.get('session_id') == sid for p in snap2.get('processes', []))
+    return ok(not still_there,
+              f"Process with session_id={sid} still in snapshot after delete")
+test("T5.4: delete removes terminal session from snapshot", test_t5_delete_removes_session_from_snapshot)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 total = PASS + FAIL + SKIP
 print(f"\n{'='*60}")
 print(f"Results: {PASS} passed, {FAIL} failed, {SKIP} skipped out of {total}")
