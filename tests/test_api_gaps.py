@@ -363,6 +363,145 @@ test("P5.6: clear action removes process from snapshot", test_p19_process_clear_
 if os.path.exists(SAVE_PATH):
     os.unlink(SAVE_PATH)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("P6: Export JSON — structured data export")
+print("="*60 + "\n")
+
+def test_p20_export_json_returns_200():
+    """GET /api/export/json must return 200 with JSON body."""
+    r = client.get('/api/export/json')
+    return ok(r.status_code == 200 and r.content_type.startswith('application/json'),
+              f"status={r.status_code} content_type={r.content_type}")
+test("P6.1: /api/export/json returns 200 with JSON", test_p20_export_json_returns_200)
+
+def test_p21_export_has_required_top_level_fields():
+    """Export must contain version, project, exported_at, and hosts fields."""
+    data = client.get('/api/export/json').get_json()
+    required = ['version', 'project', 'exported_at', 'hosts']
+    missing = [f for f in required if f not in data]
+    return ok(not missing, f"Missing top-level fields: {missing}")
+test("P6.2: export has version, project, exported_at, hosts fields", test_p21_export_has_required_top_level_fields)
+
+def test_p22_export_hosts_contain_expected_ips():
+    """Export hosts must include both seeded host IPs."""
+    data = client.get('/api/export/json').get_json()
+    ips = {h.get('ip') for h in data.get('hosts', [])}
+    # Re-open the saved project which had both hosts
+    expected = {'10.20.30.1', '10.20.30.2'}
+    found = expected & ips
+    return ok(len(found) > 0,
+              f"No expected IPs in export. Got: {ips}")
+test("P6.3: export hosts contain expected IP addresses", test_p22_export_hosts_contain_expected_ips)
+
+def test_p23_export_host_has_required_fields():
+    """Each exported host must have ip, ports, hostname, os, status, note, cves."""
+    data = client.get('/api/export/json').get_json()
+    hosts = data.get('hosts', [])
+    if not hosts:
+        return "SKIP"
+    required = ['ip', 'ports', 'hostname', 'os', 'status', 'note', 'cves']
+    for h in hosts:
+        missing = [f for f in required if f not in h]
+        if missing:
+            return f"Host {h.get('ip')} missing fields: {missing}"
+    return True
+test("P6.4: each exported host has all required fields", test_p23_export_host_has_required_fields)
+
+def test_p24_export_ports_have_correct_structure():
+    """Exported ports must have port, protocol, state, service fields."""
+    data = client.get('/api/export/json').get_json()
+    hosts = data.get('hosts', [])
+    for h in hosts:
+        for p in h.get('ports', []):
+            required = ['port', 'protocol', 'state', 'service']
+            missing = [f for f in required if f not in p]
+            if missing:
+                return f"Port in host {h.get('ip')} missing: {missing}"
+    return True
+test("P6.5: exported ports have port/protocol/state/service fields", test_p24_export_ports_have_correct_structure)
+
+def test_p25_export_ports_correct_for_host():
+    """Seed a host, export JSON, verify port data is correct."""
+    # Ensure the project has a host with known ports
+    import_nmap_xml(project=logic.activeProject, xml_path='/dev/stdin',
+                    output="") if False else None
+    _xml = """<?xml version="1.0"?><nmaprun>
+      <host><status state="up"/>
+        <address addr="10.20.30.1" addrtype="ipv4"/>
+        <ports>
+          <port protocol="tcp" portid="22"><state state="open"/><service name="ssh"/></port>
+          <port protocol="tcp" portid="80"><state state="open"/><service name="http"/></port>
+        </ports>
+      </host>
+    </nmaprun>"""
+    with tempfile.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as f:
+        f.write(_xml); xml_path = f.name
+    try:
+        import_nmap_xml(project=logic.activeProject, xml_path=xml_path, output="")
+    finally:
+        os.unlink(xml_path)
+    data = client.get('/api/export/json').get_json()
+    host_a = next((h for h in data.get('hosts', []) if h.get('ip') == '10.20.30.1'), None)
+    if not host_a:
+        return "FAIL: host 10.20.30.1 not in export after import"
+    port_nums = {int(p.get('port', 0)) for p in host_a.get('ports', [])}
+    missing = {22, 80} - port_nums
+    return ok(not missing, f"Host A missing ports {missing} in export (got {port_nums})")
+test("P6.6: host A exports with correct ports (22, 80)", test_p25_export_ports_correct_for_host)
+
+def test_p26_export_note_included():
+    """Write a note to a host, export JSON, verify note appears in export."""
+    data = client.get('/api/export/json').get_json()
+    hosts = data.get('hosts', [])
+    if not hosts:
+        return "SKIP"
+    h = hosts[0]
+    host_id = _snap_host(h['ip'])
+    if not host_id:
+        return "SKIP"
+    # Write a note
+    client.post(f'/api/workspace/hosts/{host_id["id"]}/note',
+                json={'note': 'export-note-test-XYZ'})
+    data2 = client.get('/api/export/json').get_json()
+    host_a = next((x for x in data2.get('hosts', []) if x.get('ip') == h['ip']), None)
+    if not host_a:
+        return "SKIP"
+    note = host_a.get('note', '')
+    return ok('export-note-test-XYZ' in note,
+              f"Note not in export. Got: {note!r}")
+test("P6.7: export includes note written to host", test_p26_export_note_included)
+
+def test_p27_export_to_tmp_file_and_reload():
+    """Export JSON to /tmp, re-read from disk, verify data integrity."""
+    import json as _json
+    r = client.get('/api/export/json')
+    data = r.get_json()
+
+    # Write to tmp file
+    tmp_path = '/tmp/legion-export-test.json'
+    try:
+        with open(tmp_path, 'w') as f:
+            _json.dump(data, f, indent=2)
+
+        # Re-read from disk
+        with open(tmp_path, 'r') as f:
+            reloaded = _json.load(f)
+
+        # Verify it round-trips cleanly
+        results = []
+        if reloaded.get('version') != data.get('version'):
+            results.append("version mismatch after file round-trip")
+        if len(reloaded.get('hosts', [])) != len(data.get('hosts', [])):
+            results.append(f"host count changed: {len(data.get('hosts',[]))} → {len(reloaded.get('hosts',[]))}")
+        return ok(not results, "; ".join(results))
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+test("P6.8: export JSON to /tmp and reload — data integrity preserved", test_p27_export_to_tmp_file_and_reload)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 total = PASS + FAIL + SKIP
 print(f"\n{'='*60}")

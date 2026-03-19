@@ -828,9 +828,68 @@ def brute_run():
 
 @web_bp.get("/api/export/json")
 def export_json():
-    # Reuse snapshot
-    from flask import redirect
-    return redirect("/api/snapshot")
+    """Export all project data as a structured JSON document.
+    Includes hosts, ports, services, notes, CVEs, scripts, and processes.
+    Suitable for archiving, reporting, or importing into other tools."""
+    logic = _logic()
+    wc = _wc()
+    filters = Filters()
+
+    session = logic.activeProject.database.session()
+    try:
+        from db.entities.host import hostObj
+        hosts_raw = session.query(hostObj).filter(hostObj.status != 'down').all()
+
+        export = {
+            "version": "1.0",
+            "project": getattr(logic.activeProject.properties, 'projectName', ''),
+            "exported_at": str(__import__('datetime').datetime.utcnow()),
+            "hosts": [],
+        }
+
+        repo = logic.activeProject.repositoryContainer
+        for h in hosts_raw:
+            host_ip = getattr(h, 'ipv4', '') or getattr(h, 'ip', '')
+            host_id = h.id
+
+            # Ports
+            ports_raw = repo.portRepository.getPortsByHostId(host_id) or []
+            ports = []
+            for p in ports_raw:
+                svc = repo.serviceRepository.getServiceById(p.serviceId) if p.serviceId else None
+                ports.append({
+                    "port": str(p.portId),
+                    "protocol": str(p.protocol),
+                    "state": str(p.state),
+                    "service": getattr(svc, 'name', '') if svc else '',
+                    "product": getattr(svc, 'product', '') if svc else '',
+                    "version": getattr(svc, 'version', '') if svc else '',
+                })
+
+            # Note
+            note_obj = repo.noteRepository.getNoteByHostId(host_id)
+            note_text = getattr(note_obj, 'text', '') if note_obj else ''
+
+            # CVEs
+            cves_raw = wc.getCvesFromDB(host_ip) or []
+            cves = [{"name": c.get('name', '') if isinstance(c, dict) else getattr(c, 'name', ''),
+                     "severity": str(c.get('severity', '') if isinstance(c, dict) else getattr(c, 'severity', ''))}
+                    for c in cves_raw]
+
+            export["hosts"].append({
+                "ip": host_ip,
+                "hostname": getattr(h, 'hostname', '') or '',
+                "os": getattr(h, 'osMatch', '') or '',
+                "status": getattr(h, 'status', '') or '',
+                "checked": str(getattr(h, 'checked', 'False')) == 'True',
+                "note": note_text,
+                "ports": ports,
+                "cves": cves,
+            })
+
+        return jsonify(export)
+    finally:
+        session.close()
 
 @web_bp.get("/api/export/csv")
 def export_csv():
