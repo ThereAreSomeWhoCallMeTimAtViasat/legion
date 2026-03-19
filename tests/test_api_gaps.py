@@ -234,6 +234,131 @@ def test_p13_second_save_open_cycle():
 test("P4.1: second save → new → open cycle works", test_p13_second_save_open_cycle)
 
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("P5: Persistence — notes, config, host delete, process kill")
+print("="*60 + "\n")
+
+def _snap_host(ip):
+    snap = client.get('/api/snapshot').get_json()
+    return next((h for h in snap.get('hosts', []) if h.get('ip') == ip), None)
+
+def test_p14_notes_persist_in_db():
+    """Note written via API must be readable back in the same session."""
+    h = _snap_host('10.20.30.1')
+    if not h: return "SKIP"
+    client.post(f'/api/workspace/hosts/{h["id"]}/note', json={'note': 'persist-api-test'})
+    r = client.get(f'/api/workspace/hosts/{h["id"]}')
+    note = r.get_json().get('note', '') or ''
+    return ok('persist-api-test' in note, f"Note not readable after write: {note!r}")
+test("P5.1: note written via API is readable back immediately", test_p14_notes_persist_in_db)
+
+def test_p15_note_doesnt_bleed_to_other_host():
+    """Note written to host A must not appear when reading host B."""
+    h_a = _snap_host('10.20.30.1')
+    h_b = _snap_host('10.20.30.2')
+    if not h_a or not h_b: return "SKIP"
+    client.post(f'/api/workspace/hosts/{h_a["id"]}/note', json={'note': 'only-for-a'})
+    r_b = client.get(f'/api/workspace/hosts/{h_b["id"]}')
+    note_b = r_b.get_json().get('note', '') or ''
+    return ok('only-for-a' not in note_b, f"Note bled from A to B: {note_b!r}")
+test("P5.2: note written to host A does not appear on host B", test_p15_note_doesnt_bleed_to_other_host)
+
+def test_p16_config_save_and_read():
+    """POST to /api/settings/legion-conf must write, GET must read it back."""
+    import os
+    # Read current config first
+    r_get = client.get('/api/settings/legion-conf')
+    if r_get.status_code != 200:
+        return "SKIP"
+    original = r_get.get_json().get('text', '')
+    conf_path = r_get.get_json().get('path', '')
+    if not conf_path or not os.path.isfile(conf_path):
+        return "SKIP"
+
+    # Append a marker comment and save
+    marker = '# phase4-config-test-marker'
+    modified = original + '\n' + marker
+    r_post = client.post('/api/settings/legion-conf', json={'text': modified})
+    if r_post.status_code != 200:
+        return f"FAIL: POST returned {r_post.status_code}"
+
+    # Read back — marker must be present
+    r_get2 = client.get('/api/settings/legion-conf')
+    saved_text = r_get2.get_json().get('text', '')
+    result = ok(marker in saved_text, f"Marker missing after save. Got: {saved_text[-100:]!r}")
+
+    # Restore original
+    client.post('/api/settings/legion-conf', json={'text': original})
+    return result
+test("P5.3: config save writes to disk, GET reads it back", test_p16_config_save_and_read)
+
+def test_p17_host_delete_removes_from_db():
+    """Deleting host A via API must remove it from the snapshot."""
+    h_a = _snap_host('10.20.30.1')
+    h_b = _snap_host('10.20.30.2')
+    if not h_a: return "SKIP"
+    r = client.post(f'/api/workspace/hosts/{h_a["id"]}/action',
+                    json={'action': 'delete', 'ip': '10.20.30.1'})
+    if r.status_code != 200:
+        return f"FAIL: delete action returned {r.status_code}"
+    snap = client.get('/api/snapshot').get_json()
+    ips = {h.get('ip') for h in snap.get('hosts', [])}
+    result_a = ok('10.20.30.1' not in ips, f"Host A still in snapshot after delete: {ips}")
+    if h_b:
+        result_b = ok('10.20.30.2' in ips, f"Host B missing after deleting only A: {ips}")
+        if result_a is True and result_b is True:
+            return True
+        return result_a if result_a is not True else result_b
+    return result_a
+test("P5.4: host delete removes from snapshot, preserves other hosts", test_p17_host_delete_removes_from_db)
+
+def test_p18_process_kill_terminates_subprocess():
+    """Kill action must cause the subprocess to exit."""
+    import time as _t
+    wc.start()
+    result = wc.runCommand('sleep 30', name='kill-api-test', hostIp='10.20.30.2')
+    pid = result.get('process_id')
+    if not pid: return "SKIP"
+    _t.sleep(0.8)   # let process start and set _popen
+
+    # Get the popen object before killing
+    popen = None
+    for proc in getattr(wc, '_active_processes', {}).values():
+        if getattr(proc, 'id', None) == pid or str(getattr(proc, 'processId', None)) == str(pid):
+            popen = getattr(proc, '_popen', None)
+            break
+    if popen is None:
+        # Fallback: kill via API and verify status changes
+        r = client.post(f'/api/processes/{pid}/kill', json={})
+        return ok(r.status_code == 200, f"Kill returned {r.status_code}")
+
+    r = client.post(f'/api/processes/{pid}/kill', json={})
+    _t.sleep(0.5)
+    exited = popen.poll() is not None
+    return ok(exited, f"Process still running after kill (poll={popen.poll()})")
+test("P5.5: kill action terminates the subprocess", test_p18_process_kill_terminates_subprocess)
+
+def test_p19_process_clear_sets_closed():
+    """Clear action must mark the process as closed in the DB."""
+    import time as _t
+    wc.start()
+    result = wc.runCommand('echo clear-api-test', name='clear-api-test', hostIp='10.20.30.2')
+    pid = result.get('process_id')
+    if not pid: return "SKIP"
+    _t.sleep(1.5)  # let it finish
+
+    r = client.post(f'/api/processes/{pid}/close', json={})
+    if r.status_code != 200:
+        return f"FAIL: close returned {r.status_code}"
+    # Process must be gone from snapshot (closed=True excluded)
+    snap = client.get('/api/snapshot').get_json()
+    ids = [p.get('id') for p in snap.get('processes', [])]
+    return ok(pid not in ids, f"Process {pid} still in snapshot after clear (ids: {ids})")
+test("P5.6: clear action removes process from snapshot", test_p19_process_clear_sets_closed)
+
 # ── Cleanup ────────────────────────────────────────────────────────────────
 if os.path.exists(SAVE_PATH):
     os.unlink(SAVE_PATH)

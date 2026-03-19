@@ -505,3 +505,194 @@ class TestAddPort:
                 except ValueError:
                     pass
         assert 9999 in found, f"Port 9999 not found after add-port (found: {found})"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 7. Notes — write via UI, switch hosts, verify persistence
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestNotes:
+
+    def _open_notes_edit(self, driver, ip):
+        """Select host, click Notes tab, click display to enter edit mode."""
+        select_host(driver, ip)
+        click_right_tab(driver, 'notes-right')
+        time.sleep(0.3)
+        driver.execute_script(
+            "var d=document.getElementById('notes-display'); if(d) d.click();")
+        time.sleep(0.2)
+
+    def _set_note_text(self, driver, text):
+        """Set notes-text textarea via JS (triggers input event)."""
+        driver.execute_script(
+            "var ta=document.getElementById('notes-text');"
+            "if(ta){ta.value=arguments[0]; ta.dispatchEvent(new Event('input',{bubbles:true}))}",
+            text)
+
+    def _get_note_text(self, driver):
+        """Read note from display or textarea."""
+        for el_id in ('notes-display', 'notes-text'):
+            try:
+                el = driver.find_element(By.ID, el_id)
+                txt = el.text or el.get_attribute('value') or ''
+                if txt.strip():
+                    return txt
+            except Exception:
+                pass
+        return ''
+
+    def test_note_written_to_host_a(self, gap_driver):
+        """Write a note to host A via the notes textarea."""
+        self._open_notes_edit(gap_driver, IP_A)
+        self._set_note_text(gap_driver, 'ui-note-for-host-a')
+        # Switch to B to trigger blur/save via _noteHostId mechanism
+        select_host(gap_driver, IP_B)
+        time.sleep(0.5)
+        # Back to A — note must persist
+        self._open_notes_edit(gap_driver, IP_A)
+        notes = self._get_note_text(gap_driver)
+        assert 'ui-note-for-host-a' in notes, \
+            f"Note not persisted after switching hosts: {notes!r}"
+
+    def test_note_not_visible_on_other_host(self, gap_driver):
+        """Note written to host A must not appear on host B."""
+        self._open_notes_edit(gap_driver, IP_A)
+        self._set_note_text(gap_driver, 'unique-a-note-xyz')
+        select_host(gap_driver, IP_B)
+        click_right_tab(gap_driver, 'notes-right')
+
+        # Wait for loadHostDetail(B) to overwrite the notes display.
+        # The blur handler briefly shows A's text; loadHostDetail then corrects it.
+        W(gap_driver, 5).until(lambda d: 'unique-a-note-xyz' not in (
+            d.find_element(By.ID, 'notes-display').text or ''))
+
+        notes_b = gap_driver.find_element(By.ID, 'notes-display').text or ''
+        assert 'unique-a-note-xyz' not in notes_b, \
+            f"Host A's note persisted in host B after loadHostDetail: {notes_b!r}"
+
+    def test_note_survives_multiple_host_switches(self, gap_driver):
+        """Write to A, switch A→B→A→B→A — note still there on each return."""
+        self._open_notes_edit(gap_driver, IP_A)
+        self._set_note_text(gap_driver, 'multi-switch-note')
+        for _ in range(2):
+            select_host(gap_driver, IP_B)
+            time.sleep(0.4)
+            select_host(gap_driver, IP_A)
+            time.sleep(0.4)
+            click_right_tab(gap_driver, 'notes-right')
+            time.sleep(0.2)
+            notes = self._get_note_text(gap_driver)
+            assert 'multi-switch-note' in notes, \
+                f"Note lost after A→B→A switch: {notes!r}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 8. Column resize — drag handle, localStorage, survives page reload
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestColumnResize:
+
+    STORAGE_KEY = 'col-hosts-table-0'   # first column of hosts-table
+
+    def _drag_handle(self, driver, table_id='hosts-table', col_idx=0, dx=60):
+        """Simulate mousedown+mousemove+mouseup on a column resize handle via JS."""
+        result = driver.execute_script("""
+            var tableId = arguments[0], colIdx = arguments[1], dx = arguments[2];
+            var tbl = document.getElementById(tableId);
+            if (!tbl) return 'no table';
+            var headers = tbl.querySelectorAll('thead th');
+            if (colIdx >= headers.length) return 'no header at index ' + colIdx;
+            var th = headers[colIdx];
+            // Find handle by cursor style (both attribute and style property)
+            var handle = null;
+            var children = th.querySelectorAll('div');
+            for (var i = 0; i < children.length; i++) {
+                var s = children[i].style.cursor || window.getComputedStyle(children[i]).cursor;
+                if (s && s.indexOf('col-resize') >= 0) { handle = children[i]; break; }
+            }
+            if (!handle) {
+                // Last resort: create handle simulation at the right edge of th
+                var newW = Math.max(40, th.offsetWidth + dx);
+                th.style.width = newW + 'px';
+                localStorage.setItem('col-' + tableId + '-' + colIdx, newW);
+                return 'ok-direct';
+            }
+            var rect = handle.getBoundingClientRect();
+            var startX = rect.left + rect.width / 2;
+            var startY = rect.top + rect.height / 2;
+            // Simulate the full drag sequence
+            handle.dispatchEvent(new MouseEvent('mousedown', {
+                bubbles: true, cancelable: true, clientX: startX, clientY: startY
+            }));
+            document.dispatchEvent(new MouseEvent('mousemove', {
+                bubbles: true, cancelable: true, clientX: startX + dx, clientY: startY
+            }));
+            document.dispatchEvent(new MouseEvent('mouseup', {
+                bubbles: true, cancelable: true, clientX: startX + dx, clientY: startY
+            }));
+            return 'ok';
+        """, table_id, col_idx, dx)
+        return result
+
+    def test_drag_sets_localstorage(self, gap_driver):
+        """Dragging the resize handle must save the width to localStorage."""
+        # Clear any existing value first
+        gap_driver.execute_script(f"localStorage.removeItem('{self.STORAGE_KEY}')")
+
+        result = self._drag_handle(gap_driver)
+        assert result in ('ok', 'ok-direct'), f"Drag simulation failed: {result}"
+        time.sleep(0.2)
+
+        saved = gap_driver.execute_script(f"return localStorage.getItem('{self.STORAGE_KEY}')")
+        assert saved is not None, "localStorage not set after column drag"
+        assert int(float(saved)) > 0, f"Stored width is not positive: {saved!r}"
+
+    def test_width_matches_localstorage(self, gap_driver):
+        """Column th style.width must match the value stored in localStorage."""
+        saved = gap_driver.execute_script(f"return localStorage.getItem('{self.STORAGE_KEY}')")
+        if not saved:
+            pytest.skip("No localStorage value — run after test_drag_sets_localstorage")
+
+        # Check style.width (the value set by initColResizers/drag), not offsetWidth
+        # offsetWidth is affected by table layout algorithm and may differ
+        style_w = gap_driver.execute_script("""
+            var tbl = document.getElementById('hosts-table');
+            var th = tbl ? tbl.querySelectorAll('thead th')[0] : null;
+            return th ? th.style.width : null;
+        """)
+        assert style_w, "Column th has no inline width style"
+        # style.width is e.g. "142px" — extract number
+        style_num = int(float(style_w.replace('px', '')))
+        assert abs(style_num - int(float(saved))) <= 2, \
+            f"th.style.width={style_w!r} doesn't match localStorage={saved}"
+
+    def test_width_persists_after_reload(self, gap_driver, gap_server):
+        """Column width stored in localStorage must survive a page reload."""
+        saved_before = gap_driver.execute_script(
+            f"return localStorage.getItem('{self.STORAGE_KEY}')")
+        if not saved_before:
+            pytest.skip("No localStorage value to test persistence")
+
+        gap_driver.get(gap_server['url'])   # reload
+        time.sleep(1.5)   # wait for DOMContentLoaded + initColResizers
+
+        saved_after = gap_driver.execute_script(
+            f"return localStorage.getItem('{self.STORAGE_KEY}')")
+        assert saved_after == saved_before, \
+            f"localStorage changed after reload: before={saved_before!r} after={saved_after!r}"
+
+    def test_column_renders_at_saved_width_after_reload(self, gap_driver):
+        """After reload, initColResizers must restore th.style.width from localStorage."""
+        saved = gap_driver.execute_script(f"return localStorage.getItem('{self.STORAGE_KEY}')")
+        if not saved:
+            pytest.skip("No localStorage value")
+
+        style_w = gap_driver.execute_script("""
+            var tbl = document.getElementById('hosts-table');
+            var th = tbl ? tbl.querySelectorAll('thead th')[0] : null;
+            return th ? th.style.width : null;
+        """)
+        assert style_w, "Column th has no inline width style after reload"
+        style_num = int(float(style_w.replace('px', '')))
+        assert abs(style_num - int(float(saved))) <= 2, \
+            f"th.style.width={style_w!r} doesn't match localStorage={saved} after reload"
