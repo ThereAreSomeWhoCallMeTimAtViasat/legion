@@ -1062,9 +1062,7 @@ class TestLiveScan:
 
     # Known services on your test VM — override via env var
     # Format: comma-separated port numbers  e.g. "22,80,443,445"
-    # Set LEGION_TEST_PORTS=22,80,443 to assert specific ports exist on target
-    KNOWN_PORTS = [int(p) for p in
-                   os.environ.get('LEGION_TEST_PORTS', '').split(',') if p.strip()]
+    # Known ports checked in test_07 (port 80 always expected on this VM)
 
     # Timeouts (seconds)
     T_HOST_APPEARS  = 20
@@ -1144,9 +1142,14 @@ class TestLiveScan:
         assert len(port_rows) > 0, f"No ports discovered on {live_target}"
 
     def test_07_known_ports_present(self, driver, live_target):
-        """Each port in LEGION_TEST_PORTS must appear in the ports table."""
-        if not self.KNOWN_PORTS:
-            pytest.skip("No LEGION_TEST_PORTS configured")
+        """Port 80 must be present on the live target (always open on this VM)."""
+        # Select live target and switch to Services tab to populate port rows
+        row = wait_for_host_row(driver, live_target)
+        js_click(driver, row)
+        time.sleep(POLL)
+        click_right_tab(driver, 'services-right')
+        W(driver, POLL * 3).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, '#host-detail-ports tr')) > 0)
         port_rows = driver.find_elements(By.CSS_SELECTOR, '#host-detail-ports tr')
         found = set()
         for row in port_rows:
@@ -1156,8 +1159,7 @@ class TestLiveScan:
                     found.add(int(cells[1].text.strip()))
                 except ValueError:
                     pass
-        missing = set(self.KNOWN_PORTS) - found
-        assert not missing, f"Expected ports not found: {missing}  (found: {found})"
+        assert 80 in found, f"Port 80 not found on {live_target} (found: {found})"
 
     def test_08_all_stages_complete(self, driver):
         """Wait for the full 6-stage chain to finish (up to T_ALL_DONE seconds)."""
@@ -1185,20 +1187,28 @@ class TestLiveScan:
         # OS field present even if "Unknown" — just verify info tab has content
         assert len(info_text.strip()) > 0, "Information tab is empty after scan"
 
-    def test_11_eyewitness_screenshooter_ran(self, driver):
-        """If HTTP/HTTPS was discovered, screenshooter must appear as Finished."""
-        # Check if any HTTP port was found
+    def test_11_eyewitness_screenshooter_ran(self, driver, live_target):
+        """Screenshooter must have run since HTTP ports (80, 8180) are on this VM."""
+        # Select live target and switch to Services tab to see discovered ports
+        row = wait_for_host_row(driver, live_target)
+        js_click(driver, row)
+        time.sleep(POLL)
+        click_right_tab(driver, 'services-right')
+        W(driver, POLL * 3).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, '#host-detail-ports tr')) > 0)
+
         port_rows = driver.find_elements(By.CSS_SELECTOR, '#host-detail-ports tr')
         http_found = False
         for row in port_rows:
             cells = row.find_elements(By.TAG_NAME, 'td')
+            # col 4 = service name (http, http-alt, https, ssl, etc.)
             if len(cells) >= 5 and 'http' in cells[4].text.lower():
                 http_found = True
                 break
         if not http_found:
-            pytest.skip("No HTTP ports found — eyewitness would not run")
+            pytest.skip("No HTTP ports found in port table — eyewitness would not run")
 
-        # Wait for screenshooter process
+        # Screenshooter must be Finished
         wait_for_process_status(driver, 'screenshooter', 'Finished',
                                 timeout=self.T_EYEWITNESS)
 
