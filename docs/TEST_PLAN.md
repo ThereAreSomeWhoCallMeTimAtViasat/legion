@@ -1,471 +1,308 @@
 # Legion Flask — Comprehensive Test Plan
 
 **Generated:** 2026-03-18
-**Version:** v7.5-flask
+**Version:** v7.6-flask
 **Branch:** flask-clean
 
 ---
 
 ## Overview
 
-Legion's test suite has **18 automated test files** covering **502 tests** across all layers.
-All tests run with: `sudo python3 tests/<file>.py`
-All must pass before any commit or server restart.
+Legion has three test layers:
+
+| Layer | Files | Tests | How to run |
+|-------|-------|-------|------------|
+| **Unit / API** | 18 × `tests/test_*.py` | 502 | `sudo python3 tests/<file>.py` |
+| **Selenium offline** | `test_selenium_ui.py` | 92 | `sudo python3 -m pytest tests/test_selenium_ui.py -m "not live"` |
+| **Selenium live scan** | `test_selenium_ui.py` | 15 | `sudo env LEGION_TEST_TARGET=192.168.85.11 python3 -m pytest tests/test_selenium_ui.py -m live` |
+
+**All 609 tests pass as of v7.6-flask.**
 
 ---
 
-## Automated Test Files
+## What Selenium Actually Tested
 
-### Core / Critical (run always before commit)
+Selenium drives a real headless Firefox browser against a real Flask server (port 5099). It verifies that **the browser UI works end-to-end** — not just that the server responds, but that the user can click things and see the right results.
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_behavioral.py` | 15 | Core import, scheduler, process lifecycle, WAL mode |
-| `test_signal_chains.py` | 28 | Scheduler → chain → stage → XML import signal flow |
-| `test_phase1_right_panel.py` | 27 | Right panel API routes (info, CVEs, scripts, services) |
+### Offline tests (92) — seeded data, no network scan needed
 
-### Flask Integration
+#### App Load (6 tests)
+- ✅ Page loads without error
+- ✅ Version string visible in header
+- ✅ Project name shown in status bar
+- ✅ Seeded host (10.10.10.1 with ports 22/80/443) appears in Hosts table after first snapshot poll
+- ✅ Processes table present
+- ✅ Status bar visible
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_flask_integration.py` | 42 | All API endpoints: snapshot, processes, hosts, output |
-| `test_routes_webcontroller.py` | 21 | Route → WebController wiring; runCommand, cancel, delete |
-| `test_webcontroller.py` | 28 | WebController internal logic: queue, capture, match |
-| `test_webcontroller_remaining.py` | 31 | Edge cases: staged nmap, duplicate check, screenshot dedup |
+#### File Menu (10 tests)
+- ✅ Clicking "File" opens dropdown
+- ✅ All items visible: New, Open, Save, Add hosts, Import nmap, Export JSON
+- ✅ "Add host(s) to scope" opens `add-hosts-modal`
+- ✅ "Import nmap" opens `import-nmap-modal`
+- ✅ Clicking outside the menu closes it
 
-### UI / JS / CSS
+#### Help Menu (5 tests)
+- ✅ Clicking "Help" opens dropdown
+- ✅ "Config" item visible
+- ✅ "Help" item visible
+- ✅ Config → opens `config-modal`
+- ✅ Help → opens `help-modal`
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_ui_wiring.py` | 42 | JS function presence, event wiring, DOM expectations |
-| `test_ui_fixes.py` | 42 | Phase 2–5 UI fixes verified in JS/CSS source |
-| `test_phase5_polish.py` | 20 | Polish fixes: scrolling, animations, tab indicators |
+#### Keyboard Shortcuts (5 tests)
+- ✅ Ctrl+H → add-hosts-modal opens
+- ✅ Ctrl+I → import-nmap-modal opens
+- ✅ F2 → config-modal opens
+- ✅ F1 → help-modal opens
+- ✅ Ctrl+N button wired in DOM (not triggered — would reset project)
 
-### Feature Phases
+#### Modals (13 tests)
+- ✅ Add hosts modal opens, first input auto-focused
+- ✅ Required fields present (targets textarea, Submit, Cancel)
+- ✅ Modal closes with × button
+- ✅ Modal closes with Cancel button
+- ✅ Modal closes on overlay click
+- ✅ Import nmap modal opens, has path text input
+- ✅ **Import actually works**: enter XML path → server imports → host 10.10.10.2 appears in table
+- ✅ Import modal closes with ×
+- ✅ Config modal opens, has Save button and profile selector
+- ✅ Config modal closes
+- ✅ Help modal opens, has content text
+- ✅ Help modal closes
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_phase1_settings.py` | 11 | Settings API: read, write, section handling |
-| `test_phase2_auxiliary.py` | 8 | Aux methods: filters, getServiceNames, getOS |
-| `test_phase2_interactions.py` | 23 | Host click, port right-click, tool tab close |
-| `test_phase3_sorting.py` | 23 | Column sorting: hosts, processes, services |
-| `test_phase4_state.py` | 29 | State restoration, filters, host lifecycle |
+#### Left Panel Tabs (5 tests)
+- ✅ Hosts tab active by default
+- ✅ Services tab switches
+- ✅ Tools tab switches
+- ✅ OS tab switches
+- ✅ Returns to Hosts tab
 
-### Regression / v6–v7 Fixes
+#### Right Panel Tabs (6 tests)
+- ✅ Services tab default when host selected
+- ✅ Scripts, Information, CVEs, Notes tabs all switch correctly
+- ✅ Returns to Services tab
 
-| File | Tests | Coverage |
-|------|-------|----------|
-| `test_v6_v7_fixes.py` | 34 | All v6.0–v7.4 server + JS fixes (see sections below) |
-| `test_new_dialogs.py` | 55 | Add host dialog, modal focus, error handling |
-| `test_visualupgrades_features.py` | 23 | Visual upgrade features: match banner, OS groups |
+#### Host Selection (5 tests)
+- ✅ Clicking host row selects it (`.selected` class applied)
+- ✅ Selecting host loads its ports into Services right tab
+- ✅ Seeded host has expected ports (22, 80, 443)
+- ✅ Information tab shows the host's IP
+- ✅ Clicking a tab clears the orange `tab-unread` indicator
+
+#### Context Menus (8 tests)
+- ✅ Right-click host row → context menu appears at cursor
+- ✅ Host menu contains "Delete"
+- ✅ Menu dismisses on outside click
+- ✅ Right-click process row → menu appears with Kill/Retry/Clear items
+- ✅ Right-click port row (Services right tab) → port action menu appears
+- ✅ Port menu has at least one action item
+- ✅ Right-click dynamic tool tab → "Save Output" and "Close Tab" in menu
+- ✅ Menu dismisses on outside click
+
+#### Column Sorting (5 tests)
+- ✅ Clicking Hosts table OS header → sort arrow appears
+- ✅ Clicking again → sort direction toggles (▲ → ▼)
+- ✅ Processes table status column sorts
+- ✅ Services left table sorts
+- ✅ Ports (right panel) table sorts
+
+#### Process Output (3 tests)
+- ✅ Running `echo` command → process row appears → clicking row loads output in upper panel
+- ✅ Output panel scrolled to bottom after load
+- ✅ Process status filter (Running / All) filters process table correctly
+
+#### Dynamic Tool Tabs (3 tests)
+- ✅ Running a process → dynamic tab button appears in right panel tab bar
+- ✅ Clicking dynamic tab → output panel shown in `#dynamic-tabs-container`
+- ✅ Clicking × on tab → tab removed from bar
+
+#### Tab Indicators (3 tests)
+- ✅ `tab-unread` CSS class applies orange color to tab button
+- ✅ Clicking a tab that has `tab-unread` removes the class
+- ✅ `tab-match` CSS class exists (red star for match processes)
+
+#### OS Tab (4 tests)
+- ✅ OS tab shows grouped OS names from seeded host
+- ✅ Clicking an OS row filters the OS hosts panel
+- ✅ OS list does NOT re-render on every 1.5s poll (hash gate working)
+- ✅ Switching back to Hosts tab works
+
+#### Brute Tab (5 tests)
+- ✅ Clicking Brute main tab switches to it
+- ✅ IP, Port, username wordlist, password wordlist fields present
+- ✅ Returns to Scan tab
+
+#### Snapshot Performance (2 tests)
+- ✅ `/api/snapshot` responds in under 500ms
+- ✅ Snapshot includes `os_groups` field
 
 ---
 
-## v6–v7 Fix Test Coverage (test_v6_v7_fixes.py)
+### Live scan tests (15) — real nmap against 192.168.85.11
 
-### L: Live Output (v6.2, v6.9)
-- `L1.1` `_capture_output` creates `.live_output` temp file
-- `L1.2` Temp file opened with `buffering=1` (line-buffered — flushes every newline)
-- `L1.3` `/api/processes/<id>/output` reads live file before SQLite
-- `L1.4` End-to-end: process output readable after run
-- `L1.5` Temp file deleted after process finishes
+Run time: ~3:30 for full staged scan (6 stages including NSE/vulners)
 
-### S: Snapshot Optimization (v6.5)
-- `S1.1` Uses single SQL + `COUNT(*)`, NOT `getPortsByHostId()` N+1 ORM
-- `S1.2` Calls `getProcesses` once (merged tools+processes)
-- `S1.3` Response time logged (`_elapsed_ms`)
-- `S1.4` Responds in <200ms
+- ✅ **test_01**: Add host 192.168.85.11 via Add Hosts modal → modal status shows "Scan started!", modal auto-closes
+- ✅ **test_02**: Host row 192.168.85.11 appears in Hosts table within 20s
+- ✅ **test_03**: At least one process appears with status Running or Waiting within 45s
+- ✅ **test_04**: Clicking a Running process → output appears in upper panel
+- ✅ **test_05**: At least one process reaches Finished within 120s (stage 1 done)
+- ✅ **test_06**: After scan, clicking 192.168.85.11 → Services tab shows open ports
+- ✅ **test_07**: Port 80 confirmed present in discovered ports
+- ✅ **test_08**: ALL 6 nmap stages complete (all processes Finished) within 900s
+- ✅ **test_09**: Information tab shows 192.168.85.11 after scan
+- ✅ **test_10**: Information tab has content (OS, hostname, etc.)
+- ✅ **test_11**: HTTP ports found (80, 8180) → screenshooter process shows Finished
+- ✅ **test_12**: Clicking screenshooter row → dynamic tab → screenshot PNG loads (naturalWidth > 0)
+- ✅ **test_13**: CVEs tab renders without error after NSE stage
+- ✅ **test_14**: No duplicate screenshooter processes for 192.168.85.11
+- ✅ **test_15**: `tab-unread` CSS mechanism confirmed (orange colour verified via JS)
 
-### P: Process Poll Timer (v6.4, v6.7, v6.8)
-- `P1.1` `procPollTimer` survives `Waiting→Running` state transition
-- `P1.2` `_startDynPoll` survives `Waiting→Running` transition
-- `P1.3` Auto-select tracks `_prevRunningIds` for new process detection
-- `P1.4` Auto-select skips click if process already selected (no poll restart)
+---
 
-### T: Tab Indicators (v6.7, v6.8, v7.0)
-- `T1.1` `markTabUnread` always fires regardless of active state
-- `T1.2` Orange indicator fires on first host discovery
-- `T1.3` Information tab flashes all fields on first host load
-- `T1.4` `handleMatch` uses `set` (deduplicates match patterns)
-- `T1.5` Match banner shown in process output when match exists
-- `T1.6` Snapshot processes include `match_text` field
+## What Selenium Did NOT Test
 
-### O: OS Tab (v6.3, v6.8)
-- `O1.1` `_osListHash` gates re-renders (prevents cascade every 1.5s)
-- `O1.2` `renderOsList` re-clicks selected OS after rebuild
+These are gaps — things that require additional testing (manual or future automation).
 
-### C: CSS Layout (v7.1, v7.2)
-- `C1.1` `#dynamic-tabs-container` is `display:none` by default
-- `C1.2` CSS `:has(.tab-content.active)` shows container only when needed
-- `C1.3` `scrollTop` deferred via `setTimeout` for accurate bottom position
+### Functional gaps (Selenium confirmed the UI exists but not that the action works)
 
-### N: NSE Options (v7.4)
-- `N1.1` NSE stage uses `--min-parallelism`
-- `N1.2` NSE stage uses `--script-timeout`
+| Feature | What Selenium checked | What it didn't verify |
+|---------|----------------------|----------------------|
+| File → New | Button exists in DOM | Actually creates new empty project |
+| File → Open | Opens file-browser-modal | Actually loading a saved `.legion` file |
+| File → Save / Save As | Button exists | File written to disk, reopenable |
+| File → Export JSON | Button exists | JSON file downloaded, correct content |
+| File → Send selection to notes (Ctrl+B) | Button exists | Selected text actually appended to Notes |
+| Host delete | "Delete" in context menu | Confirm dialog fires, host removed from DB and UI |
+| Host double-click | — | Copy IP to clipboard |
+| Port double-click | — | Switches left panel to Hosts tab |
+| Port context menu actions | Menu appears, has items | Actually running nmap/hydra/nikto against port |
+| Send to Brute | — | Port right-click → fills Brute tab fields + switches tab |
+| Run Hydra | — | Brute tab submit actually runs hydra |
+| Manual Tool Run modal | — | Selecting tool + running it |
+| Nmap Scan modal | — | Custom scan options work |
+| Config save | Save button exists | Settings actually written to `legion.conf` |
+| Notes save | Notes tab accessible | Text saved to DB and persists after restart |
+| Script output | Scripts tab switches | Clicking script row shows output |
+| CVE detail | CVEs tab accessible | Clicking CVE shows detail / mark reviewed |
+| Column width resize | — | Drag to resize, persists in localStorage |
+| Process → Kill | Menu item exists | Process actually killed (signal sent) |
+| Process → Retry | Menu item exists | Process re-queued and runs again |
+| Process → Clear | Menu item exists | Process removed from active view |
+| Dynamic tab Save Output | Menu appears with Save item | Blob download triggers, file content correct |
+| Screenshot modal | — | Clicking screenshot thumbnail opens full-size modal |
+| Add Port modal | — | Manually adding a port to a host |
+| Filters modal | — | Applying port/service/OS filters to hosts table |
+| Host selection / notes modal | — | Saving notes via modal |
+| Scheduler settings | — | Modifying scheduler prefs via Config modal |
+| Provider logs | — | Viewing logs in modal |
 
-### R: Regression (8 tests)
-- Snapshot 200, import works, scheduler runs, Phase 2–4 intact, output route responds, `os_groups` present
+### Persistence gaps (nothing tested across server restart)
+- Notes survive server restart
+- Process output readable after restart
+- Hosts and ports persist after restart
+- Project save → reopen restores all data
+
+### Network scan gaps (live test confirms scan works, but not every code path)
+- Stage 1–6 chain verified to complete, but individual stage commands not inspected
+- vulners.nse CVE data not asserted (test_13 only checks tab renders)
+- Screenshooter image content not verified (only that PNG loads, not what it shows)
+- Hydra brute-force results and credential extraction untested
+- IPv6 scan untested
+- Custom nmap options (Hard mode, FIN/NULL/Xmas scans) untested
+
+---
+
+## How to Verify Functional Gaps
+
+### Quick manual checklist after any server restart
+
+Open http://127.0.0.1:5000 and verify:
+
+**Project persistence**
+- [ ] Add a host, add a note, restart server → host and note still present
+
+**File menu actions**
+- [ ] File → Save → check file created at shown path
+- [ ] File → Export JSON → file downloads with host/port data
+
+**Host lifecycle**
+- [ ] Right-click host → Delete → confirm → host gone from table
+- [ ] Double-click host → IP copied to clipboard (paste to verify)
+
+**Port actions**
+- [ ] Right-click port in Services right tab → select an nmap NSE scan → process appears in table
+- [ ] Double-click port → left panel switches to Hosts tab
+
+**Send to Brute**
+- [ ] Right-click an SSH port → Send to Brute → Brute tab opens with IP/port pre-filled
+
+**Process actions**
+- [ ] Right-click a Running process → Kill → status changes to Killed
+- [ ] Right-click a Finished process → Retry → process re-appears as Running
+
+**Output save**
+- [ ] Right-click a dynamic tool tab → Save Output → `.txt` file downloads with process output
+
+**Notes**
+- [ ] Click host → Notes tab → type text → restart server → text still there
+
+**Filters**
+- [ ] Click Filters button → apply OS filter → only matching hosts shown → clear → all hosts back
 
 ---
 
 ## Running All Tests
 
 ```bash
-# Quick: 3 core suites (most critical)
-sudo python3 tests/test_behavioral.py
-sudo python3 tests/test_signal_chains.py
-sudo python3 tests/test_phase1_right_panel.py
-
-# Full suite (all 18 files, ~502 tests, ~90s)
+# Unit tests (all 18 files)
 for f in tests/test_*.py; do
   echo -n "$f: "
   sudo python3 $f 2>&1 | grep "^Results:"
 done
+
+# Selenium offline (headless, ~65s)
+sudo python3 -m pytest tests/test_selenium_ui.py -v -m "not live"
+
+# Selenium live scan (~3:30, requires VM)
+sudo env LEGION_TEST_TARGET=192.168.85.11 python3 -m pytest tests/test_selenium_ui.py -v -m live
+
+# Core unit tests only (fastest CI check)
+sudo python3 tests/test_behavioral.py
+sudo python3 tests/test_signal_chains.py
+sudo python3 tests/test_phase1_right_panel.py
 ```
 
 ---
 
-## Manual Test Checklist
+## Unit Test Files
 
-The following capabilities require a running server (`sudo python3 legion.py --web`).
-Visit `http://127.0.0.1:5000`.
-
-### Startup & Project
-- [ ] App loads without error; version string shows in header
-- [ ] `*untitled` project shown; no crash on startup
-- [ ] Settings page loads (hamburger → Settings)
-
-### Host Discovery (requires network)
-- [ ] Add host dialog opens on `+` button; first input auto-focused
-- [ ] Host appears in Hosts table after add
-- [ ] IP is the key — no data from other hosts bleeds in
-
-### Nmap Scanning
-- [ ] Port scan launches on host; appears in Processes table with status `Running`
-- [ ] Stage 1 (HTTP ports) output visible in real-time in upper output window
-- [ ] Stage 2 (NSE) output appears continuously — NOT blocked during long script runs
-- [ ] Stage 3–6 auto-chain after each XML import
-- [ ] Process status transitions: `Waiting → Running → Finished`
-
-### Process Output Display
-- [ ] Clicking a process in the table loads output in upper panel
-- [ ] Output scrolls to bottom automatically
-- [ ] Auto-poll updates output every 2s while status = `Running`
-- [ ] Poll keeps running through `Waiting → Running` transition (no stale blank panel)
-- [ ] `Finished` status: one final load, then poll stops
-
-### Tab Indicators (Orange)
-- [ ] Host selected for first time: Information, Services, CVEs tabs turn orange
-- [ ] Information tab: all fields flash green on first open
-- [ ] Port change on existing host: relevant tabs turn orange
-- [ ] Clicking orange tab clears the indicator
-
-### Match Banner
-- [ ] Process with match pattern shows highlighted banner at top of output
-- [ ] No duplicate match lines (set dedup)
-- [ ] No match → no banner shown
-
-### OS Tab
-- [ ] OS tab shows grouped OS names
-- [ ] Clicking OS name filters hosts panel to that OS
-- [ ] OS tab does not cause cascading re-renders every 1.5s poll
-- [ ] Selecting OS then polling: host selection is preserved
-
-### Dynamic Tool Tabs (right panel)
-- [ ] Tool output tab opens on double-click host or tool name
-- [ ] Tab auto-polls while process `Running`; stops on `Finished`
-- [ ] Close `×` on tab removes it
-- [ ] Multiple tool tabs open simultaneously — each shows own process output
-- [ ] Upper output window visible when dynamic tab is active; hidden otherwise
-
-### Column Sorting
-- [ ] Hosts table: click IP, Hostname, OS, Status, Ports columns to sort
-- [ ] Processes table: click Name, Host, Port, Status, Start columns to sort
-- [ ] Services table: click Name, Port columns to sort
-- [ ] Sort direction toggles (asc → desc → asc)
-
-### Filters
-- [ ] Status filter dropdown on Processes (Running / Finished / All)
-- [ ] Port filter on Hosts panel (show open ports only)
-- [ ] Advanced Filters modal (Filters button) — port/service/OS/keyword filters apply correctly
-- [ ] All filter combinations produce correct host subset
-- [ ] Clearing filters restores full host list
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_behavioral.py` | 15 | Core import, scheduler, process lifecycle, WAL mode |
+| `test_signal_chains.py` | 28 | Scheduler → chain → stage → XML import signal flow |
+| `test_phase1_right_panel.py` | 27 | Right panel API routes (info, CVEs, scripts, services) |
+| `test_flask_integration.py` | 42 | All API endpoints: snapshot, processes, hosts, output |
+| `test_routes_webcontroller.py` | 21 | Route → WebController wiring |
+| `test_webcontroller.py` | 28 | WebController internal: queue, capture, match |
+| `test_webcontroller_remaining.py` | 31 | Staged nmap, duplicate check, screenshot dedup |
+| `test_ui_wiring.py` | 42 | JS function presence, event wiring, DOM expectations |
+| `test_ui_fixes.py` | 42 | Phase 2–5 UI fixes verified in JS/CSS source |
+| `test_phase5_polish.py` | 20 | Scroll, animations, tab indicators |
+| `test_phase1_settings.py` | 11 | Settings API: read, write, sections |
+| `test_phase2_auxiliary.py` | 8 | Aux: filters, getServiceNames, getOS |
+| `test_phase2_interactions.py` | 23 | Host click, port right-click, tab close |
+| `test_phase3_sorting.py` | 23 | Column sorting: hosts, processes, services |
+| `test_phase4_state.py` | 29 | Filters, host lifecycle |
+| `test_v6_v7_fixes.py` | 34 | All v6.0–v7.4 server + JS fixes |
+| `test_new_dialogs.py` | 55 | Modals, dialog focus, error handling |
+| `test_visualupgrades_features.py` | 23 | Match banner, OS groups |
 
 ---
 
-### Menu Bar — File Menu
+## Known Limitations
 
-- [ ] **File** menu button opens dropdown
-- [ ] **New** (Ctrl+N) — prompts if unsaved, creates fresh untitled project
-- [ ] **Open** (Ctrl+O) — opens `file-browser-modal`; navigate and open a `.legion` file
-- [ ] **Save** (Ctrl+S) — saves current project; status bar shows confirmation
-- [ ] **Save As** — opens file-browser in save mode; saves to new path
-- [ ] **Send selection to notes** (Ctrl+B) — selected text in output pane appended to Notes tab of selected host
-- [ ] **Export as JSON** (Ctrl+E) — downloads `<project>.json` with all hosts/ports/processes
-- [ ] **Add host(s) to scope** (Ctrl+H) — opens `add-hosts-modal`; first input auto-focused
-- [ ] **Import nmap** (Ctrl+I) — opens `import-nmap-modal`; import a saved `.xml` file
-- [ ] **Exit** (Ctrl+Q) — exits / closes tab (browser confirms if unsaved)
-
-### Menu Bar — Help Menu
-
-- [ ] **Help** menu button opens dropdown
-- [ ] **Help** (F1) — opens `help-modal` with keyboard shortcut reference
-- [ ] **Config** (F2) — opens `config-modal` with tabbed settings (Scheduler, Report Provider, App Settings, Provider Logs)
-
-### Keyboard Shortcuts (no mouse)
-
-| Shortcut | Expected action |
-|----------|----------------|
-| Ctrl+N | New project |
-| Ctrl+O | Open file browser |
-| Ctrl+S | Save |
-| Ctrl+H | Add hosts modal |
-| Ctrl+I | Import nmap modal |
-| Ctrl+E | Export JSON download |
-| Ctrl+B | Send selection to notes |
-| F1 | Help modal |
-| F2 | Config modal |
-| Ctrl+Q | Exit |
-
----
-
-### Context Menus (Right-click)
-
-#### Hosts Table Row
-- [ ] Right-click a host row → context menu appears at cursor
-- [ ] Menu contains: **Run Scan**, **Add Port**, **Delete**, separator, host-specific actions from `/api/menus/host`
-- [ ] **Delete** — shows `confirm()` dialog; cancelling does NOT delete; confirming removes host and refreshes
-- [ ] **Run Scan** — launches nmap scan for that host; process appears in Processes table
-- [ ] **Add Port** — opens `add-port-modal`; port saved to DB on submit
-- [ ] Menu disappears on any click outside it
-
-#### Services Panel (left) Row
-- [ ] Right-click a service row → context menu with available port actions from `/api/menus/service?name=`
-- [ ] Selecting a port action runs tool against selected host + inferred port
-- [ ] Menu disappears on click outside
-
-#### Processes Table Row
-- [ ] Right-click a Running process → menu shows **Kill**, **Clear**
-- [ ] Right-click a Finished process → menu shows **Retry**, **Clear**
-- [ ] **Kill** — sends POST `/api/processes/<id>/kill`; process status changes to `Killed`
-- [ ] **Retry** — re-queues process; new process appears in table
-- [ ] **Clear** — sends POST `/api/processes/<id>/close`; process removed from active view
-- [ ] Menu disappears on click outside
-
-#### Ports Tab (right panel Services tab)
-- [ ] Right-click a port row → menu from `/api/menus/port?service=<name>`
-- [ ] Menu contains port-specific actions (nmap, hydra, nikto, etc.) — may have **submenus** (hover arrow `▸` to expand)
-- [ ] **Submenu**: hover over item with `▸` → sub-panel appears to the right
-- [ ] Submenu item click runs tool against that port
-- [ ] **Send to Brute** — switches to Brute tab, pre-fills IP, port, service fields
-- [ ] Menu + submenu disappear on click outside
-
-#### Dynamic Tool Tab (right-click on tab button)
-- [ ] Right-click a dynamic tool tab button → menu: **Save Output**, separator, **Close Tab**
-- [ ] **Save Output** — downloads `.txt` file containing tab's process output text
-- [ ] **Close Tab** — removes tab; cancels process if still Running
-- [ ] Menu dismisses on click outside
-
----
-
-### Modals (19 total)
-
-#### File Browser (`file-browser-modal`)
-- [ ] Opens on File → Open
-- [ ] Lists `.legion` project files in default project directory
-- [ ] Double-click or select + Open button loads that project
-- [ ] Cancel / × closes without loading
-- [ ] Overlay click closes modal
-
-#### Add Hosts (`add-hosts-modal`)
-- [ ] Opens on File → Add host / Ctrl+H / `+` toolbar button
-- [ ] First text input auto-focused on open
-- [ ] Single IP, CIDR range, hostname all accepted
-- [ ] Invalid IP → error shown inline
-- [ ] Submit → host added; modal closes after ~1.5s success flash
-- [ ] Cancel / × closes without adding
-- [ ] Overlay click closes modal
-
-#### Add Port (`add-port-modal`)
-- [ ] Opens from host right-click → Add Port
-- [ ] Port number, protocol (tcp/udp), service name fields
-- [ ] Submit adds port to selected host
-- [ ] Cancel / × closes
-
-#### Filters (`filters-modal`)
-- [ ] Opens from Filters button in hosts panel
-- [ ] Checkboxes for: port status (open/closed/filtered), protocols (tcp/udp), OS types
-- [ ] Keyword search field
-- [ ] Apply button updates hosts table in real-time
-- [ ] Reset/clear restores all hosts
-- [ ] Cancel / × closes without applying
-
-#### Help (`help-modal`)
-- [ ] Opens on Help → Help / F1
-- [ ] Displays keyboard shortcut table and usage notes
-- [ ] × closes modal
-
-#### Import Nmap (`import-nmap-modal`)
-- [ ] Opens on File → Import nmap / Ctrl+I
-- [ ] File input accepts `.xml` files
-- [ ] Submit → imports hosts and ports from XML; success message
-- [ ] Duplicate hosts merged (not doubled)
-- [ ] Cancel / × closes
-
-#### Config (`config-modal`)
-- [ ] Opens on Help → Config / F2
-- [ ] Contains tabs or sections: **Scheduler**, **Report Provider**, **App Settings (raw)**, **Provider Logs**
-- [ ] **Scheduler** tab: enable/disable toggles, tool preferences, save button → POST `/api/scheduler/preferences`
-- [ ] **Report Provider** tab: provider settings form → POST `/api/settings/legion-conf`
-- [ ] **App Settings** tab: raw `legion.conf` textarea → load/save buttons
-- [ ] **Provider Logs** tab: refresh button loads `/api/scheduler/provider/logs`
-- [ ] × closes modal
-
-#### Process Output (`process-output-modal`)
-- [ ] Opens when process output expands to full-screen (if triggered)
-- [ ] Shows full process output text
-- [ ] Copy button copies text to clipboard
-- [ ] × closes modal
-
-#### Script Output (`script-output-modal`)
-- [ ] Opens on script row double-click / view
-- [ ] Shows script output text
-- [ ] × closes modal
-
-#### Screenshot (`screenshot-modal`)
-- [ ] Opens on screenshot thumbnail click
-- [ ] Shows full-size PNG image
-- [ ] Shows URL metadata (host:port)
-- [ ] × closes modal
-
-#### Run Nmap Scan (`nmap-scan-modal`)
-- [ ] Opens from host right-click → Run Scan (or toolbar)
-- [ ] Fields: target IP pre-filled, scan type dropdown, port range, options
-- [ ] Run button → queues nmap process; modal closes; process appears in table
-- [ ] Cancel / × closes without scanning
-
-#### Manual Tool Run (`manual-scan-modal`)
-- [ ] Opens from Tools tab or right-click
-- [ ] Fields: host IP, port, protocol, tool selector dropdown
-- [ ] Run Tool button → runs selected tool; process appears in table
-- [ ] × closes modal
-
-#### Host Selection / Notes (`host-selection-modal`)
-- [ ] Opens when notes are saved from send-to-brute or selection
-- [ ] Host selector dropdown lists all hosts
-- [ ] Note textarea pre-filled with selected text (if via Ctrl+B)
-- [ ] Save button → POST `/api/workspace/hosts/<id>/note`
-- [ ] × closes
-
-#### Script/CVE Detail (`script-cve-modal`)
-- [ ] Opens on CVE or script row action
-- [ ] Shows detail text / CVE data
-- [ ] Action buttons (mark reviewed, etc.) POST to appropriate endpoint
-- [ ] × closes
-
-#### Scheduler Settings (`scheduler-settings-modal`)
-- [ ] (May open from Config modal or direct trigger)
-- [ ] Form with scheduler preferences
-- [ ] Save → POST `/api/scheduler/preferences`; status shows "Saved!"
-- [ ] Test Provider button → POST `/api/scheduler/provider/test`; shows result alert
-- [ ] × closes
-
-#### Report Provider (`report-provider-modal`)
-- [ ] Provider configuration form
-- [ ] Save → POST `/api/settings/legion-conf`
-- [ ] × closes
-
-#### App Settings (`app-settings-modal`)
-- [ ] Raw `legion.conf` config text
-- [ ] Reload button refreshes from disk
-- [ ] Save button writes to disk
-- [ ] × closes
-
-#### Provider Logs (`provider-logs-modal`)
-- [ ] Refresh button loads `/api/scheduler/provider/logs`
-- [ ] Shows log text
-- [ ] × closes
-
-#### Host Remove Confirmation (`host-remove-modal`)
-- [ ] Shown before host deletion (backup to `confirm()` dialog)
-- [ ] Confirm button deletes host + refreshes
-- [ ] Cancel / × aborts deletion
-
----
-
-### Screenshots (requires eyewitness at /usr/bin/eyewitness)
-- [ ] HTTP host discovered → screenshooter queued automatically
-- [ ] Screenshooter appears in Processes table
-- [ ] Screenshot tab shows PNG image
-- [ ] No duplicate screenshooter for same IP:port
-
-### Import / Export
-- [ ] File → Import Nmap XML imports hosts and ports
-- [ ] Imported hosts appear in Hosts table
-- [ ] Existing host data is merged, not duplicated
-
-### Persistence
-- [ ] Close browser, reopen: all hosts, ports, processes still present
-- [ ] Notes survive session restart
-- [ ] Process output readable after server restart (stored in SQLite)
-
----
-
-## Performance Benchmarks
-
-| Metric | Target | Measured by |
-|--------|--------|-------------|
-| Snapshot response | <200ms | S1.4 automated test |
-| Host table render | <100ms | Browser DevTools |
-| Process poll cycle | 2s interval | JS `setInterval` |
-| Live output delay | <1s | L1.4 end-to-end test |
-| Stage 2 (NSE/vulners) | ~150s for 20+ ports | inherent to vulners API |
-
----
-
-## Known Limitations / Not Tested Automatically
-
-- **NSE vulners slowness**: ~6.8s per port × N ports — inherent to vulners.com rate limiting. `--min-parallelism` and `--script-timeout` applied but do not reduce total time significantly.
-- **eyewitness screenshots**: Requires `/usr/bin/eyewitness`. Tested manually only.
-- **Qt6 GUI**: Not tested (replaced by Flask). Original `controller.py` must not be modified.
-- **Multi-project**: Legion currently uses one active project. Multi-project not tested.
-
----
-
-## Adding New Tests
-
-All test files follow the same pattern:
-
-```python
-#!/usr/bin/env python3
-import os, sys, traceback
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
-os.chdir(PROJECT_ROOT)
-
-PASS = FAIL = SKIP = 0
-
-def test(name, fn):
-    global PASS, FAIL, SKIP
-    try:
-        r = fn()
-        if r is None or r is True:   PASS += 1; print(f"  \u2713 {name}"); return True
-        elif r == 'SKIP':            SKIP += 1; print(f"  \u2298 {name} (SKIP)"); return False
-        else:                        FAIL += 1; print(f"  \u2717 {name}: {r}"); return False
-    except Exception as e:
-        FAIL += 1; print(f"  \u2717 {name}: {e}"); traceback.print_exc(); return False
-
-def ok(v, msg=""): return True if v else f"FAIL: {msg}"
-
-from app.web.testhelper import create_test_app
-app, logic, wc = create_test_app()
-client = app.test_client()
-
-# ... your tests here ...
-
-total = PASS + FAIL + SKIP
-print(f"\n{'='*60}")
-print(f"Results: {PASS} passed, {FAIL} failed, {SKIP} skipped out of {total}")
-print(f"{'='*60}")
-sys.exit(0 if FAIL == 0 else 1)
-```
+- **NSE/vulners**: ~6.8s per port × N ports — inherent to vulners.com API rate limiting. `--min-parallelism` applied but doesn't reduce total time.
+- **eyewitness**: Requires `/usr/bin/eyewitness` installed. Tested against live VM only.
+- **Qt6 GUI**: Not tested (replaced by Flask). `controller.py` must not be modified.
+- **Multi-project**: One active project at a time. Not tested.
+- **IPv6**: Code path exists, not tested.
