@@ -2491,17 +2491,19 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    /* Service right-click */
+    /* Service right-click (left panel) */
     $('services-body').addEventListener('contextmenu', function(e) {
         var tr = e.target.closest('tr');
         if (!tr) return;
         e.preventDefault();
         var svcName = tr.dataset.service || (tr.cells[0]||{}).textContent || '';
+        /* Use actual port from the row — was hardcoded to '80' (bug) */
+        var svcPort = tr.dataset.port || (tr.cells[1]||{}).textContent || '80';
         fetchJson('/api/menus/service?name=' + encodeURIComponent(svcName)).then(function(data) {
             showContextMenu(data.items, e.clientX, e.clientY, function(action) {
                 if (action.action === 'port-action' && L.selectedHostIp) {
                     postJson('/api/workspace/service-action', {
-                        targets: [[L.selectedHostIp, '80', 'tcp']],
+                        targets: [[L.selectedHostIp, svcPort, 'tcp']],
                         action_index: action.action_index || 0
                     }).then(function() { pollSnapshot(); });
                 }
@@ -2565,7 +2567,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                     return;
                 }
-                if (action.action === 'port-action' && L.selectedHostIp) {
+                if (action.action === 'open-browser' && L.selectedHostIp) {
+                    /* Open the service URL in a new browser tab */
+                    var proto = svcName.includes('https') ? 'https' : 'http';
+                    window.open(proto + '://' + L.selectedHostIp + ':' + port, '_blank');
+                } else if (action.action === 'take-screenshot' && L.selectedHostIp) {
+                    /* Trigger eyewitness screenshot via the screenshooter mechanism */
+                    postJson('/api/terminal/start', {
+                        label: 'screenshooter (' + port + '/tcp)',
+                        host_ip: L.selectedHostIp,
+                        command: 'xvfb-run -a /usr/bin/eyewitness --single http://' + L.selectedHostIp + ':' + port + ' --no-prompt --web --delay 5 -d /tmp/screenshot-' + L.selectedHostIp + '-' + port + '-dir',
+                    }).then(function() { pollSnapshot(); });
+                } else if (action.action === 'port-action' && L.selectedHostIp) {
                     postJson('/api/workspace/service-action', {
                         targets: [[L.selectedHostIp, port, protocol]],
                         action_index: action.action_index || 0

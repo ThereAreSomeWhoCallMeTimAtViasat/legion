@@ -1299,7 +1299,9 @@ class WebController:
         return {'action': action_name, 'ip': ip}
 
     def handleHostToolAction(self, ip, action_index):
-        """Run a host action from settings.hostActions by index."""
+        """Run a host action from settings.hostActions by index.
+        For nmap commands that lack -oA, appends -oA [outputfile] so
+        _capture_output can import the XML and populate the Services table."""
         from app.timing import getTimestamp
         if action_index < 0 or action_index >= len(self.settings.hostActions):
             return None
@@ -1310,6 +1312,10 @@ class WebController:
         runningFolder = self.logic.activeProject.properties.runningFolder
         outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{name}-{ip}")
         command = command.replace('[OUTPUT]', outputfile)
+        # If nmap and no -oA flag, append it so results get imported into DB
+        if 'nmap' in command.lower() and '-oA' not in command:
+            command = command + f' -oA {outputfile}'
+            log.info(f"[WebController] Added -oA {outputfile} to nmap host action")
         return self.runCommand(command=command, name=name, tabTitle=f'{action[0]}',
                                hostIp=ip, outputfile=outputfile)
 
