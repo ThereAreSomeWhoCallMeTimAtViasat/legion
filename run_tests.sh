@@ -72,10 +72,11 @@ SCRIPT_START=$(date +%s)
 _count_suites() {
     local n=0
     if $RUN_UNIT; then
-        n=$(( n + 23 ))
+        n=$(( n + 24 ))               # 24 unit files (includes test_export_and_hydra)
         $RUN_LIVE && n=$(( n - 1 ))   # test_terminal.py skipped; covered by T7
     fi
     $RUN_LIVE     && n=$(( n + 1 ))   # T7 live terminal
+    $RUN_LIVE     && n=$(( n + 1 ))   # Hydra live (SSH + MySQL)
     $RUN_SELENIUM && n=$(( n + 5 ))
     $RUN_LIVE     && n=$(( n + 1 ))   # live scan
     echo $n
@@ -130,17 +131,22 @@ cleanup() {
 trap cleanup EXIT
 trap 'spinner_stop; echo -e "\n${RED}Interrupted.${NC}"; exit 130' INT TERM
 
-# ── Free a TCP port (kill whatever process holds it) ─────────────────────────
+# ── Free a TCP port and wait until it is confirmed free ───────────────────────
 free_port() {
     local port="$1"
-    # fuser -k sends SIGKILL to whatever owns the port
+    # Kill whoever holds the port
     fuser -k "${port}/tcp" 2>/dev/null || true
-    # Also try lsof-based kill as fallback
     local pid
     pid=$(lsof -ti :"$port" 2>/dev/null | head -1 || true)
     [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
-    # Brief wait for OS to release the socket
-    sleep 0.5
+    # Wait (up to 10s) until ss confirms the port is no longer in LISTEN/CLOSE_WAIT
+    local i=0
+    while ss -tlnp 2>/dev/null | grep -q ":${port}\b" && [[ $i -lt 20 ]]; do
+        sleep 0.5
+        i=$(( i + 1 ))
+    done
+    # One extra breath so the OS finalises the socket table
+    sleep 0.3
 }
 
 # ── Initial prep ───────────────────────────────────────────────────────────────
@@ -294,7 +300,8 @@ if $RUN_UNIT; then
         tests/test_multihost_isolation.py \
         tests/test_terminal.py \
         tests/test_gap_implementations.py \
-        tests/test_qt6_gaps.py
+        tests/test_qt6_gaps.py \
+        tests/test_export_and_hydra.py
     do
         # test_terminal.py: T7 live tests skip without LEGION_TEST_TARGET.
         # When a live target is given, skip it here — the T7 section runs it
@@ -322,6 +329,25 @@ if $RUN_LIVE; then
         || print_result "$local_name" "fail" "$t7_p" "$t7_f" "$t7_s" "$(( $(date +%s) - t0 ))"
 fi
 
+if $RUN_LIVE; then
+    section "Live Hydra tests  (SSH + MySQL brute-force)"
+    hydra_name="test_export_and_hydra (Hydra live)"
+    t0=$(date +%s)
+    spinner_start "$hydra_name"
+    hydra_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
+                         LEGION_SSH_PORT=22 \
+                         LEGION_MYSQL_PORT=3306 \
+                    python3 tests/test_export_and_hydra.py 2>&1) || true
+    spinner_stop
+    hydra_line=$(echo "$hydra_out" | grep "^Results:" | tail -1)
+    hydra_p=$(_extract "$hydra_line" "passed")
+    hydra_f=$(_extract "$hydra_line" "failed")
+    hydra_s=$(_extract "$hydra_line" "skipped")
+    [[ "$hydra_f" -eq 0 ]] \
+        && print_result "$hydra_name" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$(( $(date +%s) - t0 ))" \
+        || print_result "$hydra_name" "fail" "$hydra_p" "$hydra_f" "$hydra_s" "$(( $(date +%s) - t0 ))"
+fi
+
 if $RUN_SELENIUM; then
     section "Selenium offline  (headless Firefox)"
     # Free each port before binding — a daemon Flask thread from a prior run
@@ -339,7 +365,34 @@ if $RUN_LIVE; then
     pkill -f "eyewitness" 2>/dev/null || true
     rm -rf /tmp/legion/legion-* 2>/dev/null || true
     echo -e "  target: ${BOLD}$LIVE_TARGET${NC}  (~10 min — 6 nmap stages + NSE + eyewitness)"
-    free_port 5099; run_pytest "test_selenium_ui (live scan)" tests/test_selenium_ui.py -m live
+    echo -e "  ${DIM}output is streamed live — each dot = 1 test passing${NC}"
+    echo ""
+
+    free_port 5099
+    _live_name="test_selenium_ui (live scan)"
+    _live_log=$(mktemp /tmp/legion-live-scan-XXXXXX.log)
+    _live_t0=$(date +%s)
+
+    # Run pytest with -v --tb=short so each test result prints immediately.
+    # tee streams to terminal AND saves to log for summary parsing.
+    sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
+        python3 -m pytest tests/test_selenium_ui.py -m live \
+        -v --tb=short --no-header 2>&1 | tee "$_live_log"
+    _live_rc=${PIPESTATUS[0]}
+
+    _live_secs=$(( $(date +%s) - _live_t0 ))
+    _live_sl=$(grep -E "passed|failed|error" "$_live_log" | tail -1 || true)
+    _live_p=$(_extract "$_live_sl" "passed")
+    _live_f=$(_extract "$_live_sl" "failed")
+    _live_s=$(echo "$_live_sl" | grep -oP '\d+(?= (skipped|deselected))' | head -1 || echo "0")
+    rm -f "$_live_log"
+
+    echo ""
+    if [[ "$_live_rc" -eq 0 ]]; then
+        print_result "$_live_name" "pass" "$_live_p" "$_live_f" "$_live_s" "$_live_secs"
+    else
+        print_result "$_live_name" "fail" "$_live_p" "$_live_f" "$_live_s" "$_live_secs"
+    fi
 fi
 
 # ── Final summary ──────────────────────────────────────────────────────────────
