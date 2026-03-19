@@ -1964,8 +1964,23 @@ document.addEventListener('DOMContentLoaded', function() {
     if (configSave) configSave.addEventListener('click', function() {
         var name = cfgGetCurrentName();
         postJson('/api/config/profiles/' + encodeURIComponent(name) + '/save', { text: cfgGetCurrentText() })
-        .then(function() { setText('config-status', 'Saved ' + name); })
-        .catch(function(err) { setText('config-status', 'Error: ' + err.message); });
+        .then(function(d) {
+            if (d && d.errors && d.errors.length > 0) {
+                /* Validation errors — show them (mirrors Qt6 showScrollableErrorDialog) */
+                setText('config-status', '❌ ' + d.errors.length + ' syntax error(s) — not saved');
+                alert('Cannot save — ' + d.errors.length + ' syntax error(s):\n\n' + d.errors.join('\n\n'));
+            } else {
+                setText('config-status', '✓ Saved ' + name);
+            }
+        })
+        .catch(function(err) {
+            /* HTTP 400 response includes errors array */
+            var msg = err.message || 'Save failed';
+            setText('config-status', '❌ ' + msg);
+            if (err.errors && err.errors.length > 0) {
+                alert('Cannot save — syntax errors:\n\n' + err.errors.join('\n\n'));
+            }
+        });
     });
 
     /* Activate */

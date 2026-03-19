@@ -963,6 +963,88 @@ def config_profiles():
             profiles.append({"name": name, "path": path, "active": name == active, "text": text})
     return jsonify({"profiles": profiles, "active": active})
 
+def _validate_legion_conf(config_text):
+    """Port of configDialog.py validateConfigSyntax + validateSettingNames.
+    Returns list of error strings. Empty list = valid."""
+    # Section element counts (Qt6: section_element_counts)
+    section_element_counts = {
+        'HostActions': 2, 'PortActions': 3, 'PortTerminalActions': 3, 'SchedulerSettings': 2,
+    }
+    # Fixed valid keys per section (Qt6: valid_settings)
+    fixed_section_keys = {
+        'GeneralSettings': {'log-directory','default-terminal','tool-output-black-background',
+                            'screenshooter-timeout','web-services','enable-scheduler',
+                            'enable-scheduler-on-import','max-fast-processes','max-slow-processes','tool-duplication'},
+        'BruteSettings': {'store-cleartext-passwords-on-exit','username-wordlist-path','password-wordlist-path',
+                          'default-username','default-password','services','no-username-services','no-password-services'},
+        'ToolSettings': {'nmap-path','hydra-path','cutycapt-path','texteditor-path','pyshodan-api-key'},
+        'StagedNmapSettings': {'stage1-ports','stage2-ports','stage3-ports','stage4-ports','stage5-ports','stage6-ports'},
+    }
+    dynamic_sections = {'HostActions','PortActions','PortTerminalActions','SchedulerSettings','MatchSettings','GUISettings'}
+    all_valid_sections = set(fixed_section_keys.keys()) | dynamic_sections
+
+    def parse_csv(value):
+        """Parse comma-separated values respecting quotes."""
+        elements, current, in_quotes, qchar = [], [], False, None
+        for ch in value:
+            if ch in ('"', "'"):
+                if not in_quotes: in_quotes, qchar = True, ch
+                elif ch == qchar: in_quotes, qchar = False, None
+                current.append(ch)
+            elif ch == ',' and not in_quotes:
+                elements.append(''.join(current).strip()); current = []
+            else:
+                current.append(ch)
+        last = ''.join(current).strip()
+        if last: elements.append(last)
+        return elements
+
+    errors = []
+    current_section = None
+    for line_num, line in enumerate(config_text.split('\n'), 1):
+        s = line.strip()
+        if not s or s.startswith('#') or s.startswith(';'):
+            continue
+        if s.startswith('['):
+            if not s.endswith(']'):
+                errors.append(f"Line {line_num}: Unclosed section header — {s}")
+                continue
+            current_section = s[1:-1].strip()
+            if not current_section:
+                errors.append(f"Line {line_num}: Empty section name []")
+            elif current_section not in all_valid_sections:
+                errors.append(f"Line {line_num}: Unknown section [{current_section}] — "
+                               f"valid: {', '.join(sorted(all_valid_sections))}")
+            continue
+        if '=' not in s:
+            errors.append(f"Line {line_num}: Missing '=' — {s}")
+            continue
+        key, value = s[:s.index('=')].strip(), s[s.index('=')+1:].strip()
+        if not key:
+            errors.append(f"Line {line_num}: Empty key before '='")
+            continue
+        if current_section is None:
+            errors.append(f"Line {line_num}: Key=value outside any section — {s}")
+            continue
+        # Quote balance check
+        if value.count('"') % 2 != 0:
+            errors.append(f"Line {line_num}: Unbalanced double quotes in key '{key}'")
+        if value.count("'") % 2 != 0:
+            errors.append(f"Line {line_num}: Unbalanced single quotes in key '{key}'")
+        # Fixed section key validation
+        if current_section in fixed_section_keys and key not in fixed_section_keys[current_section]:
+            errors.append(f"Line {line_num}: Unknown setting '{key}' in [{current_section}] — "
+                           f"valid: {', '.join(sorted(fixed_section_keys[current_section]))}")
+        # Element count validation for dynamic sections
+        if current_section in section_element_counts:
+            expected = section_element_counts[current_section]
+            actual = len(parse_csv(value))
+            if actual != expected:
+                errors.append(f"Line {line_num}: [{current_section}] key '{key}' has {actual} "
+                               f"comma-separated elements, expected {expected}")
+    return errors
+
+
 @web_bp.post("/api/config/profiles/<name>/save")
 def config_save(name):
     _ensure_profiles()
@@ -970,6 +1052,12 @@ def config_save(name):
     if not isinstance(text, str): return _err("text required")
     path = os.path.join(_PROFILES_DIR, f'{name}.conf')
     if not os.path.exists(path): return _err(f"Profile '{name}' not found", 404)
+
+    # Validate syntax before saving (Qt6: configDialog.py validateConfigSyntax + validateSettingNames)
+    errors = _validate_legion_conf(text)
+    if errors:
+        return jsonify({"status": "error", "errors": errors}), 400
+
     open(path, 'w', encoding='utf-8').write(text)
     return jsonify({"status": "ok"})
 

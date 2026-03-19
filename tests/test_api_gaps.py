@@ -507,4 +507,148 @@ total = PASS + FAIL + SKIP
 print(f"\n{'='*60}")
 print(f"Results: {PASS} passed, {FAIL} failed, {SKIP} skipped out of {total}")
 print(f"{'='*60}")
+# ══════════════════════════════════════════════════════════════════════════════
+print("\n" + "="*60)
+print("P7: legion.conf syntax validation on config save")
+print("="*60 + "\n")
+
+# Use the working profile path for these tests
+import shutil as _shutil
+_TEST_PROFILE_NAME = 'syntax-test-profile'
+
+def _make_test_profile(text):
+    """Create a temp profile for syntax testing."""
+    import os as _os
+    profiles_dir = _os.path.expanduser('~/.local/share/legion/profiles')
+    _os.makedirs(profiles_dir, exist_ok=True)
+    path = _os.path.join(profiles_dir, f'{_TEST_PROFILE_NAME}.conf')
+    with open(path, 'w') as f:
+        f.write('[MatchSettings]\nglobal-positive=open\n')  # minimal valid seed
+    return path
+
+def _cleanup_test_profile():
+    import os as _os
+    path = _os.path.expanduser(f'~/.local/share/legion/profiles/{_TEST_PROFILE_NAME}.conf')
+    if _os.path.exists(path):
+        _os.unlink(path)
+
+_VALID_CONFIG = """[GeneralSettings]
+enable-scheduler=True
+enable-scheduler-on-import=False
+max-fast-processes=5
+max-slow-processes=5
+
+[HostActions]
+nmap-fast=Run nmap fast, nmap -Pn -F [IP]
+
+[PortActions]
+banner=Grab banner, bash -c "echo | nc [IP] [PORT]", ftp
+
+[MatchSettings]
+global-positive=open,vulnerable
+global-negative=not found
+"""
+
+def test_p28_valid_config_saves_ok():
+    """Valid legion.conf syntax must save without errors."""
+    _make_test_profile('')
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': _VALID_CONFIG})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 200 and data.get('status') == 'ok',
+              f"Valid config rejected: status={r.status_code} body={data}")
+test("P7.1: valid config saves successfully", test_p28_valid_config_saves_ok)
+
+def test_p29_unclosed_quote_rejected():
+    """Config with unclosed quote must be rejected with 400."""
+    _make_test_profile('')
+    bad = "[HostActions]\ntest=label with unclosed \"quote, nmap [IP]\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 400 and data.get('errors'),
+              f"Unclosed quote should be rejected: status={r.status_code}")
+test("P7.2: unclosed quote in value rejected with 400", test_p29_unclosed_quote_rejected)
+
+def test_p30_wrong_element_count_rejected():
+    """PortActions entry with wrong comma-separated count must be rejected."""
+    _make_test_profile('')
+    bad = "[PortActions]\ntest=only one element\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 400 and data.get('errors'),
+              f"Wrong element count should be rejected: status={r.status_code}")
+test("P7.3: PortActions entry with wrong element count rejected", test_p30_wrong_element_count_rejected)
+
+def test_p31_unknown_section_rejected():
+    """Config with unknown section name must be rejected."""
+    _make_test_profile('')
+    bad = "[UnknownSection]\nkey=value\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 400 and data.get('errors'),
+              f"Unknown section should be rejected: status={r.status_code}")
+test("P7.4: unknown section name rejected", test_p31_unknown_section_rejected)
+
+def test_p32_unclosed_section_header_rejected():
+    """Config with unclosed section header [NoClose must be rejected."""
+    _make_test_profile('')
+    bad = "[NoClose\nkey=value\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 400 and data.get('errors'),
+              f"Unclosed section header should be rejected: status={r.status_code}")
+test("P7.5: unclosed section header rejected", test_p32_unclosed_section_header_rejected)
+
+def test_p33_missing_equals_rejected():
+    """Config line without = sign must be rejected."""
+    _make_test_profile('')
+    bad = "[GeneralSettings]\nthis line has no equals sign\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 400 and data.get('errors'),
+              f"Line without = should be rejected: status={r.status_code}")
+test("P7.6: line without '=' sign rejected", test_p33_missing_equals_rejected)
+
+def test_p34_unknown_key_in_general_settings_rejected():
+    """Unknown key in GeneralSettings must be rejected (typo check)."""
+    _make_test_profile('')
+    bad = "[GeneralSettings]\ntypo-setting=True\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    return ok(r.status_code == 400 and data.get('errors'),
+              f"Unknown key in GeneralSettings should be rejected: status={r.status_code}")
+test("P7.7: unknown key in [GeneralSettings] rejected (typo protection)", test_p34_unknown_key_in_general_settings_rejected)
+
+def test_p35_error_response_contains_line_numbers():
+    """Validation errors must include line numbers for user guidance."""
+    _make_test_profile('')
+    bad = "[PortActions]\nbad=one element only\n"
+    r = client.post(f'/api/config/profiles/{_TEST_PROFILE_NAME}/save',
+                    json={'text': bad})
+    data = r.get_json()
+    _cleanup_test_profile()
+    errors = data.get('errors', [])
+    return ok(errors and any('Line' in e for e in errors),
+              f"Errors should contain line numbers: {errors}")
+test("P7.8: validation errors include line numbers", test_p35_error_response_contains_line_numbers)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+total = PASS + FAIL + SKIP
+print(f"\n{'='*60}")
+print(f"Results: {PASS} passed, {FAIL} failed, {SKIP} skipped out of {total}")
+print(f"{'='*60}")
 sys.exit(0 if FAIL == 0 else 1)
