@@ -1284,36 +1284,6 @@ function initInteractions() {
         }
     });
 
-    /* ── Dynamic tab right-click → Save Output (Qt6: _showToolTabContextMenu) ── */
-    $('right-tab-bar').addEventListener('contextmenu', function(e) {
-        var btn = e.target.closest('.dynamic-tab');
-        if (!btn) return;
-        e.preventDefault();
-        var tabId = btn.dataset.tab;
-        var procId = tabId ? tabId.replace('dyntab-', '') : null;
-        var tabLabel = (btn.textContent || 'output').replace(/×$/, '').trim();
-        showContextMenu(
-            [{label: 'Save Output', action: 'save-output'},
-             {separator: true},
-             {label: 'Close Tab', action: 'close-tab'}],
-            e.clientX, e.clientY,
-            function(action) {
-                if (action.action === 'save-output') {
-                    var outputEl = $('dyn-output-' + procId);
-                    var text = outputEl ? (outputEl.innerText || outputEl.textContent) : '';
-                    var blob = new Blob([text], {type: 'text/plain'});
-                    var url = URL.createObjectURL(blob);
-                    var a = document.createElement('a');
-                    a.href = url; a.download = tabLabel.replace(/[\/\\:]/g,'_') + '.txt';
-                    document.body.appendChild(a); a.click();
-                    document.body.removeChild(a); URL.revokeObjectURL(url);
-                } else if (action.action === 'close-tab') {
-                    var x = btn.querySelector('.close-x');
-                    if (x) x.click();
-                }
-            }
-        );
-    });
 
     /* ── Add hosts overlay click ── */
     var overlay = $('add-hosts-overlay');
@@ -2189,6 +2159,38 @@ document.addEventListener('DOMContentLoaded', function() {
         document.body.appendChild(menu);
         document.addEventListener('click', function rm() { menu.remove(); document.removeEventListener('click', rm); }, {once: true});
     }
+
+
+    /* ── Dynamic tab right-click → Save Output (Qt6: _showToolTabContextMenu) ── */
+    $('right-tab-bar').addEventListener('contextmenu', function(e) {
+        var btn = e.target.closest('.dynamic-tab');
+        if (!btn) return;
+        e.preventDefault();
+        var tabId = btn.dataset.tab;
+        var procId = tabId ? tabId.replace('dyntab-', '') : null;
+        var tabLabel = (btn.textContent || 'output').replace(/×$/, '').trim();
+        showContextMenu(
+            [{label: 'Save Output', action: 'save-output'},
+             {separator: true},
+             {label: 'Close Tab', action: 'close-tab'}],
+            e.clientX, e.clientY,
+            function(action) {
+                if (action.action === 'save-output') {
+                    var outputEl = $('dyn-output-' + procId);
+                    var text = outputEl ? (outputEl.innerText || outputEl.textContent) : '';
+                    var blob = new Blob([text], {type: 'text/plain'});
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url; a.download = tabLabel.replace(/[\/\:]/g,'_') + '.txt';
+                    document.body.appendChild(a); a.click();
+                    document.body.removeChild(a); URL.revokeObjectURL(url);
+                } else if (action.action === 'close-tab') {
+                    var x = btn.querySelector('.close-x');
+                    if (x) x.click();
+                }
+            }
+        );
+    });
 
     /* Host right-click */
     $('hosts-body').addEventListener('contextmenu', function(e) {

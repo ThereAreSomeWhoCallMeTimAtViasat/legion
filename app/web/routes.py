@@ -509,6 +509,26 @@ def nmap_scan():
     )
     return jsonify({"status": "ok", "result": result})
 
+
+@web_bp.post("/api/nmap/import-xml")
+def nmap_import_xml():
+    """Import an nmap XML file via the UI modal (legion.js → import-nmap-modal)."""
+    from app.importers.nmap_import import import_nmap_xml
+    logic = _logic()
+    payload = request.get_json(silent=True) or {}
+    path = str(payload.get("path", "")).strip()
+    if not path:
+        return _err("path required")
+    if not os.path.isfile(path):
+        return _err(f"file not found: {path}")
+    run_actions = bool(payload.get("run_actions", False))
+    result = import_nmap_xml(project=logic.activeProject, xml_path=path, output="")
+    hosts = result.get("hosts", 0) if isinstance(result, dict) else 0
+    ports = result.get("ports", 0) if isinstance(result, dict) else 0
+    if run_actions:
+        _wc().scheduler(isNmapImport=True)
+    return jsonify({"status": "ok", "hosts": hosts, "ports": ports})
+
 @web_bp.post("/api/workspace/tools/run")
 def tool_run():
     wc = _wc()
