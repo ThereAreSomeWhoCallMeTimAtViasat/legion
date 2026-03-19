@@ -7,97 +7,144 @@
 
 ## Where the terminal appears
 
-The terminal goes **inside `#process-output-inline`** — the upper output panel
-that already shows process output when you click a process row. No modal,
-no popup, no separate panel.
+The terminal replaces `#process-output-inline` — the upper output panel that
+shows when you click a process row in the processes table. No modal, no popup.
 
-Current behaviour:
-- Click any process row → `#process-output-inline` shows plain stdout text
+The panel holds two children, only one visible at a time:
+- `#plain-output` — current plain text div (nmap, nikto, hydra, etc.)
+- `#terminal-output` — xterm.js mounts here for interactive processes
 
-New behaviour:
-- Click a regular process (nmap, nikto, hydra) → plain text as before
-- Click a terminal process (bash, msfconsole, `[term]` action) → the same
-  area shows an xterm.js terminal you can type into directly
-
-The `#process-output-inline` div becomes a container that holds either:
-- `#plain-output` div — current plain text display (default)
-- `#terminal-output` div — xterm.js mounts here for interactive processes
-
-Both children exist in the DOM at all times; JS shows one and hides the other
-based on the selected process type.
+`loadProcessOutput(processId)` already fires on every process row click.
+It checks process status:
+- `Interactive` → show `#terminal-output`, connect xterm.js to the PTY session
+- anything else → show `#plain-output`, load text as today
 
 ---
 
-## When the terminal fires (from Qt6)
+## When the interactive terminal fires
 
-**Only** for these three cases:
+**Trigger condition (same as Qt6):** the command being run contains
+`'bash'` or `'msfconsole'` in it (case-insensitive), OR the action
+comes from `[PortTerminalActions]` with a `[term]` marker.
 
-### 1. Port right-click `[term]` actions
-Commands in `[PortTerminalActions]` with `[term]` marker:
+### Group 1 — PortActions with bash or msfconsole in command
+
+These come from port right-click tool actions. Legion runs them through the
+existing `handlePortAction` path. If the resolved command contains
+'bash' or 'msfconsole', it gets a PTY terminal instead of plain capture.
+
+**Core msfconsole use case (why this feature exists):**
 ```
-ssh, mysql, netcat, rdesktop, psql, msfconsole, bash, telnet, rlogin...
+vsftpd234-Meta = Run metasploit on vsftpd,
+  "msfconsole -q -x 'use exploit/unix/ftp/vsftpd_234_backdoor; setg RHOSTS [IP]; run -j;'",
+  ftp
 ```
-These are fully interactive sessions (REPL, shell). Qt6 opened an external
-xterm window. Flask: creates a PTY session, adds a process row, clicking
-that row shows xterm.js in the upper output panel.
+Flow:
+1. User right-clicks an FTP port → "Run metasploit on vsftpd"
+2. PTY starts bash, process row appears as "Run metasploit on vsftpd" with status Interactive
+3. After 500ms bash receives: `msfconsole -q -x 'use exploit/...; setg RHOSTS 192.168.85.11; run -j;'\n`
+4. msfconsole starts, sets up the exploit, runs it as a background job (`-j`)
+5. msfconsole stays open at its `msf6 exploit(...) >` prompt
+6. xterm.js in the upper panel shows all of this
+7. User types: `sessions`, `sessions -i 1`, `whoami`, etc.
 
-### 2. "Open Terminal" from host right-click
-Plain bash session for the selected host's IP. Creates a process row with
-name "Terminal - <ip>". Clicking it shows xterm.js in the upper panel.
+Other msfconsole examples:
+```
+ccproxy-ftpMeta = Run metasploit on ccproxy,
+  "msfconsole -q -x 'use unix/ftp/proftpd_133c_backdoor; ...; run -j;'", ccproxy-ftp
 
-### 3. msfconsole / bash commands
-Any command containing 'bash' or 'msfconsole' in the name. When you click
-that process row, the upper panel switches to xterm.js.
+oracle-sid = Oracle SID enumeration,
+  "msfconsole -q -n -L -x \"... exit -y\"", oracle-tns   ← auto-exits
+```
 
-**Everything else stays exactly as is** — stdin=DEVNULL, plain text output.
+bash examples (run and exit, output visible in terminal):
+```
+banner       = Grab banner, bash -c "echo "" | nc -v -n -w1 [IP] [PORT]"
+smb-null     = Check for null sessions, bash -c "echo 'srvinfo' | rpcclient [IP] -U%"
+smbenum      = Run smbenum, bash ./scripts/smbenum.sh [IP]
+snmp-brute   = Bruteforce community strings, bash -c "medusa -h [IP] ..."
+```
+
+### Group 2 — PortTerminalActions with `[term]` marker
+
+These are explicitly interactive sessions:
+```
+ssh    = [term] ssh root@[IP] -p [PORT]           ← SSH session
+mysql  = [term] mysql -u root -h [IP] --port=[PORT] -p
+netcat = [term] nc -v [IP] [PORT]
+psql   = [term] psql -h [IP] -p [PORT] -U postgres
+rdesktop, telnet, rpcclient, mssql, ...
+```
+
+### Group 3 — "Open Terminal" from host right-click
+
+Plain bash session for the selected host. No initial command — user gets a
+bash prompt immediately.
+
+---
+
+## Mechanism: bash PTY + command dispatch (mirrors Qt6 exactly)
+
+```python
+# _TerminalSession.__init__:
+master_fd, slave_fd = pty.openpty()
+proc = subprocess.Popen(['bash', '--login'],
+                        stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                        preexec_fn=os.setsid, env={...TERM: xterm-256color})
+os.close(slave_fd)
+
+# After 500ms (if command provided):
+os.write(master_fd, (resolved_command + "\n").encode())
+# e.g.: msfconsole -q -x 'use exploit/...; run -j;'\n
+#   or: ssh root@192.168.85.11 -p 22\n
+#   or: mysql -u root -h 192.168.85.11 --port=3306 -p\n
+```
+
+- Bash always hosts the PTY (proper environment, signal handling, job control)
+- The tool command runs inside bash
+- When the command exits (or for msfconsole: when user types `exit`), bash prompt returns
+- User can run further commands in the resulting bash shell
 
 ---
 
 ## Architecture
 
-### Backend
+### Backend routes
 
 ```
-_TerminalSession:
-  master_fd  — PTY master (write input here, read output from here)
-  proc       — subprocess.Popen(['bash'] or [tool command])
-  buffer     — bytearray of all output so far
-  session_id — UUID
-
-_terminal_sessions: dict[str, _TerminalSession]
-
-New routes:
-  POST /api/terminal/start        {command, host_ip, port}  → {session_id, process_id}
-  POST /api/terminal/<id>/input   {data}                    → 200
-  GET  /api/terminal/<id>/output  ?offset=N                 → {data, alive, offset}
-  POST /api/terminal/<id>/resize  {rows, cols}              → 200
-  DELETE /api/terminal/<id>                                 → 200
+POST   /api/terminal/start        {command, label, host_ip}  → {session_id, process_id}
+POST   /api/terminal/<id>/input   {data}                     → 200
+GET    /api/terminal/<id>/output  ?offset=N                  → {data, alive, offset}
+POST   /api/terminal/<id>/resize  {rows, cols}               → 200
+DELETE /api/terminal/<id>                                    → 200
 ```
 
-`/api/terminal/start` also inserts a process row into the DB (with
-`status='Interactive'`) so the process appears in the processes table and
-clicking it selects the xterm.js terminal.
+`/api/terminal/start`:
+- Creates `_TerminalSession` (bash PTY)
+- Inserts a process row with `status='Interactive'` and `name=label`
+- Stores `session_id` on the process record so the snapshot returns it
+- After 500ms, writes `command\n` to bash stdin (if command provided)
+- Returns `{session_id, process_id}`
 
-### Frontend
+### Snapshot change
 
-`#process-output-inline` becomes:
-```html
-<div id="process-output-inline" style="flex:1;min-width:0">
-  <div id="plain-output" class="tool-output-area ansi">Click a process...</div>
-  <div id="terminal-output" style="display:none;flex:1;min-height:0"></div>
-</div>
+Each process in the snapshot gets a `session_id` field (null for regular processes).
+JS uses this to know which terminal session to connect when that process row is clicked.
+
+### What triggers interactive mode
+
+In `handlePortAction` (or the equivalent service action route):
+```python
+command = resolved_command   # e.g. "msfconsole -q -x '...'"
+is_interactive = ('bash' in command.lower() or 'msfconsole' in command.lower())
+
+if is_interactive:
+    # start PTY terminal session, return session_id
+else:
+    # existing Popen path, plain output capture
 ```
 
-`loadProcessOutput(processId)` already fires when a process row is clicked.
-It will check if the process is Interactive:
-- If yes: hide `#plain-output`, show `#terminal-output`, mount/connect xterm.js
-- If no: hide `#terminal-output`, show `#plain-output`, load text as now
-
-xterm.js polls `/api/terminal/<session_id>/output` every 50ms and writes
-characters to the terminal. User keystrokes POST to `/api/terminal/<session_id>/input`.
-
-The `session_id` is stored on the process record (or returned alongside the
-snapshot process data) so the JS knows which terminal session to connect to.
+For `[term]` PortTerminalActions: always interactive (the `[term]` marker IS the flag).
 
 ---
 
@@ -109,34 +156,37 @@ snapshot process data) so the JS knows which terminal session to connect to.
 
 | Test | Verifies |
 |------|---------|
-| `test_start_returns_session_id_and_process_id` | POST /api/terminal/start → 200, body has both `session_id` and `process_id` |
-| `test_start_creates_process_row_in_snapshot` | After start, `/api/snapshot` processes list includes the terminal process with status 'Interactive' |
-| `test_output_has_content_after_start` | GET output at offset 0 within 2s → non-empty (bash prompt) |
-| `test_output_offset_no_duplication` | Read at offset=0, then offset=len(first) → no repeated bytes |
-| `test_input_echo` | Write `echo test123\n` → GET output contains 'test123' |
-| `test_input_ctrl_c` | Write `\x03` → session still alive, prompt returns |
+| `test_start_returns_session_and_process_id` | POST start → 200, body has `session_id` and `process_id` |
+| `test_start_creates_interactive_process_in_snapshot` | `/api/snapshot` includes process with status='Interactive' |
+| `test_start_session_id_in_snapshot_process` | The Interactive process in snapshot has `session_id` matching returned value |
+| `test_output_has_bash_prompt` | GET output offset=0 within 2s → contains `$` or `#` (bash prompt) |
+| `test_output_offset_no_duplication` | Read at offset=0 then offset=len → no repeated bytes |
+| `test_command_executed_in_terminal` | Start with command `echo vsftpd_test` → output contains 'vsftpd_test' |
+| `test_input_interactive` | Write `echo interactive_input\n` → output contains 'interactive_input' |
+| `test_input_ctrl_c` | Write `\x03` to `sleep 30` started via command → session still alive |
 | `test_resize_accepted` | POST resize {rows:30, cols:120} → 200 |
-| `test_delete_terminates_process` | DELETE → proc.poll() is not None |
-| `test_delete_removes_from_snapshot` | After DELETE, terminal process gone from snapshot |
-| `test_nonexistent_session_404` | GET/POST/DELETE unknown id → 404 |
-| `test_two_sessions_independent` | Two sessions, different echo outputs don't mix |
-| `test_bash_version_in_output` | Write `echo $BASH_VERSION\n` → output contains version string |
+| `test_delete_terminates` | DELETE → proc.poll() not None |
+| `test_delete_removes_from_snapshot` | After DELETE, Interactive process gone from snapshot |
+| `test_nonexistent_404` | GET/POST/DELETE unknown id → 404 |
+| `test_two_sessions_independent` | Two sessions, commands echo different strings, outputs don't mix |
 
-#### T2: Port `[term]` action wiring
-
-| Test | Verifies |
-|------|---------|
-| `test_term_action_starts_terminal_session` | Service action with `[term]` command index → response has `session_id` |
-| `test_non_term_action_has_no_session_id` | Service action without `[term]` → response has `process_id`, no `session_id` |
-| `test_open_terminal_host_action` | POST /api/workspace/hosts/<id>/action with action='open-terminal' → starts bash terminal session |
-
-#### T3: Regression
+#### T2: Port action interactive detection
 
 | Test | Verifies |
 |------|---------|
-| `test_echo_process_unchanged` | echo command: stdout captured, status → Finished, no terminal session created |
-| `test_nmap_scan_completes` | nmap stage1: XML import succeeds, no terminal session created |
-| `test_snapshot_regular_process_no_session_id` | Regular process in snapshot has no `session_id` field |
+| `test_msfconsole_command_starts_terminal` | Service action with msfconsole command → response has `session_id`, process status=Interactive |
+| `test_bash_command_starts_terminal` | Service action with `bash -c "..."` → same |
+| `test_plain_command_no_terminal` | Service action with `nmap -sV [IP]` → response has `process_id`, NO `session_id` |
+| `test_term_action_starts_terminal` | PortTerminalAction (ssh, netcat, etc.) → response has `session_id` |
+| `test_open_terminal_host_action` | POST host action 'open-terminal' → starts bash session, returns `session_id` |
+
+#### T3: Regression — regular processes unaffected
+
+| Test | Verifies |
+|------|---------|
+| `test_echo_process_still_plain` | echo command → stdout captured as text, status=Finished, no session_id |
+| `test_nmap_still_completes` | nmap stage 1 → XML imported, processes Finished, no session_id in snapshot |
+| `test_snapshot_no_session_id_for_regular` | Regular process in snapshot has `session_id: null` |
 
 ---
 
@@ -144,85 +194,80 @@ snapshot process data) so the JS knows which terminal session to connect to.
 
 Module-scoped server on port 5095. Seed one host.
 
-#### S1: Upper output panel switches between plain and terminal
+#### S1: Upper panel switches correctly
 
 | Test | Verifies |
 |------|---------|
-| `test_regular_process_shows_plain_output` | Click echo process row → `#plain-output` visible, `#terminal-output` hidden |
-| `test_terminal_process_shows_xterm` | Click Interactive process row → `#terminal-output` visible, `#plain-output` hidden |
-| `test_switch_back_to_plain` | Click regular process after terminal → `#plain-output` back |
-| `test_xterm_canvas_present` | When terminal selected → `<canvas>` element inside `#terminal-output` |
-| `test_xterm_has_visible_content` | After 2s, xterm.js canvas has non-zero pixel content |
+| `test_regular_process_shows_plain` | Click echo process → `#plain-output` visible, `#terminal-output` hidden |
+| `test_interactive_process_shows_xterm` | Click Interactive process → `#terminal-output` visible, `#plain-output` hidden |
+| `test_xterm_canvas_present` | `<canvas>` element inside `#terminal-output` when terminal shown |
+| `test_switch_back_to_plain` | Click echo process after terminal → `#plain-output` back |
 
-#### S2: "Open Terminal" from host right-click
-
-| Test | Verifies |
-|------|---------|
-| `test_open_terminal_in_host_menu` | Right-click host → "Open Terminal" item in context menu |
-| `test_open_terminal_creates_process_row` | Click "Open Terminal" → new row in processes table with name containing 'Terminal' |
-| `test_open_terminal_selects_xterm` | Clicking the Terminal process row → `#terminal-output` visible with xterm canvas |
-
-#### S3: Terminal correctly identified vs regular process
+#### S2: msfconsole/bash commands get terminal (unit-level, no real msfconsole needed)
 
 | Test | Verifies |
 |------|---------|
-| `test_bash_process_uses_xterm` | `wc.runCommand('bash', ...)` → process row click shows xterm, not plain text |
-| `test_echo_process_uses_plain` | `wc.runCommand('echo test', ...)` → process row click shows plain text, not xterm |
+| `test_bash_cmd_process_row_shows_xterm` | `wc.runCommand('bash -c "sleep 5"', ...)` → clicking row shows xterm.js, not plain text |
+| `test_echo_process_row_shows_plain` | `wc.runCommand('echo test', ...)` → clicking row shows plain text |
+
+#### S3: "Open Terminal" from host right-click
+
+| Test | Verifies |
+|------|---------|
+| `test_open_terminal_in_host_menu` | Right-click host → "Open Terminal" in menu |
+| `test_open_terminal_creates_interactive_row` | Click "Open Terminal" → process row with status Interactive appears |
+| `test_open_terminal_row_shows_xterm` | Click the Terminal process row → `#terminal-output` visible with canvas |
 
 ---
 
 ### Category 3 — Manual tests
 
-| Item | Pass criteria |
-|------|---------------|
-| Tab completion | Type `ls /us`, Tab → `/usr/` completes |
-| Arrow key history | Run command, press ↑ → previous command appears |
-| Ctrl+C interrupt | `sleep 100`, Ctrl+C → `^C` shown, new prompt |
-| Ctrl+D logout | Empty prompt, Ctrl+D → session closes |
-| SSH session | Port right-click SSH → "Open with ssh client" → SSH prompt in upper panel |
-| msfconsole | msfconsole [term] action → msfconsole banner in upper panel |
-| Colour output | `ls --color` → ANSI colours rendered correctly |
-| Paste | Ctrl+V in terminal → clipboard text appears |
-| Scroll | Long output → can scroll up through history |
-| Resize | Resize browser → xterm.js reflows |
+| Scenario | Steps | Pass criteria |
+|----------|-------|---------------|
+| **vsftpd msfconsole** | Right-click FTP port → "Run metasploit on vsftpd" | msfconsole starts, exploit runs as job, `msf6 >` prompt appears in upper panel |
+| **msfconsole interaction** | After exploit, type `sessions` | Session list shown in xterm.js |
+| **SSH session** | Right-click SSH port → "Open with ssh client" | SSH prompt appears, can log in and run commands |
+| **mysql** | Right-click mysql port → "Open with mysql client" | mysql `>` prompt appears, can run SQL |
+| **netcat** | Right-click port → "Open with netcat" | nc connects, can send/receive data |
+| **Open Terminal** | Right-click host → "Open Terminal" | Bash prompt, can run any command |
+| **Tab completion** | Type `ls /us` + Tab | `/usr/` completes |
+| **Arrow key history** | Run command, press ↑ | Previous command appears |
+| **Ctrl+C** | Start `sleep 100`, press Ctrl+C | `^C` + new prompt |
+| **Colour output** | `ls --color` | ANSI colours rendered |
 
 ---
 
-## Implementation Steps (test-first every step)
+## Implementation Steps (test-first, every step)
 
-### Step 1 — Backend: terminal session manager + routes
-Write T1.x tests first (all failing). Implement `_TerminalSession` + routes.
-All T1.x pass before Step 2.
+### Step 1 — Backend: `_TerminalSession` + routes
+Write T1.x tests (all failing). Implement session manager + API routes.
+**All T1.x pass before Step 2.**
 
-### Step 2 — Backend: wire [term] actions + host "Open Terminal"
-Write T2.x + T3.x tests first. Modify service action route and host action handler.
-All T2.x + T3.x pass before Step 3.
+### Step 2 — Backend: interactive detection in port/host actions
+Write T2.x + T3.x tests (all failing). Modify `handlePortAction` route and host action handler.
+**All T2.x + T3.x pass before Step 3.**
 
-### Step 3 — Full existing regression check
-Run all 756 tests. Zero regressions before touching any frontend.
+### Step 3 — Existing regression check
+Run all 756 tests. **Zero failures before touching any frontend.**
 
-### Step 4 — Frontend: split `#process-output-inline` into plain + terminal containers
-Write S1.x Selenium tests first (all failing).
-Change HTML: add `#plain-output` and `#terminal-output` inside `#process-output-inline`.
-Add xterm.js CDN to `base.html`.
-Modify `loadProcessOutput` in JS: check process status, show correct container, mount xterm.js.
-All S1.x pass.
+### Step 4 — Frontend: split output panel + xterm.js
+Write S1.x Selenium tests (all failing).
+- HTML: split `#process-output-inline` into `#plain-output` + `#terminal-output`
+- `base.html`: add xterm.js CDN
+- JS: `loadProcessOutput` detects Interactive, mounts xterm.js, polls output, POSTs input
+**All S1.x + S2.x pass.**
 
-### Step 5 — Frontend: "Open Terminal" from host right-click
-Write S2.x tests first. Wire host right-click "Open Terminal" action.
-All S2.x pass.
+### Step 5 — Frontend: "Open Terminal" host right-click
+Write S3.x tests. Wire host right-click "Open Terminal" → start session → process row.
+**All S3.x pass.**
 
-### Step 6 — Frontend: bash/msfconsole process detection
-Write S3.x tests. JS detects Interactive status and routes to xterm.js.
-S3.x pass.
-
-### Step 7 — Version bump + full regression + commit
+### Step 6 — Full regression + version bump + commit
 
 ---
 
 ## What does NOT change
 
-- `stdin=subprocess.DEVNULL` stays for all non-interactive processes
-- `#process-output-inline` still works for regular processes (text display)
-- All dynamic tool tabs in the right panel: unchanged
-- All 756 existing tests pass throughout every step
+- `stdin=subprocess.DEVNULL` for all non-interactive tool processes
+- `#process-output-inline` plain text mode for nmap, nikto, hydra, eyewitness, etc.
+- Dynamic tool tabs in the right panel: completely unchanged
+- All 756 existing tests pass at every step
