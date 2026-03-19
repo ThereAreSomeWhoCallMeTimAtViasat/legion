@@ -21,9 +21,15 @@ function _showNotesDisplay(text) {
     disp.style.display = '';
     ta.style.display = 'none';
 }
+/* Tracks which host was being edited when notes edit mode started.
+   Prevents the blur handler from saving to the wrong host when the user
+   clicks a different host row (L.selectedHostId updates before blur fires). */
+var _noteHostId = null;
+
 function _showNotesEdit(text) {
     var disp = $('notes-display'), ta = $('notes-text');
     if (!disp || !ta) return;
+    _noteHostId = L.selectedHostId;   /* snapshot host ID at edit-start */
     ta.value = text !== undefined ? text : (ta.value || '');
     disp.style.display = 'none';
     ta.style.display = '';
@@ -1815,10 +1821,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (notesDisp) notesDisp.addEventListener('click', function() {
         _showNotesEdit(notesDisp.innerText);
     });
-    /* Textarea blur → save, switch back to styled display */
+    /* Textarea blur → save to the host that was being edited (_noteHostId),
+       NOT L.selectedHostId which may already point to a newly-clicked host. */
     if (notesTa) notesTa.addEventListener('blur', function() {
-        if (!L.selectedHostId) { _showNotesDisplay(notesTa.value); return; }
-        postJson('/api/workspace/hosts/' + L.selectedHostId + '/note', { note: notesTa.value });
+        var saveId = _noteHostId || L.selectedHostId;
+        _noteHostId = null;
+        if (!saveId) { _showNotesDisplay(notesTa.value); return; }
+        postJson('/api/workspace/hosts/' + saveId + '/note', { note: notesTa.value });
         _showNotesDisplay(notesTa.value);
     });
 

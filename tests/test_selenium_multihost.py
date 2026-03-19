@@ -341,68 +341,61 @@ class TestNotesIsolation:
         assert NOTE_B not in notes, \
             f"Host B's note '{NOTE_B}' leaked into host A's Notes tab: {notes!r}"
 
-    def test_write_note_on_a_doesnt_change_b(self, mh_server, mh_driver):
-        """Note saved to host A via API must not appear in host B's Notes tab.
+    def test_write_note_on_a_doesnt_change_b(self, mh_driver):
+        """Type a note on host A then click host B — B's Notes tab must not show A's text.
 
-        NOTE: The UI blur handler has a known race condition — when the user
-        clicks host B's row, L.selectedHostId updates to B before the textarea
-        blur fires, so the note gets saved to B instead of A. This test uses
-        the API directly to write the note (which correctly isolates to A),
-        then verifies isolation via the UI.
+        This tests the _noteHostId fix: the blur handler now snapshots the host ID
+        when editing starts, so clicking a different host row cannot redirect the save.
         """
-        import urllib.request, json as _json
-        server_url = mh_server['url']
+        select_host(mh_driver, IP_A)
+        click_right_tab(mh_driver, 'notes-right')
+        time.sleep(0.3)
 
-        # Find host A's ID from snapshot
-        r = urllib.request.urlopen(f"{server_url}/api/snapshot")
-        snap = _json.loads(r.read())
-        host_a = next((h for h in snap['hosts'] if h['ip'] == IP_A), None)
-        if not host_a:
-            pytest.skip("Host A not in snapshot")
+        # Enter edit mode (click display div → _showNotesEdit captures _noteHostId = A)
+        mh_driver.execute_script(
+            "var d=document.getElementById('notes-display'); if(d) d.click();")
+        time.sleep(0.2)
 
-        # Write note to A via API
-        req = urllib.request.Request(
-            f"{server_url}/api/workspace/hosts/{host_a['id']}/note",
-            data=_json.dumps({'note': 'api-isolation-test-A'}).encode(),
-            headers={'Content-Type': 'application/json'},
-            method='POST')
-        urllib.request.urlopen(req)
+        # Set text in textarea
+        mh_driver.execute_script("""
+            var ta=document.getElementById('notes-text');
+            if(ta){ ta.value='ui-blur-test-A'; ta.dispatchEvent(new Event('input')); }
+        """)
 
-        # Read B's notes via UI — must not contain A's text
+        # Click host B row — L.selectedHostId changes to B, but blur saves to _noteHostId (A)
         select_host(mh_driver, IP_B)
+        time.sleep(0.5)
+
         click_right_tab(mh_driver, 'notes-right')
         time.sleep(0.3)
         notes_b = get_notes_text(mh_driver)
-        assert 'api-isolation-test-A' not in notes_b, \
-            f"Note saved to host A via API appeared in host B's UI: {notes_b!r}"
+        assert 'ui-blur-test-A' not in notes_b, \
+            f"Note from host A bled into host B after blur fix: {notes_b!r}"
 
-    def test_switch_back_a_note_persists(self, mh_server, mh_driver):
-        """Note saved to host A via API must still show after switching to B and back."""
-        import urllib.request, json as _json
-        server_url = mh_server['url']
+    def test_switch_back_a_note_persists(self, mh_driver):
+        """Note typed on host A must persist after switching to B and back."""
+        select_host(mh_driver, IP_A)
+        click_right_tab(mh_driver, 'notes-right')
+        time.sleep(0.3)
 
-        r = urllib.request.urlopen(f"{server_url}/api/snapshot")
-        snap = _json.loads(r.read())
-        host_a = next((h for h in snap['hosts'] if h['ip'] == IP_A), None)
-        if not host_a:
-            pytest.skip("Host A not in snapshot")
+        mh_driver.execute_script(
+            "var d=document.getElementById('notes-display'); if(d) d.click();")
+        time.sleep(0.2)
+        mh_driver.execute_script("""
+            var ta=document.getElementById('notes-text');
+            if(ta){ ta.value='ui-persist-test-A'; ta.dispatchEvent(new Event('input')); }
+        """)
 
-        # Write a unique note to A
-        req = urllib.request.Request(
-            f"{server_url}/api/workspace/hosts/{host_a['id']}/note",
-            data=_json.dumps({'note': 'persist-via-api-A'}).encode(),
-            headers={'Content-Type': 'application/json'},
-            method='POST')
-        urllib.request.urlopen(req)
-
-        # Go to B then back to A — A's note must still be there
+        # Click host B to trigger blur (saves to A via _noteHostId)
         select_host(mh_driver, IP_B)
-        time.sleep(POLL)
+        time.sleep(0.5)
+
+        # Return to A — note must still be there
         select_host(mh_driver, IP_A)
         click_right_tab(mh_driver, 'notes-right')
         time.sleep(0.3)
         notes_a = get_notes_text(mh_driver)
-        assert 'persist-via-api-A' in notes_a, \
+        assert 'ui-persist-test-A' in notes_a, \
             f"Host A's note missing after switching away and back: {notes_a!r}"
 
 
