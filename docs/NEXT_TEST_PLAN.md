@@ -230,6 +230,59 @@ Approach:
 Why automatable: modal is DOM, image has naturalWidth
 ```
 
+#### File → Save + Open (project round-trip)
+
+This is the most important persistence test. The entire data model — hosts,
+ports, services, notes, processes — must survive a save → new project → open cycle.
+
+```
+Approach (two layers):
+
+Layer 1 — API (fast, no browser needed):
+  1. Seed hosts, ports, notes into test DB
+  2. POST /api/project/save-as  { path: "/tmp/test.legion" }
+  3. POST /api/project/new-temp   (clears active project)
+  4. Assert /api/snapshot returns 0 hosts (project is empty)
+  5. POST /api/project/open  { path: "/tmp/test.legion" }
+  6. Assert /api/snapshot returns original hosts + ports
+  7. Assert notes still present via /api/workspace/hosts/<id>/information
+  8. Clean up /tmp/test.legion
+
+Layer 2 — Selenium (full UI round-trip via file browser modal):
+  1. Add a host via UI, add a note via Notes tab
+  2. File → Save → file-browser-modal opens
+  3. Type filename in #fb-filename input → click #fb-select
+  4. Modal closes, title bar shows filename
+  5. File → New (via API: POST /api/project/new-temp + pollSnapshot)
+  6. Assert Hosts table is empty
+  7. File → Open → file-browser-modal opens
+  8. Find the saved .legion file in #fb-list, double-click it
+  9. Modal closes, pollSnapshot fires
+  10. Assert original host row reappears
+  11. Select host → Notes tab → assert note text still present
+  12. Clean up saved file
+
+Why automatable:
+  - File browser is #file-browser-modal (DOM, not native OS dialog)
+  - /api/files/browse lists directory, #fb-list contains clickable rows
+  - Save/open are plain API POSTs; result is visible in snapshot
+```
+
+#### File → New (clears project)
+
+```
+Approach:
+  1. Seed a host
+  2. Trigger new project: POST /api/project/new-temp directly, or
+     click action-new via execute_script
+  3. Wait for snapshot poll
+  4. Assert #hosts-body has 0 rows (project is empty)
+  5. Assert #processes-body has 0 rows
+
+Note: don't trigger via Ctrl+N keyboard shortcut in Selenium — it would
+reset the shared test session. Use the API call directly.
+```
+
 #### Column width resize persists
 
 ```
@@ -321,6 +374,66 @@ def test_kill_terminates_popen(wc):
     assert popen.poll() is not None  # process has exited
 ```
 
+#### Project save → new → open round-trip (data integrity)
+
+```python
+def test_save_open_round_trip(client, logic, filters):
+    # Confirm hosts exist
+    hosts_before = get_all_hosts(logic, filters)
+    assert len(hosts_before) > 0
+
+    # Save project to temp file
+    save_path = '/tmp/selenium-test.legion'
+    r = client.post('/api/project/save-as', json={'path': save_path})
+    assert r.status_code == 200
+
+    # New project — clears everything
+    client.post('/api/project/new-temp')
+    snap = client.get('/api/snapshot').get_json()
+    assert len(snap['hosts']) == 0, "New project should be empty"
+
+    # Open saved project
+    r = client.post('/api/project/open', json={'path': save_path})
+    assert r.status_code == 200
+
+    # All original hosts present
+    snap = client.get('/api/snapshot').get_json()
+    opened_ips = [h['ip'] for h in snap['hosts']]
+    for host in hosts_before:
+        assert host['ip'] in opened_ips, f"{host['ip']} missing after open"
+
+    os.unlink(save_path)
+
+def test_save_open_preserves_notes(client, logic):
+    host_id = get_first_host_id(logic)
+    client.post(f'/api/workspace/hosts/{host_id}/note', json={'note': 'round-trip-note'})
+
+    save_path = '/tmp/selenium-notes-test.legion'
+    client.post('/api/project/save-as', json={'path': save_path})
+    client.post('/api/project/new-temp')
+    client.post('/api/project/open', json={'path': save_path})
+
+    # Host IDs may change after open — find by IP
+    snap = client.get('/api/snapshot').get_json()
+    new_host_id = snap['hosts'][0]['id']
+    info = client.get(f'/api/workspace/hosts/{new_host_id}/information').get_json()
+    assert 'round-trip-note' in (info.get('note') or '')
+    os.unlink(save_path)
+
+def test_save_open_preserves_ports(client, logic, filters):
+    save_path = '/tmp/selenium-ports-test.legion'
+    client.post('/api/project/save-as', json={'path': save_path})
+    client.post('/api/project/new-temp')
+    client.post('/api/project/open', json={'path': save_path})
+
+    snap = client.get('/api/snapshot').get_json()
+    host_id = snap['hosts'][0]['id']
+    r = client.get(f'/api/workspace/hosts/{host_id}')
+    ports = r.get_json().get('ports', [])
+    assert len(ports) > 0, "Ports not preserved after save/open"
+    os.unlink(save_path)
+```
+
 #### Export JSON contains correct data
 
 ```python
@@ -353,7 +466,7 @@ These require real external tools, real filesystem paths the browser controls, o
 
 | Feature | Why not automatable |
 |---------|-------------------|
-| File → Save / Open | Browser file-save dialog is native OS dialog, not DOM. File-browser-modal is custom DOM but the project file format needs round-trip verification. Manual test. |
+| File → Save / Open | ~~Moved to Category A and B~~ — the file browser is a custom DOM modal (not a native OS dialog) and the save/open routes are plain API calls. See below. |
 | File → Export JSON download | Blob download in headless Firefox doesn't produce a file on disk accessible to test. Verify server-side via API (Category B). |
 | Ctrl+B Send selection to notes | Requires text selection in the output panel, which is complex to reproduce programmatically across browser selection APIs. |
 | Run Hydra | Requires real target with weak credentials, wordlists, minutes of runtime. Manual test against live VM. |
@@ -394,4 +507,4 @@ These require real external tools, real filesystem paths the browser controls, o
 | Unit tests | 502 | ~520 |
 | Selenium offline | 92 | ~145 |
 | Selenium live | 15 | ~20 |
-| **Total** | **609** | **~685** |
+| **Total** | **609** | **~700** |
