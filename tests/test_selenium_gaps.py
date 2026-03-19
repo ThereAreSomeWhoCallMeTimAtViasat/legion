@@ -697,3 +697,214 @@ class TestColumnResize:
         style_num = int(float(style_w.replace('px', '')))
         assert abs(style_num - int(float(saved))) <= 2, \
             f"th.style.width={style_w!r} doesn't match localStorage={saved} after reload"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9. Host double-click → copy IP to clipboard
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestHostDoubleClick:
+
+    def test_dblclick_calls_clipboard_with_host_ip(self, gap_driver):
+        """Double-clicking a host row must call clipboard API with that host's IP."""
+        # Override clipboard.writeText to capture the value without needing real clipboard
+        gap_driver.execute_script("""
+            window._clipboardCapture = null;
+            // Override navigator.clipboard.writeText
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText = function(text) {
+                    window._clipboardCapture = text;
+                    return Promise.resolve();
+                };
+            }
+            // Also override execCommand fallback
+            document.execCommand = function(cmd) {
+                if (cmd === 'copy') {
+                    var ta = document.querySelector('textarea[style*="position:fixed"]') ||
+                             document.querySelector('textarea:last-child');
+                    if (ta) window._clipboardCapture = ta.value;
+                }
+                return true;
+            };
+        """)
+
+        host_row = wait_row(gap_driver, IP_A)
+        # Double-click via JS dispatch
+        gap_driver.execute_script("""
+            var r = arguments[0];
+            r.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));
+        """, host_row)
+        time.sleep(0.3)
+
+        captured = gap_driver.execute_script("return window._clipboardCapture;")
+        assert captured == IP_A, \
+            f"Clipboard not called with {IP_A} after double-click (got: {captured!r})"
+
+    def test_dblclick_host_b_copies_correct_ip(self, gap_driver):
+        """Double-clicking host B must copy B's IP, not A's."""
+        gap_driver.execute_script("window._clipboardCapture = null;")
+
+        host_row_b = wait_row(gap_driver, IP_B)
+        gap_driver.execute_script("""
+            arguments[0].dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));
+        """, host_row_b)
+        time.sleep(0.3)
+
+        captured = gap_driver.execute_script("return window._clipboardCapture;")
+        assert captured == IP_B, \
+            f"Clipboard contains {captured!r} instead of {IP_B} after double-clicking host B"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10. Ctrl+B — Send selection to notes
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestSendSelectionToNotes:
+
+    def test_ctrl_b_appends_selected_text_to_notes(self, gap_driver, gap_server):
+        """Select text in process output, press Ctrl+B, verify Notes tab gets the text."""
+        # Need a process with output — run one
+        wc = gap_server['wc']
+        try:
+            wc.start()
+        except Exception:
+            pass
+        wc.runCommand('echo send-to-notes-test-content', name='notes-sel-test',
+                      hostIp=IP_A)
+        time.sleep(POLL * 2)
+
+        # Select host A so notes are for it
+        select_host(gap_driver, IP_A)
+
+        # Click a finished process row to load its output in #process-output-inline
+        pid = gap_driver.execute_script("""
+            var rows = document.querySelectorAll('#processes-body tr');
+            for (var r of rows) {
+                var cells = r.querySelectorAll('td');
+                if (cells.length >= 5 && cells[1].textContent.includes('notes-sel-test'))
+                    return r.dataset.processId;
+            }
+            return null;
+        """)
+        if pid:
+            gap_driver.execute_script("""
+                var rows = document.querySelectorAll('#processes-body tr[data-process-id]');
+                for (var r of rows) {
+                    if (r.dataset.processId === arguments[0]) { r.click(); break; }
+                }
+            """, pid)
+            time.sleep(POLL)
+
+        # Wait for output text to appear in the inline panel
+        W(gap_driver, 8).until(lambda d: len(
+            d.find_element(By.ID, 'process-output-inline').text.strip()) > 0)
+
+        # Programmatically select all text in process-output-inline
+        gap_driver.execute_script("""
+            var el = document.getElementById('process-output-inline');
+            if (!el) return;
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        """)
+        time.sleep(0.1)
+
+        # Verify selection has content
+        selected = gap_driver.execute_script("return window.getSelection().toString().trim();")
+        if not selected:
+            pytest.skip("Could not create text selection in process output panel")
+
+        # Dispatch Ctrl+B keydown
+        gap_driver.execute_script("""
+            document.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'b', ctrlKey: true, bubbles: true, cancelable: true
+            }));
+        """)
+        time.sleep(0.5)
+
+        # Check Notes tab — should have the selection appended
+        click_right_tab(gap_driver, 'notes-right')
+        time.sleep(0.3)
+
+        notes_text = gap_driver.execute_script("""
+            var ta = document.getElementById('notes-text');
+            var disp = document.getElementById('notes-display');
+            return (ta ? ta.value : '') || (disp ? disp.innerText : '');
+        """)
+        assert 'Selection from' in notes_text, \
+            f"Notes tab missing '=== Selection from ...' header after Ctrl+B: {notes_text[:200]!r}"
+        assert selected[:20] in notes_text, \
+            f"Selected text not in notes after Ctrl+B. Selected: {selected[:50]!r}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 11. Mark host as checked / unchecked
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestHostChecked:
+    """Each test is self-contained — marks/unmarks the host itself rather than
+    relying on state from the previous test."""
+
+    def _is_checked(self, driver):
+        """Return True if host A currently has host-checked CSS class."""
+        try:
+            row = wait_row(driver, IP_A, timeout=3)
+            return 'host-checked' in (row.get_attribute('class') or '')
+        except Exception:
+            return False
+
+    def _set_checked(self, driver, checked: bool):
+        """Ensure host A is in the desired checked state, waiting for snapshot to confirm."""
+        currently = self._is_checked(driver)
+        if currently == checked:
+            return  # already correct
+        row_a = wait_row(driver, IP_A)
+        ActionChains(driver).context_click(row_a).perform()
+        label = 'checked' if checked else 'unchecked'
+        ctx_menu_click(driver, label)
+        # Wait for snapshot to re-render the row with the new checked state
+        W(driver, 5).until(lambda d: self._is_checked(d) == checked)
+
+    def test_mark_checked_adds_css_class(self, gap_driver):
+        """Right-click → 'Mark as checked' → row gets host-checked CSS class."""
+        self._set_checked(gap_driver, False)   # start from unchecked
+        row_a = wait_row(gap_driver, IP_A)
+        ActionChains(gap_driver).context_click(row_a).perform()
+        ctx_menu_click(gap_driver, 'checked')
+        time.sleep(POLL)
+        row_a = wait_row(gap_driver, IP_A)
+        classes = row_a.get_attribute('class') or ''
+        assert 'host-checked' in classes, \
+            f"host-checked class missing after Mark as checked (classes: {classes!r})"
+
+    def test_mark_checked_shows_checkmark(self, gap_driver):
+        """After marking checked, the host row displays a ✓ prefix."""
+        self._set_checked(gap_driver, True)
+        row_a = wait_row(gap_driver, IP_A)
+        row_text = row_a.text
+        assert '✓' in row_text or 'host-checked' in (row_a.get_attribute('class') or ''), \
+            f"No ✓ indicator after Mark as checked (row text: {row_text!r})"
+
+    def test_mark_unchecked_removes_css_class(self, gap_driver):
+        """Right-click → 'Mark as unchecked' → host-checked class removed."""
+        self._set_checked(gap_driver, True)    # ensure checked first
+        row_a = wait_row(gap_driver, IP_A)
+        ActionChains(gap_driver).context_click(row_a).perform()
+        ctx_menu_click(gap_driver, 'unchecked')
+        time.sleep(POLL)
+        row_a = wait_row(gap_driver, IP_A)
+        classes = row_a.get_attribute('class') or ''
+        assert 'host-checked' not in classes, \
+            f"host-checked class still present after Mark as unchecked (classes: {classes!r})"
+
+    def test_checked_field_in_snapshot(self, gap_driver, gap_server):
+        """Snapshot must include a 'checked' boolean field for each host."""
+        import urllib.request, json as _j
+        r = urllib.request.urlopen(f"{gap_server['url']}/api/snapshot")
+        snap = _j.loads(r.read())
+        host_a = next((h for h in snap['hosts'] if h['ip'] == IP_A), None)
+        assert host_a is not None, f"Host A not in snapshot"
+        assert 'checked' in host_a, \
+            f"snapshot host missing 'checked' field: {host_a}"

@@ -1443,3 +1443,23 @@ class TestLiveScan:
         assert len(rows) > 0,             f"Scripts tab has 0 rows after scan completed — nmap scripts may not have stored results"
         cells = rows[0].find_elements(By.TAG_NAME, 'td')
         assert any(c.text.strip() for c in cells), "First script row has no cell content"
+
+    def test_19_script_row_loads_inline_output(self, driver, live_target):
+        """Clicking a script row must load its output in #script-output-inline."""
+        row = wait_for_host_row(driver, live_target)
+        js_click(driver, row)
+        time.sleep(POLL)
+        click_right_tab(driver, 'scripts-right')
+        W(driver, 10).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR, '#host-detail-scripts tr')) > 0)
+        rows = driver.find_elements(By.CSS_SELECTOR, '#host-detail-scripts tr')
+        if not rows:
+            pytest.skip("No script rows available")
+        # Click first script row
+        js_click(driver, rows[0])
+        time.sleep(POLL)
+        output = driver.find_element(By.ID, 'script-output-inline').text.strip()
+        assert len(output) > 0, \
+            "Script output inline panel is empty after clicking script row"
+        assert output != 'Loading...', \
+            "Script output stuck on 'Loading...'"

@@ -2222,7 +2222,7 @@ document.addEventListener('DOMContentLoaded', function() {
         e.preventDefault();
         var hostId = tr.dataset.hostId;
         var hostIp = tr.dataset.hostIp || '';
-        fetchJson('/api/menus/host?checked=False').then(function(data) {
+        fetchJson('/api/menus/host?checked=' + (tr.classList.contains('host-checked') ? 'True' : 'False')).then(function(data) {
             showContextMenu(data.items, e.clientX, e.clientY, function(action) {
                 if (action.action === 'delete' && !confirm('Delete host ' + hostIp + '?')) return;
                 postJson('/api/workspace/hosts/' + hostId + '/action', {
