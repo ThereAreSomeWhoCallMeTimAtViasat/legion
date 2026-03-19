@@ -130,12 +130,27 @@ cleanup() {
 trap cleanup EXIT
 trap 'spinner_stop; echo -e "\n${RED}Interrupted.${NC}"; exit 130' INT TERM
 
+# ── Free a TCP port (kill whatever process holds it) ─────────────────────────
+free_port() {
+    local port="$1"
+    # fuser -k sends SIGKILL to whatever owns the port
+    fuser -k "${port}/tcp" 2>/dev/null || true
+    # Also try lsof-based kill as fallback
+    local pid
+    pid=$(lsof -ti :"$port" 2>/dev/null | head -1 || true)
+    [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
+    # Brief wait for OS to release the socket
+    sleep 0.5
+}
+
 # ── Initial prep ───────────────────────────────────────────────────────────────
 echo -e "\n${CYAN}${BOLD}Preparing clean environment...${NC}"
 pkill -f "legion.py --web" 2>/dev/null && echo "  Killed existing legion server" || true
 pkill -f "geckodriver"     2>/dev/null || true
 pkill -f "nmap"            2>/dev/null || true
 pkill -f "eyewitness"      2>/dev/null || true
+# Kill any stale test Flask servers on known test ports
+for _p in 5094 5096 5097 5098 5099; do free_port "$_p"; done
 sleep 1
 rm -rf /tmp/legion/legion-* /tmp/legion-* 2>/dev/null || true
 echo "  Cleared /tmp/legion* artefacts"
@@ -309,11 +324,13 @@ fi
 
 if $RUN_SELENIUM; then
     section "Selenium offline  (headless Firefox)"
-    run_pytest "test_selenium_ui (offline)"  tests/test_selenium_ui.py -m "not live"
-    run_pytest "test_selenium_project"       tests/test_selenium_project.py
-    run_pytest "test_selenium_multihost"     tests/test_selenium_multihost.py
-    run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
-    run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
+    # Free each port before binding — a daemon Flask thread from a prior run
+    # may linger briefly after pytest exits, causing "Address already in use".
+    free_port 5099; run_pytest "test_selenium_ui (offline)"  tests/test_selenium_ui.py -m "not live"
+    free_port 5098; run_pytest "test_selenium_project"       tests/test_selenium_project.py
+    free_port 5097; run_pytest "test_selenium_multihost"     tests/test_selenium_multihost.py
+    free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
+    free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
 fi
 
 if $RUN_LIVE; then
@@ -322,7 +339,7 @@ if $RUN_LIVE; then
     pkill -f "eyewitness" 2>/dev/null || true
     rm -rf /tmp/legion/legion-* 2>/dev/null || true
     echo -e "  target: ${BOLD}$LIVE_TARGET${NC}  (~10 min — 6 nmap stages + NSE + eyewitness)"
-    run_pytest "test_selenium_ui (live scan)" tests/test_selenium_ui.py -m live
+    free_port 5099; run_pytest "test_selenium_ui (live scan)" tests/test_selenium_ui.py -m live
 fi
 
 # ── Final summary ──────────────────────────────────────────────────────────────
