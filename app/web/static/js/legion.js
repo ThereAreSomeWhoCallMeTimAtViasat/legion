@@ -2716,7 +2716,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     var brutIp = $('brute-ip'), brutPort = $('brute-port'), brutSvc = $('brute-service');
                     if (brutIp) brutIp.value = L.selectedHostIp || '';
                     if (brutPort) brutPort.value = port;
-                    if (brutSvc) brutSvc.value = svcName !== '*' ? svcName : '';
+                    var svcForBrute = svcName !== '*' ? svcName : '';
+                    if (brutSvc) brutSvc.value = svcForBrute;
+                    bruteHideShowFields(svcForBrute);
                     /* Switch to Brute main tab */
                     var bruteBtn = $('main-tab-bar') && $('main-tab-bar').querySelector('[data-tab="brute-tab"]');
                     if (bruteBtn) bruteBtn.click();
@@ -3091,6 +3093,40 @@ document.addEventListener('DOMContentLoaded', function() {
     })();
 
     /* ── Brute force tab (Qt6: callHydra → buildHydraCommand → runCommand) ── */
+
+    /* Brute defaults: loaded once, used for hide/show and pre-fill */
+    L._bruteNoUserSvcs = [];
+    L._bruteNoPassSvcs = [];
+
+    function bruteHideShowFields(service) {
+        var svc = (service || '').toLowerCase().trim();
+        var uRow = $('brute-username-row');
+        var pRow = $('brute-password-row');
+        if (uRow) uRow.style.display = L._bruteNoUserSvcs.indexOf(svc) !== -1 ? 'none' : '';
+        if (pRow) pRow.style.display = L._bruteNoPassSvcs.indexOf(svc) !== -1 ? 'none' : '';
+    }
+
+    /* Fetch defaults from legion.conf and pre-fill fields */
+    fetch('/api/brute/defaults').then(function(r){ return r.json(); }).then(function(d) {
+        L._bruteNoUserSvcs = (d.no_username_services || []).map(function(s){ return s.toLowerCase(); });
+        L._bruteNoPassSvcs = (d.no_password_services || []).map(function(s){ return s.toLowerCase(); });
+        /* Pre-fill wordlist paths and single credentials if fields are still empty */
+        var ul = $('brute-userlist'), pl = $('brute-passlist');
+        var un = $('brute-username'), pw = $('brute-password');
+        if (ul && !ul.value && d.username_wordlist) ul.value = d.username_wordlist;
+        if (pl && !pl.value && d.password_wordlist) pl.value = d.password_wordlist;
+        if (un && !un.value && d.default_username) un.value = d.default_username;
+        if (pw && !pw.value && d.default_password) pw.value = d.default_password;
+        /* Apply hide/show for current service value */
+        bruteHideShowFields(($('brute-service')||{}).value||'');
+    }).catch(function(){});
+
+    /* Re-apply hide/show whenever service field changes */
+    var bruteSvcEl = $('brute-service');
+    if (bruteSvcEl) bruteSvcEl.addEventListener('input', function() {
+        bruteHideShowFields(this.value);
+    });
+
     var bruteRun = $('brute-run');
     if (bruteRun) bruteRun.addEventListener('click', function() {
         var ip       = ($('brute-ip')||{}).value||'';
@@ -3098,13 +3134,18 @@ document.addEventListener('DOMContentLoaded', function() {
         var service  = ($('brute-service')||{}).value||'';
         var userlist = ($('brute-userlist')||{}).value||'';
         var passlist = ($('brute-passlist')||{}).value||'';
+        var username = ($('brute-username')||{}).value||'';
+        var password = ($('brute-password')||{}).value||'';
         var options  = ($('brute-options')||{}).value||'';
         if (!ip||!port||!service) { setText('brute-status','Fill in IP, port, and service'); return; }
-        if (!userlist) { setText('brute-status','Enter a username wordlist'); return; }
+        /* Need at least a username source unless it's a no-username service */
+        var noUser = L._bruteNoUserSvcs.indexOf(service.toLowerCase()) !== -1;
+        if (!noUser && !userlist && !username) { setText('brute-status','Enter a username or wordlist'); return; }
         setText('brute-status','Starting Hydra...');
         /* Qt6: buildHydraCommand → controller.runCommand('hydra', ...) */
         postJson('/api/brute/run', {ip:ip, port:port, service:service,
-                                    userlist:userlist, passlist:passlist, options:options})
+                                    userlist:userlist, passlist:passlist,
+                                    username:username, password:password, options:options})
         .then(function(d) {
             setText('brute-status', d.process_id
                 ? 'Hydra started (process ' + d.process_id + ')'

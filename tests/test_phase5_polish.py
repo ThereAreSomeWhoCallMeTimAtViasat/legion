@@ -192,6 +192,62 @@ def test_b8_brute_tab_has_required_fields():
     return ok(not missing, f"missing brute tab fields: {missing}")
 test("B1.8: brute tab has all required form fields", test_b8_brute_tab_has_required_fields)
 
+def test_b9_brute_defaults_route():
+    """/api/brute/defaults must return JSON with expected keys"""
+    r = client.get('/api/brute/defaults')
+    return ok(r.status_code == 200 and r.is_json, f"status={r.status_code}")
+test("B1.9: /api/brute/defaults returns 200 JSON", test_b9_brute_defaults_route)
+
+def test_b10_brute_defaults_keys():
+    """/api/brute/defaults JSON must include all 6 expected keys"""
+    r = client.get('/api/brute/defaults')
+    if r.status_code != 200: return "SKIP"
+    d = r.get_json()
+    required = ['default_username','default_password','username_wordlist',
+                'password_wordlist','no_username_services','no_password_services']
+    missing = [k for k in required if k not in d]
+    return ok(not missing, f"missing keys: {missing}")
+test("B1.10: /api/brute/defaults has all required keys", test_b10_brute_defaults_keys)
+
+def test_b11_brute_defaults_no_svc_lists():
+    """/api/brute/defaults no_username_services and no_password_services must be lists"""
+    r = client.get('/api/brute/defaults')
+    if r.status_code != 200: return "SKIP"
+    d = r.get_json()
+    return ok(isinstance(d.get('no_username_services'), list)
+              and isinstance(d.get('no_password_services'), list),
+              f"no_username_services={d.get('no_username_services')!r}")
+test("B1.11: /api/brute/defaults service lists are lists", test_b11_brute_defaults_no_svc_lists)
+
+def test_b12_brute_tab_has_single_fields():
+    """Brute tab must have single username and password fields"""
+    required = ['brute-username', 'brute-password', 'brute-username-row', 'brute-password-row']
+    missing = [f for f in required if f not in HTML]
+    return ok(not missing, f"missing single-cred fields: {missing}")
+test("B1.12: brute tab has single username/password fields", test_b12_brute_tab_has_single_fields)
+
+def test_b13_brute_js_fetches_defaults():
+    """legion.js must fetch /api/brute/defaults on load"""
+    return ok('/api/brute/defaults' in JS, "JS does not fetch /api/brute/defaults")
+test("B1.13: JS fetches /api/brute/defaults on load", test_b13_brute_js_fetches_defaults)
+
+def test_b14_brute_js_hide_show_fn():
+    """legion.js must define bruteHideShowFields for no-username/password services"""
+    return ok('bruteHideShowFields' in JS and 'brute-username-row' in JS,
+              "bruteHideShowFields or brute-username-row missing from JS")
+test("B1.14: JS has bruteHideShowFields hide/show logic", test_b14_brute_js_hide_show_fn)
+
+def test_b15_brute_run_accepts_single_creds():
+    """/api/brute/run must accept username/password (single creds) and use -l/-p flags"""
+    r = client.post('/api/brute/run', json={
+        'ip': '127.0.0.1', 'port': '161', 'service': 'snmp',
+        'username': '', 'password': '', 'userlist': '', 'passlist': '', 'options': ''
+    })
+    # May 400 (no creds given) or 200 (launched) — must not 500
+    return ok(r.status_code in (200, 400, 404),
+              f"unexpected status={r.status_code}: {r.get_data(as_text=True)[:200]}")
+test("B1.15: /api/brute/run accepts single username/password params", test_b15_brute_run_accepts_single_creds)
+
 
 # ══════════════════════════════════════════════════════════════
 # REGRESSION

@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.5-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.6-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -280,9 +280,13 @@
                 <label style="width:80px">Port<input id="brute-port" type="text" placeholder="22" style="width:100%"></label>
                 <label style="width:120px">Service<input id="brute-service" type="text" placeholder="ssh" style="width:100%"></label>
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-                <label style="flex:1">Username wordlist<input id="brute-userlist" type="text" placeholder="/usr/share/wordlists/..." style="width:100%"></label>
-                <label style="flex:1">Password wordlist<input id="brute-passlist" type="text" placeholder="/usr/share/wordlists/..." style="width:100%"></label>
+            <div id="brute-username-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                <label style="flex:2">Username wordlist (-L)<input id="brute-userlist" type="text" placeholder="/usr/share/wordlists/..." style="width:100%"></label>
+                <label style="flex:1">Single username (-l)<input id="brute-username" type="text" placeholder="root" style="width:100%"></label>
+            </div>
+            <div id="brute-password-row" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+                <label style="flex:2">Password wordlist (-P)<input id="brute-passlist" type="text" placeholder="/usr/share/wordlists/..." style="width:100%"></label>
+                <label style="flex:1">Single password (-p)<input id="brute-password" type="text" placeholder="password" style="width:100%"></label>
             </div>
             <label style="margin-bottom:8px;display:block">Additional hydra options<input id="brute-options" type="text" placeholder="-t 4 -f" style="width:100%"></label>
             <div class="scheduler-actions">

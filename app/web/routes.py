@@ -902,6 +902,23 @@ def check_duplicate():
     return jsonify({"result": result})
 
 
+@web_bp.get("/api/brute/defaults")
+def brute_defaults():
+    """Return brute-force defaults from legion.conf for pre-filling the UI."""
+    wc = _wc()
+    s = wc.settings
+    def _split_services(val):
+        return [x.strip() for x in str(val).split(',') if x.strip()]
+    return jsonify({
+        "default_username":     getattr(s, 'brute_default_username', ''),
+        "default_password":     getattr(s, 'brute_default_password', ''),
+        "username_wordlist":    getattr(s, 'brute_username_wordlist_path', ''),
+        "password_wordlist":    getattr(s, 'brute_password_wordlist_path', ''),
+        "no_username_services": _split_services(getattr(s, 'brute_no_username_services', '')),
+        "no_password_services": _split_services(getattr(s, 'brute_no_password_services', '')),
+    })
+
+
 @web_bp.post("/api/brute/run")
 def brute_run():
     """Qt6: callHydra → buildHydraCommand → controller.runCommand('hydra').
@@ -914,6 +931,8 @@ def brute_run():
     service  = str(payload.get('service', '')).strip()
     userlist = str(payload.get('userlist', '')).strip()
     passlist = str(payload.get('passlist', '')).strip()
+    username = str(payload.get('username', '')).strip()
+    password = str(payload.get('password', '')).strip()
     options  = str(payload.get('options', '')).strip()
 
     if not ip or not port or not service:
@@ -926,12 +945,22 @@ def brute_run():
     # Qt6: bWidget.buildHydraCommand(runningFolder, userlistPath, passlistPath)
     hydra_bin = getattr(wc.settings, 'tools_path_hydra', '').strip() or 'hydra'
     parts = [hydra_bin, '-s', port]
-    if userlist and passlist:
-        parts += ['-L', userlist, '-P', passlist]
-    elif userlist:
-        parts += ['-C', userlist]
-    else:
-        return _err("at least a userlist is required")
+
+    # Username: wordlist (-L) takes priority over single (-l)
+    if userlist:
+        parts += ['-L', userlist]
+    elif username:
+        parts += ['-l', username]
+
+    # Password: wordlist (-P) takes priority over single (-p)
+    if passlist:
+        parts += ['-P', passlist]
+    elif password:
+        parts += ['-p', password]
+
+    if not userlist and not username and not passlist and not password:
+        return _err("at least a username or wordlist is required")
+
     if options:
         parts += options.split()
     parts += ['-u', '-o', outputfile + '.txt', '-f', ip, service]
