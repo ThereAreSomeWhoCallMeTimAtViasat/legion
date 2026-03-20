@@ -71,6 +71,16 @@ function markTabUnread(tabId) {
     if (tabBtn) tabBtn.classList.add('tab-unread');
 }
 
+/* ── Version string — read once from the DOM so JS never has a stale hardcoded value ── */
+var _VERSION = (function() {
+    var el = document.getElementById('window-title');
+    if (!el) return 'LEGION';
+    /* Initial text is "LEGION vX.Y-flask – *untitled" — take everything before the dash */
+    var txt = el.textContent || el.innerText || '';
+    var dash = txt.indexOf(' \u2013 ');
+    return dash > 0 ? txt.slice(0, dash).trim() : txt.split('–')[0].trim() || 'LEGION';
+})();
+
 /* ── State (mirrors ui/ViewState.py) ── */
 var L = {
     hosts: [],
@@ -1039,7 +1049,7 @@ function loadHostDetail(hostId) {
 
         /* Window title */
         var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', 'LEGION v7.4-flask – ' + title);
+        setText('window-title', _VERSION + ' – ' + title);
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -2221,7 +2231,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', 'LEGION v2.9-flask – ' + path.split('/').pop());
+                setText('window-title', _VERSION + ' – ' + path.split('/').pop());
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
@@ -2235,7 +2245,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.9-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', _VERSION + ' – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -2247,7 +2257,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', 'LEGION v2.9-flask – ' + path.split('/').pop()); })
+            .then(function() { setText('window-title', _VERSION + ' – ' + path.split('/').pop()); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -2288,7 +2298,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert('LEGION v2.9-flask\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
+        alert(_VERSION + '\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
     /* ── Ctrl+B / Send selection to notes (Qt6: view.py:sendSelectionToNotes) ──
@@ -2391,7 +2401,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', 'LEGION v2.9-flask – *untitled');
+                setText('window-title', _VERSION + ' – *untitled');
                 pollSnapshot();
             });
         }
