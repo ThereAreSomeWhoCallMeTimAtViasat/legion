@@ -2246,6 +2246,33 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    /* ── File → Import hosts from file (Qt6: --input-file / cli_utils) ── */
+    var importFileBtn = $('action-import-file');
+    if (importFileBtn) importFileBtn.addEventListener('click', function() {
+        fbOpen('Import Hosts from File', '.txt', 'open', '/root').then(function(path) {
+            if (!path) return;
+            postJson('/api/workspace/hosts/import-file', { path: path })
+            .then(function(d) {
+                var n = d.added !== undefined ? d.added : '?';
+                alert('Imported ' + n + ' host(s) from file.');
+                pollSnapshot();
+            })
+            .catch(function(err) { alert('Import failed: ' + err.message); });
+        });
+    });
+
+    /* ── File → Run Nmap Scan (upstream nmap-scan-modal) ── */
+    var nmapScanBtn = $('action-nmap-scan');
+    if (nmapScanBtn) nmapScanBtn.addEventListener('click', function() {
+        openModal('nmap-scan-modal');
+    });
+
+    /* ── File → Manual Tool Run (upstream manual-scan-modal) ── */
+    var manualToolBtn = $('action-manual-tool');
+    if (manualToolBtn) manualToolBtn.addEventListener('click', function() {
+        openModal('manual-scan-modal');
+    });
+
     /* ── File → Exit ── */
     var exitBtn = $('action-exit');
     if (exitBtn) exitBtn.addEventListener('click', function() {

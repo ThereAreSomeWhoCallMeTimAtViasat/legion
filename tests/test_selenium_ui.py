@@ -239,6 +239,39 @@ class TestFileMenu:
         modal_is_open(driver, 'import-nmap-modal')
         close_modal(driver, 'import-nmap-modal')
 
+    def test_file_menu_has_import_file(self, driver):
+        open_file_menu(driver)
+        assert driver.find_element(By.ID, 'action-import-file').is_displayed()
+        dismiss_menu(driver)
+
+    def test_file_menu_import_file_opens_file_browser(self, driver):
+        open_file_menu(driver)
+        driver.find_element(By.ID, 'action-import-file').click()
+        modal_is_open(driver, 'file-browser-modal')
+        close_modal(driver, 'file-browser-modal')
+
+    def test_file_menu_has_nmap_scan(self, driver):
+        open_file_menu(driver)
+        assert driver.find_element(By.ID, 'action-nmap-scan').is_displayed()
+        dismiss_menu(driver)
+
+    def test_file_menu_nmap_scan_opens_modal(self, driver):
+        open_file_menu(driver)
+        driver.find_element(By.ID, 'action-nmap-scan').click()
+        modal_is_open(driver, 'nmap-scan-modal')
+        close_modal(driver, 'nmap-scan-modal')
+
+    def test_file_menu_has_manual_tool(self, driver):
+        open_file_menu(driver)
+        assert driver.find_element(By.ID, 'action-manual-tool').is_displayed()
+        dismiss_menu(driver)
+
+    def test_file_menu_manual_tool_opens_modal(self, driver):
+        open_file_menu(driver)
+        driver.find_element(By.ID, 'action-manual-tool').click()
+        modal_is_open(driver, 'manual-scan-modal')
+        close_modal(driver, 'manual-scan-modal')
+
     def test_file_menu_closes_on_outside_click(self, driver):
         open_file_menu(driver)
         dismiss_menu(driver)
