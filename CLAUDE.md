@@ -156,3 +156,64 @@ self.view.createNewTabForHost() → return None (renderDynamicToolTabs in JS han
 - **ifly53e** (62 commits): Primary developer
 - **therearesomewhocallmetimatviasat** (17 commits): Testing + features
 - Both are Tim McLean (the user)
+
+## Pending Features — Approved Design Decisions
+
+### Percent Column (nmap real-time progress)
+- **Goal**: Populate the percent + ETC columns in the process table for nmap processes
+- **How**: Add `--stats-every 5s` to all nmap commands; parse `About X.X% done; ETC: HH:MM` from `_capture_output` per line; call `storeProcessPercent(dbId, "X% ETC:HH:MM")`
+- **Non-nmap tools**: percent stays blank — acceptable
+- **Snapshot**: already returns `p.percent`; JS line 688 already renders it — no UI changes needed beyond populating the field
+- **nmap commands to update**: `runStagedNmap`, `addHosts` nmap path, `handleHostToolAction` nmap actions
+
+### LLM Host Analysis (Anthropic Claude)
+- **Model**: `claude-sonnet-4-6` (1M context window)
+- **API key**: Session-only (never persisted to disk). Check `ANTHROPIC_API_KEY` env var first; if absent, `window.prompt()` the user on first use, store in `L.anthropicKey` JS variable for the session
+- **UI placement**: New "AI" tab in the right-panel tab bar (alongside Info, Services, Scripts, CVEs, Notes)
+- **Route**: `POST /api/ai/analyze-host/<id>` — queries all host data (ports, CVEs, scripts, OS, notes via existing repos), builds prompt, calls Anthropic API, returns response text
+- **System prompt**:
+  ```
+  You are a senior penetration tester analyzing network scan data from Legion.
+  Given the following host data from an authorized security assessment, provide:
+  1. Key vulnerabilities to investigate based on discovered services and CVEs
+  2. Specific tools to run next (with exact commands where helpful)
+  3. Attack vectors most likely to yield access
+  4. Any misconfigurations evident from service versions
+  Be specific and actionable. Reference exact port numbers and service versions.
+  ```
+- **Dependencies**: `anthropic` Python package (`pip install anthropic`)
+- **Error handling**: If API call fails (no key, network error, rate limit), show error in the AI tab
+- **No streaming**: one-shot response (1-2s wait acceptable at Sonnet pricing)
+
+### Pending Feature Backlog
+| # | Feature | Difficulty | Status | Notes |
+|---|---------|-----------|--------|-------|
+| 1 | Port state filter on Services table | Low | ✅ Done v10.0 | Hide closed/filtered by default; quick toggle |
+| 2 | Comma/newline multi-host + parallel nmap processes | Low | ✅ Done v10.0 | Split input, one runCommand per host |
+| 3 | Font size control in output windows | Low | ✅ Done v10.1 | +/− buttons, localStorage, CSS container inheritance |
+| 4 | Config editor find/search (F2) | Low–Med | ❌ Not started | Find bar, prev/next, match count |
+| 5 | Terminal notes Ctrl+B | Med | ❌ Not started | `xterm.getSelection()` → append to host notes via POST |
+| 6 | Parallel nmap stages | High | ⏸ Deferred | Wait for Issue #30 (stage 2 freeze) to be resolved first |
+| 7 | LLM host analysis (AI tab) | Med | ❌ Not started | Anthropic Claude sonnet-4-6, session-key, new AI right-panel tab — design approved, see above |
+| 8 | Save-on-exit prompt | Low | ✅ Done v10.3 | 3-button modal (Save/Don't Save/Cancel) + beforeunload warning |
+
+### legion.conf Settings — Not Yet Wired in Flask
+
+#### High priority (functional impact)
+| Setting | Current state | Fix needed |
+|---------|--------------|------------|
+| `nmap-path` (`/usr/bin/nmap`) | `runStagedNmap` and `addHosts` hardcode `nmap` | Use `self.settings.tools_path_nmap` in all nmap commands |
+| `hydra-path` (`/usr/bin/hydra`) | `brute_run` route hardcodes `hydra` | Use `self.settings.tools_path_hydra` |
+| `pyshodan-api-key` | Script has API key hardcoded; setting ignored | Pass as env var `SHODAN_API_KEY` when invoking `pyShodan.py` |
+| `default-username` / `default-password` | Brute tab starts empty | Pre-fill brute tab on page load from settings |
+| `username-wordlist-path` / `password-wordlist-path` | Brute tab starts empty | Pre-fill brute tab userlist/passlist fields |
+| `no-username-services` (cisco,snmp,vnc…) | Username field always shown | Hide/disable username field when selected service is in this list |
+| `no-password-services` (oracle-sid,rsh…) | Password field always shown | Hide/disable password field when selected service is in this list |
+| `store-cleartext-passwords-on-exit` | Wordlist files never deleted | Check flag in `closeProject()` — delete wordlist files if False |
+
+#### Low priority (cosmetic / edge case)
+| Setting | Current state | Fix needed |
+|---------|--------------|------------|
+| `screenshooter-timeout` (15000ms) | eyewitness `--delay 5` hardcoded | Use `general_screenshooter_timeout / 1000` as delay |
+| `tool-output-black-background` | Output area uses `var(--base)` always | If True, force `#000` background on `.tool-output-area` |
+| `default-terminal` | Flask always uses PTY in-app | N/A by design — Flask PTY replaces external terminal |
