@@ -5,15 +5,41 @@
 - Tests for every method before building — prove one element works before doing the whole thing
 - Host is always the key — never mix data from different hosts in views
 - Version number must be bumped in `index.html` with every change set, BEFORE restarting server
-- Prefers comprehensive explanations and step-by-step guidance
+- Stay on version 10.x until user says go to 11
+- Version bump format: `LEGION v10.X-flask` — increment the point version each fix/feature
+- Static asset cache buster in `base.html` (`?v=N`) — bump when CSS or JS changes
+
+## Cost Management Strategy
+**One conversation per feature. Start fresh. Use `/compact` mid-task if needed.**
+
+### Conversation commands
+- `/compact` — compress current conversation history in place (use mid-session before big implementation)
+- `/clear` — wipe history, stay in same terminal session
+- `exit` then `claude` — full fresh start (best between separate features)
+
+### Conversation plan for remaining work
+| Conv | Work | Est. cost |
+|------|------|-----------|
+| A | Wire nmap-path, hydra-path, pyShodan API key | Cheap |
+| B | Brute tab pre-fill + no-username/no-password field hiding | Med |
+| C | store-cleartext-passwords-on-exit + low-priority settings | Cheap |
+| D | Config editor find/search (F2 — backlog #4) | Med |
+| E | Terminal Ctrl+B to Notes (backlog #5) | Med |
+| F | LLM AI tab (backlog #7 — largest) | Med |
+| G | Low-priority settings (screenshooter-timeout, black-background) | Cheap |
+
+**Rule:** CLAUDE.md + MEMORY.md auto-load in every new session — full project context is warm instantly.
+
+---
 
 ## Project Overview
 - **Repo:** https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
-- **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — your pure code, no upstream)
+- **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
-- **Stack:** Python 3.10+, PyQt6 (being replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v6.4-flask
-- **Tests:** 468/468 across 17 test files
+- **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
+- **Current Flask version:** v10.4-flask
+- **Static asset cache:** `?v=20` in `base.html`
+- **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
 **DO NOT USE upstream runtime.py.** The user's logic in controller.py IS the source of truth.
@@ -28,26 +54,19 @@ YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
 
 ## Running
 ```bash
-# Start Flask (v6.4)
-sudo python3 legion.py --web          # http://127.0.0.1:5000
-# Logs: /tmp/legion-web.log
+# Start Flask
+sudo python3 legion.py --web > /tmp/legion-web.log 2>&1 &
+# http://127.0.0.1:5000
 
-# Run all 17 test files (468 tests)
-for f in tests/test_*.py; do sudo python3 $f 2>&1 | grep Results; done
+# Run full test suite with colour report
+sudo bash run_tests.sh                          # offline only
+sudo bash run_tests.sh 192.168.85.11            # + live (SSH/MySQL/msfconsole + nmap scan)
+sudo bash run_tests.sh --unit                   # unit only
+sudo bash run_tests.sh --live 192.168.85.11     # live tests only
 
-# Key suites
-sudo python3 tests/test_behavioral.py          # 15 — most critical, run always
-sudo python3 tests/test_signal_chains.py       # 28 — scheduler/chain
-sudo python3 tests/test_phase1_right_panel.py  # 27 — right panel APIs
-sudo python3 tests/test_ui_fixes.py            # 42 — all session fixes regression
+# Minimum before every commit
+sudo python3 tests/test_behavioral.py
 ```
-
-## Branch History
-- `flask-clean` — **CURRENT** — built from visualUpgrades, zero upstream
-- `flask-rewrite` — previous attempt, archived
-- `visualUpgradesCC` — upstream integration, DO NOT USE for Flask
-- `visualUpgrades` — user's pure 77 commits, base for flask-clean
-- `master` — upstream Hackman238 code
 
 ## Architecture — Critical Files
 
@@ -58,162 +77,287 @@ sudo python3 tests/test_ui_fixes.py            # 42 — all session fixes regres
 | `app/web/routes.py` | All Flask API endpoints |
 | `app/web/static/js/legion.js` | All UI interactions, rendering, polling |
 | `app/web/static/css/legion.css` | Qt6 Fusion Dark palette replica |
-| `app/web/templates/index.html` | Qt6 layout — version string is here |
+| `app/web/templates/index.html` | Qt6 layout — version string lives here |
+| `app/web/templates/base.html` | JS/CSS includes with `?v=N` cache-bust |
 | `db/SqliteDbAdapter.py` | SQLAlchemy adapter — WAL mode enabled |
 | `app/importers/nmap_import.py` | Qt-free NmapImporter wrapper |
 | `app/importers/NmapImporter.py` | Original Qt6 importer — DO NOT modify |
+| `app/logging/legionLog.py` | Logger setup — _InMemoryLogHandler for log tab |
+| `tests/conftest.py` | Selenium fixtures (ports 5094–5099) |
+| `run_tests.sh` | Full suite runner with spinner/timer/options |
+
+---
 
 ## Known Critical Bugs & Patterns
 
 ### SQLite / Sessions
 - **WAL mode is required** — without it, frequent output writes freeze all Flask reads
-  - Set in `SqliteDbAdapter.establishSqliteConnection` via `event.listens_for` → `PRAGMA journal_mode=WAL`
-- **ORM objects detach after `session.close()`** — never use `getPortsByHostId()` (returns ORM) in scheduler; use `getPortsAndServicesByHostIP()` (returns plain dicts)
-- `session.remove()` creates fresh session; `session.close()` just closes connection but keeps session in scoped registry
-- NmapImporter uses `self.db.session()` (same scoped_session as scheduler thread) and commits but never removes
+- **ORM objects detach after `session.close()`** — never use `getPortsByHostId()` in scheduler; use `getPortsAndServicesByHostIP()` (returns plain dicts)
+- `session.remove()` creates fresh session; `session.close()` just closes connection
+- NmapImporter uses `self.db.session()` and commits but never removes
 
 ### Staged Nmap Chain
 - Stage ports: stage1=HTTP, stage2=NSE|vulners (slow, 2-3min), stage3=SMB/DB, stage4=FTP/SSH/RDP, stage5=remaining, stage6=high
-- `_chain_next_stage`: polls `_active_processes` until `_popen` is not None (process started), then `wait()`
-- After each stage XML import: `self.scheduler(isNmapImport=False)` — this is the correct Qt6 equivalent
-- Scheduler calls `session.remove()` before `getHosts` to bypass any cached session state
+- `_chain_next_stage`: polls `_active_processes` until `_popen` is not None, then `wait()`
+- After each stage XML import: `self.scheduler(isNmapImport=False)`
+- Scheduler calls `session.remove()` before `getHosts` to bypass cached session state
 
-### Scheduler
-- Uses `getPortsAndServicesByHostIP(hip, filters)` → plain dict rows → no ORM detachment
-- Duplicate check: queries process DB for same name+hostIp+port before running
-- Screenshooter: special case handled before portActions lookup; also guarded by `_screenshots_taken` in-memory set
-- `isNmapImport=False` for live scans; `isNmapImport=True` only for file import (respects `enable-scheduler-on-import` setting)
+### Scheduler / Process Queue
+- `checkProcessQueue()` respects `general_max_fast_processes` (all tools) and `general_max_slow_processes` (nmap only)
+- Both read from `self.settings` — attribute names are `general_max_fast_processes` and `general_max_slow_processes` (NOT `general_max_concurrent_scans` — that attribute does not exist)
+- Queue re-triggers when a process finishes via `_capture_output` → `checkProcessQueue()`
+- Interactive (PTY) processes are excluded from queue counting
 
 ### Process Output
-- `_capture_output` flushes every 5s or 100 lines (not 2s — reduces SQLite write frequency)
-- `storeProcessOutput` uses `filter_by(id=process_id)` — works by coincidence since process.id == process_output.id (1:1, both auto-increment)
-- Dynamic tool output tabs auto-poll every 2s while process status is Running
+- `_capture_output` writes to `{outputfile}.live_output` temp file (buffering=1 for immediate flush)
+- `/api/processes/<id>/output` reads temp file first (live), falls back to SQLite
+- SQLite written ONCE at process completion (not during)
+- nmap progress: `--stats-every 5s` on all nmap commands; parsed in `_capture_output` via regex `About ([\d.]+)% done(?:.*?ETC: ([\d:]+))?`; stored via `storeProcessPercent()`
 
 ### startTime Format
-- Stored as HUMAN_FORMAT: `'%d %b %Y %H:%M:%S.%f'` (e.g. `17 Mar 2026 19:12:35.171589`)
-- Snapshot route tries both `'%d %b %Y %H:%M:%S.%f'` and `'%Y%m%d%H%M%S%f'`
+- Stored as: `'%d %b %Y %H:%M:%S.%f'` (e.g. `17 Mar 2026 19:12:35.171589`)
+- Snapshot route tries both formats
+
+---
 
 ## Unresolved Issues (STILL OPEN — DO NOT MARK RESOLVED)
 
 ### #30 — nmap stage 2 freezes everything while running
-**Symptom**: While nmap stage 2 (NSE|vulners) actively runs (~2-3 min), the entire UI
-appears frozen — UI doesn't update, tabs don't refresh, nothing progresses. Everything
-resumes when stage 2 finishes. User confirmed STILL HAPPENING after all fixes below.
+**Symptom**: While stage 2 (NSE|vulners) actively runs (~2-3 min), entire UI appears frozen.
+**Attempted fixes — all insufficient**: WAL mode, temp file output, dynActive guard removal
+**True root cause NOT YET IDENTIFIED.** Do not close until user confirms freeze is gone.
 
-**Attempted fixes — all insufficient**:
-- v6.1: Removed dynActive guard from 6s periodic refresh
-- v6.2: Eliminated SQLite writes during capture (temp file approach)
-- v6.4: Fixed auto-poll Waiting→Running (separate issue, not the freeze)
+---
 
-**True root cause NOT YET IDENTIFIED.** See full troubleshooting log in conversation.
-Do not close this issue until user confirms the freeze no longer occurs.
+## Completed Phases Summary
+- **All Qt6 gaps closed** (v9.6–v9.9): input validation, python-script routing, file import, PostgreSQL adapter, ORDER BY whitelist, dup check layer 2, .bak, XML archive, screenshot blacklist, CSV export, applySettings, custom command, hydra, dup check for user actions, 3 UI buttons
+- **v10.0**: percent column, multi-host parallel, in-memory log, font size, port state filter
+- **v10.1**: font size tab-switch fix (CSS container inheritance)
+- **v10.2**: log buffer 10k, snapshot log demoted to DEBUG
+- **v10.3**: save-on-exit prompt, orange tab state preserved across host switches
+- **v10.4**: max_scans attribute name fixed, Queue logs demoted to DEBUG
 
-## Completed Phases
-- **Phase 2**: Close tab [X], host double-click, port right-click/double-click, save output
-- **Phase 3**: All tables sortable, column width drag+localStorage
-- **Phase 4**: Advanced filters working, host checked indicator, tab highlights, delete host
-- **Phase 5**: Log level filter, brute tab full (hydra via runCommand, send-to-brute)
+---
 
 ## Qt Replacement Patterns
 ```python
-# QMenu → JSON
 QMenu()                    → list of dicts
-menu.addAction("label")    → items.append({"label": "...", "action": "..."})
-
-# QProcess → subprocess
-MyQProcess(...)            → WebProcessStub(...)
 qProcess.start(cmd)        → subprocess.Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)
-qProcess.readAllStdout()   → background thread reads stdout line-by-line, flushes to DB
-
-# QTimer → threading
 QTimer.singleShot(ms, fn)  → threading.Timer(ms/1000, fn).start()
-
-# self.view.xxx() → no-op
 self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
-self.view.createNewTabForHost() → return None (renderDynamicToolTabs in JS handles it)
 ```
+
+---
 
 ## Key Systems
 
 ### Screenshooter
 - Configured in `[SchedulerSettings]`: `screenshooter="http,https,ssl,...", tcp`
-- Runs via `runCommand` (appears in process table immediately)
-- Requires eyewitness at `/usr/bin/eyewitness`
-- Output served via `/api/screenshots?path=` (not `<path:filename>` — Flask strips leading slash)
+- Runs via `runCommand`; requires eyewitness at `/usr/bin/eyewitness`
+- Output served via `/api/screenshots?path=` (not `<path:filename>`)
 - Screenshot PNG found by walking `{outputfile}-dir/` for first `.png`
+- `_deleted_hosts` set — hosts added on delete; `_run_screenshot` skips blacklisted IPs
 
-### Process Execution Flow
-1. `runCommand()` → WebProcessStub → `fastProcessQueue.put()` → `checkProcessQueue()`
-2. `checkProcessQueue()` → `subprocess.Popen` → sets `proc._start_mono = time.monotonic()` → starts `_capture_output` thread
-3. `_capture_output` → reads stdout → flushes to DB every 5s/100 lines → on finish: stores elapsed, marks Finished, imports XML (if nmap non-staged), calls scheduler, calls checkProcessQueue
-4. Browser polls `/api/snapshot` every 1.5s → `renderProcesses` → dynamic tabs auto-refresh
+### Log Tab
+- `_InMemoryLogHandler` in `app/logging/legionLog.py` — captures up to 10,000 lines
+- Attached to `legion` logger automatically — works WITHOUT stdout redirect
+- `/api/logs?level=INFO` reads in-memory buffer; falls back to `/tmp/legion-web.log`
+- Switch to DEBUG level in Log tab to see snapshot/queue debug lines
 
-### Services Tab
-- Left panel: Name + Port columns, both sortable by clicking header
-- `getServiceNames` returns `DISTINCT service.name, ports.portId` already
+### Font Size Control
+- Buttons: `#output-font-dec` / `#output-font-inc` (lower panel), `#log-font-dec` / `#log-font-inc` (log panel)
+- Set `font-size` on STABLE CONTAINER ELEMENTS (`#process-output-inline`, `#log-panel`, `#dynamic-tabs-container`)
+- Children use `font:inherit` so cascade applies automatically to dynamic elements
+- **Do NOT use `querySelectorAll('.tool-output-area')` or CSS `var()`** — both fail after tab switches
+
+### Orange Tab Indicators
+- `L._hostUnreadTabs` = `{hostId: {tabId: true}}` — persists across host switches
+- `markTabUnread(tabId)` → adds CSS class AND saves to `_hostUnreadTabs[selectedHostId]`
+- Host click → restores orange from `_hostUnreadTabs[newHostId]` before clearing
+- Tab click → removes CSS class AND deletes from `_hostUnreadTabs[selectedHostId]`
+
+### Version String
+- `_VERSION` JS constant reads from `#window-title` DOM text at page load
+- All places that update the title use `_VERSION` — **never hardcode version in JS**
+- Only `index.html` needs updating for a version bump
+
+### Process Queue Limits
+- `max-fast-processes` → `general_max_fast_processes` → total concurrent non-interactive
+- `max-slow-processes` → `general_max_slow_processes` → concurrent nmap only
+- Wrong attr name was `general_max_concurrent_scans` (does not exist) — fixed in v10.4
+
+---
+
+## Pending Features — Approved Design Decisions
+
+### LLM Host Analysis (Anthropic Claude)
+- **Model**: `claude-sonnet-4-6` (1M context window)
+- **API key**: Session-only. Check `ANTHROPIC_API_KEY` env var first; else `window.prompt()`; store in `L.anthropicKey`
+- **UI placement**: New "AI" tab in right-panel tab bar
+- **Route**: `POST /api/ai/analyze-host/<id>` — queries all host data, calls Anthropic, returns text
+- **System prompt**: Senior pentester framing — vulns, tools, attack vectors, misconfigs
+- **Dependencies**: `pip install anthropic`
+- **No streaming**: one-shot response
+
+### Pending Feature Backlog
+| # | Feature | Difficulty | Status | Notes |
+|---|---------|-----------|--------|-------|
+| 1 | Port state filter on Services table | Low | ✅ Done v10.0 | |
+| 2 | Comma/newline multi-host + parallel nmap processes | Low | ✅ Done v10.0 | |
+| 3 | Font size control in output windows | Low | ✅ Done v10.1 | |
+| 4 | Config editor find/search (F2) | Low–Med | ❌ Not started | Find bar, prev/next, match count |
+| 5 | Terminal notes Ctrl+B | Med | ❌ Not started | `xterm.getSelection()` → append to host notes |
+| 6 | Parallel nmap stages | High | ⏸ Deferred | Wait for Issue #30 first |
+| 7 | LLM host analysis (AI tab) | Med | ❌ Not started | Design approved above |
+| 8 | Save-on-exit prompt | Low | ✅ Done v10.3 | |
+
+### legion.conf Settings — Not Yet Wired
+#### High priority
+| Setting | Fix needed |
+|---------|-----------|
+| `nmap-path` | Use `self.settings.tools_path_nmap` in all nmap commands (currently hardcoded `nmap`) |
+| `hydra-path` | Use `self.settings.tools_path_hydra` in `brute_run` route |
+| `pyshodan-api-key` | Pass as env var `SHODAN_API_KEY` when invoking `pyShodan.py` |
+| `default-username` / `default-password` | Pre-fill brute tab on page load |
+| `username-wordlist-path` / `password-wordlist-path` | Pre-fill brute tab fields |
+| `no-username-services` | Hide username field for cisco/snmp/vnc etc |
+| `no-password-services` | Hide password field for oracle-sid/rsh etc |
+| `store-cleartext-passwords-on-exit` | Delete wordlist files on close if False |
+
+#### Low priority
+| Setting | Fix needed |
+|---------|-----------|
+| `screenshooter-timeout` | Use `general_screenshooter_timeout / 1000` as eyewitness delay |
+| `tool-output-black-background` | Force `#000` on `.tool-output-area` when True |
+| `default-terminal` | N/A by design — Flask PTY replaces external terminal |
+
+---
+
+## Comprehensive Troubleshooting Log
+
+### T1 — Stale port sockets causing Selenium test failures
+**Symptom**: `test_selenium_gaps` or `test_selenium_ui` fail with `OSError: [Errno 98] Address already in use`. 31/32 tests pass, 1 fails intermittently. Different test fails each run.
+**Root cause**: When a pytest session ends, the daemon Flask thread takes time to die, leaving the socket in LISTEN state briefly. Next pytest session tries to bind the same port and fails. The driver connects to the OLD server (different WebController), so `wc.runCommand()` processes never appear in the UI.
+**Fix**: `free_port()` in `run_tests.sh` — uses `ss -tlnp "sport = :PORT"` to get PID directly, kills it, polls `ss` until port is confirmed free (up to 10s).
+**Prevention**: `run_tests.sh` calls `free_port NNNN` before each Selenium suite. Also kills all test ports (5094–5099) in initial prep.
+**Key file**: `run_tests.sh` — `free_port()` function
+
+### T2 — checkDuplicate (Gap A8) silently blocking all user-triggered port actions
+**Symptom**: After a scan, right-clicking a port and running nikto/dirbuster/etc does nothing — no process appears, no tab opens.
+**Root cause**: Gap A8 added `checkDuplicate()` to `handleHostToolAction` and `handleServiceNameAction`. The condition was `if dup_mode != 'run': skip` which blocked ALL modes including `newTab`, `append`, and `askMe`. In Qt6, these modes showed a dialog; in Flask they silently did nothing.
+**Fix**: Change to `if dup_mode == 'skip': skip`. Only the explicit `skip` mode blocks. `newTab` and `append` run (creating a new process, which is the Flask equivalent). `askMe` runs (user's explicit right-click is sufficient intent).
+**Prevention**: Always test port action right-click after implementing any `checkDuplicate` changes.
+**Commit**: `0bf2770`
+
+### T3 — Stale version strings in legion.js
+**Symptom**: Title bar shows `v7.4-flask` after clicking a host, `v2.9-flask` after Save/Open.
+**Root cause**: 6 hardcoded version strings in `legion.js` — `loadHostDetail`, Save, Open, Save As, New, Help alert all had old versions hardcoded.
+**Fix**: `_VERSION` JS constant reads correct version from `#window-title` DOM text at page load. All 6 strings replaced with `_VERSION + ' – ' + suffix`.
+**Prevention**: NEVER hardcode version in JS. Only update `index.html`. JS reads it automatically.
+**Commit**: `59ce9a3`
+
+### T4 — Font size buttons stop working after tab switch
+**Symptom**: A+/A- buttons work initially. After switching to Log tab, increasing font, then switching back to Processes — buttons appear to do nothing.
+**Root cause (attempt 1)**: `querySelectorAll('.tool-output-area')` only catches elements in DOM at call time. After snapshot poll rebuilds dynamic tab elements, the inline style is lost.
+**Root cause (attempt 2)**: CSS `var(--output-font-size)` on `:root` conflicts with `font:inherit` in `.tool-output-area`. Also requires server restart to pick up new CSS rule.
+**Final fix**: Set `font-size` on three STABLE CONTAINER elements (`#process-output-inline`, `#log-panel`, `#dynamic-tabs-container`). Children use `font:inherit` — change cascades automatically to all output areas including dynamically created ones. No CSS changes needed.
+**Prevention**: Font control must target containers, not leaf elements. Dynamic tabs are recreated every 1.5s.
+**Commit**: `eed2345`
+
+### T5 — Orange tab indicators lost when switching hosts
+**Symptom**: Tabs turn orange (tab-unread) when data changes. Switching to another host and back — orange is gone even though the content was never viewed.
+**Root cause**: Host click handler stripped ALL `tab-unread` classes on every host switch. `markTabUnread` only re-fires when data changes again — if nothing changed since last visit, orange never returns.
+**Fix**: `L._hostUnreadTabs = {hostId: {tabId: true}}`. `markTabUnread()` saves state; host click restores orange from the dict for the new host; tab click deletes from the dict.
+**Commit**: `9c9188a`
+
+### T6 — nmap --stats-every 10s → 5s: sed missed list format
+**Symptom**: After running `sed -i 's/--stats-every 10s/--stats-every 5s/g'`, test F1.1 still failed showing `runStagedNmap=False`.
+**Root cause**: `addHosts` uses f-string format `'--stats-every 10s'` (caught by sed). `runStagedNmap` uses list format `['--stats-every', '10s']` (not caught by simple string sed).
+**Fix**: Second `sed -i "s/'--stats-every', '10s'/'--stats-every', '5s'/g"` for the list format. Test updated to check for both forms.
+**Prevention**: When searching for string patterns in Python code, check both f-string and list/tuple forms.
+
+### T7 — max_scans attribute name wrong (general_max_concurrent_scans doesn't exist)
+**Symptom**: `max-slow-processes` in `legion.conf` had no effect on nmap concurrency. Always used fallback of 3.
+**Root cause**: `checkProcessQueue()` read `general_max_concurrent_scans` but the Settings attribute is `general_max_slow_processes`. Wrong attribute always triggered the fallback.
+**Fix**: Change to `getattr(self.settings, 'general_max_slow_processes', 3)`.
+**Commit**: `4b69879`
+
+### T8 — xsltproc HTML export floods log with ERROR
+**Symptom**: Every nmap stage completion logged two ERROR lines: "nmap output export to html attempted, but failed" and "Could not convert nmap XML to HTML. Try: apt-get install xsltproc".
+**Root cause**: `DefaultNmapExporter.exportOutputToHtml()` tries to run xsltproc to generate HTML from nmap XML. xsltproc is not installed. Flask never uses the HTML output.
+**Fix**: Downgrade from `logger.error()` to `logger.debug()` with explanation. Install xsltproc with `apt-get install xsltproc` if HTML files are desired.
+**Commit**: `7e81e97`
+
+### T9 — Hydra SSH fails against Metasploitable (libssh2 MAC negotiation)
+**Symptom**: H1.1 (Hydra SSH test) fails with `kex error: no match for method mac algo client->server`.
+**Root cause**: Hydra's libssh2 only offers modern MACs (hmac-sha2-256-etm etc.). Metasploitable's OpenSSH 4.7 only accepts legacy MACs (hmac-md5, hmac-sha1). No Hydra flag can configure this — it's compiled into libssh2.
+**Fix**: H1.1 and H1.2 detect the `kex error` string and skip gracefully. H3 (FTP) and H2 (MySQL) prove the Hydra pipeline works. Note: `-oHostKeyAlgorithms=+ssh-rsa` flags are OpenSSH CLIENT flags — Hydra does not accept them.
+**Prevention**: FTP and MySQL are reliable targets for Hydra testing against Metasploitable. SSH requires a modern server.
+
+### T10 — Log tab empty without stdout redirect
+**Symptom**: Log tab shows "0 lines" unless server was started with `> /tmp/legion-web.log 2>&1`.
+**Root cause**: `/api/logs` route hardcoded to read `/tmp/legion-web.log`. The actual logger writes to `~/.local/share/legion/legion.log`, not that path.
+**Fix**: `_InMemoryLogHandler` (deque, maxlen=10000) added to `app/logging/legionLog.py`, attached to `legion` logger. `/api/logs` reads in-memory buffer first, falls back to file.
+**Commit**: `6eaf7e3` (buffer), `eed2345` (handler)
+
+### T11 — Snapshot polling floods log with INFO noise
+**Symptom**: Log tab fills with `[Snapshot] 1ms hosts=N...` every 1.5s, pushing real events out of the 2000-line buffer.
+**Fix**: Downgrade `[Snapshot]` log from INFO to DEBUG. Increase buffer from 2000 to 10000. Also downgraded `[Queue] running=N/max...` and `[Queue] Started pid=N` to DEBUG.
+**Commit**: `6eaf7e3`
+
+### T12 — Comma separator introduced semicolon injection vulnerability
+**Symptom**: After adding comma splitting for multi-host, test P8.5 (`127.0.0.1; rm -rf /` must be rejected) failed with status 200.
+**Root cause**: Initial split used `[\n,;]+` which treated `;` as a separator. `rm -rf /` then became a separate target that passed `validateNmapInput` (all chars are alphanumeric/dash/slash).
+**Fix**: Split only on `[\n,]+`. Semicolons remain injection-protection characters rejected by `validateNmapInput`.
+**Prevention**: Semicolon is a shell metacharacter. Never split on it when the split parts get passed to shell commands.
+
+### T13 — H3.3 Hydra FTP test timing race
+**Symptom**: `test_h3_hydra_ftp_password_in_wordlist` fails with `FileNotFoundError` — password wordlist file doesn't exist.
+**Root cause**: `_wait_for_process()` returns when the process DB status hits `Finished`. But `handleHydraFindings()` runs AFTER the status update in `_capture_output`. The test reads the wordlist file before it's been written.
+**Fix**: `time.sleep(1)` in `_run_hydra()` helper after `_wait_for_process()` returns.
+**Prevention**: After any process finishes, allow 1s for post-processing (hydra extraction, XML import, etc.) before reading side-effects.
+
+### T14 — Multiple legacy server processes
+**Symptom**: Browser shows stale data, old version strings, or processes from current wc don't appear.
+**Root cause**: Old `python3 legion.py` processes from previous sessions still running on port 5000.
+**Fix**: `sudo pkill -f "legion.py"` before starting new server. Verify with `ps aux | grep legion.py`.
+**Prevention**: `run_tests.sh` kills existing legion servers in initial prep.
+
+### T15 — wc.start() resets fastProcessQueue mid-session
+**Symptom**: In Selenium tests, `_ensure_process()` calls `wc.start()` which resets `fastProcessQueue = queue.Queue()`. Processes queued before the call are lost.
+**Root cause**: `wc.start()` is designed for project initialization, not mid-session use. Calling it resets the queue, process counters, and process list — but NOT `_active_processes`.
+**Prevention**: Do not call `wc.start()` in test helpers unless you intend to reset queue state. Use `wc.runCommand()` directly.
+
+---
+
+## Selenium Test Infrastructure
+
+### Port Assignments
+| Port | Suite |
+|------|-------|
+| 5099 | test_selenium_ui.py |
+| 5098 | test_selenium_project.py |
+| 5097 | test_selenium_multihost.py |
+| 5096 | test_selenium_gaps.py |
+| 5094 | test_selenium_terminal.py |
+
+### Known Gotchas
+- **Firefox as root**: must `os.environ.pop('XAUTHORITY', None); os.environ.pop('DISPLAY', None)` before starting driver
+- **Geckodriver path**: specify `Service('/usr/bin/geckodriver')` explicitly
+- **Dynamic tabs**: only render for `L.selectedHostIp` — must select host before checking tabs
+- **Stale elements**: use JS `querySelectorAll` for process table — snapshot re-renders every 1.5s
+- **all_processes_done()**: uses JS, requires ≥1 Finished process (all-Crashed ≠ done)
+
+### Test VM (192.168.85.11 — Metasploitable)
+- SSH: port 22, msfadmin:msfadmin (needs `-oHostKeyAlgorithms=+ssh-rsa -oPubkeyAcceptedAlgorithms=+ssh-rsa` for OpenSSH client; Hydra libssh2 cannot connect — MAC incompatibility)
+- MySQL: port 3306, root with no password
+- FTP: port 21, msfadmin:msfadmin (works with Hydra)
+- HTTP: ports 80, 81, 443, 4443, 8080, 8081, 8082, 8180
+- Has CVEs from vulners.nse after stage 2
+
+---
 
 ## Commit Authors
 - **ifly53e** (62 commits): Primary developer
 - **therearesomewhocallmetimatviasat** (17 commits): Testing + features
 - Both are Tim McLean (the user)
-
-## Pending Features — Approved Design Decisions
-
-### Percent Column (nmap real-time progress)
-- **Goal**: Populate the percent + ETC columns in the process table for nmap processes
-- **How**: Add `--stats-every 5s` to all nmap commands; parse `About X.X% done; ETC: HH:MM` from `_capture_output` per line; call `storeProcessPercent(dbId, "X% ETC:HH:MM")`
-- **Non-nmap tools**: percent stays blank — acceptable
-- **Snapshot**: already returns `p.percent`; JS line 688 already renders it — no UI changes needed beyond populating the field
-- **nmap commands to update**: `runStagedNmap`, `addHosts` nmap path, `handleHostToolAction` nmap actions
-
-### LLM Host Analysis (Anthropic Claude)
-- **Model**: `claude-sonnet-4-6` (1M context window)
-- **API key**: Session-only (never persisted to disk). Check `ANTHROPIC_API_KEY` env var first; if absent, `window.prompt()` the user on first use, store in `L.anthropicKey` JS variable for the session
-- **UI placement**: New "AI" tab in the right-panel tab bar (alongside Info, Services, Scripts, CVEs, Notes)
-- **Route**: `POST /api/ai/analyze-host/<id>` — queries all host data (ports, CVEs, scripts, OS, notes via existing repos), builds prompt, calls Anthropic API, returns response text
-- **System prompt**:
-  ```
-  You are a senior penetration tester analyzing network scan data from Legion.
-  Given the following host data from an authorized security assessment, provide:
-  1. Key vulnerabilities to investigate based on discovered services and CVEs
-  2. Specific tools to run next (with exact commands where helpful)
-  3. Attack vectors most likely to yield access
-  4. Any misconfigurations evident from service versions
-  Be specific and actionable. Reference exact port numbers and service versions.
-  ```
-- **Dependencies**: `anthropic` Python package (`pip install anthropic`)
-- **Error handling**: If API call fails (no key, network error, rate limit), show error in the AI tab
-- **No streaming**: one-shot response (1-2s wait acceptable at Sonnet pricing)
-
-### Pending Feature Backlog
-| # | Feature | Difficulty | Status | Notes |
-|---|---------|-----------|--------|-------|
-| 1 | Port state filter on Services table | Low | ✅ Done v10.0 | Hide closed/filtered by default; quick toggle |
-| 2 | Comma/newline multi-host + parallel nmap processes | Low | ✅ Done v10.0 | Split input, one runCommand per host |
-| 3 | Font size control in output windows | Low | ✅ Done v10.1 | +/− buttons, localStorage, CSS container inheritance |
-| 4 | Config editor find/search (F2) | Low–Med | ❌ Not started | Find bar, prev/next, match count |
-| 5 | Terminal notes Ctrl+B | Med | ❌ Not started | `xterm.getSelection()` → append to host notes via POST |
-| 6 | Parallel nmap stages | High | ⏸ Deferred | Wait for Issue #30 (stage 2 freeze) to be resolved first |
-| 7 | LLM host analysis (AI tab) | Med | ❌ Not started | Anthropic Claude sonnet-4-6, session-key, new AI right-panel tab — design approved, see above |
-| 8 | Save-on-exit prompt | Low | ✅ Done v10.3 | 3-button modal (Save/Don't Save/Cancel) + beforeunload warning |
-
-### legion.conf Settings — Not Yet Wired in Flask
-
-#### High priority (functional impact)
-| Setting | Current state | Fix needed |
-|---------|--------------|------------|
-| `nmap-path` (`/usr/bin/nmap`) | `runStagedNmap` and `addHosts` hardcode `nmap` | Use `self.settings.tools_path_nmap` in all nmap commands |
-| `hydra-path` (`/usr/bin/hydra`) | `brute_run` route hardcodes `hydra` | Use `self.settings.tools_path_hydra` |
-| `pyshodan-api-key` | Script has API key hardcoded; setting ignored | Pass as env var `SHODAN_API_KEY` when invoking `pyShodan.py` |
-| `default-username` / `default-password` | Brute tab starts empty | Pre-fill brute tab on page load from settings |
-| `username-wordlist-path` / `password-wordlist-path` | Brute tab starts empty | Pre-fill brute tab userlist/passlist fields |
-| `no-username-services` (cisco,snmp,vnc…) | Username field always shown | Hide/disable username field when selected service is in this list |
-| `no-password-services` (oracle-sid,rsh…) | Password field always shown | Hide/disable password field when selected service is in this list |
-| `store-cleartext-passwords-on-exit` | Wordlist files never deleted | Check flag in `closeProject()` — delete wordlist files if False |
-
-#### Low priority (cosmetic / edge case)
-| Setting | Current state | Fix needed |
-|---------|--------------|------------|
-| `screenshooter-timeout` (15000ms) | eyewitness `--delay 5` hardcoded | Use `general_screenshooter_timeout / 1000` as delay |
-| `tool-output-black-background` | Output area uses `var(--base)` always | If True, force `#000` background on `.tool-output-area` |
-| `default-terminal` | Flask always uses PTY in-app | N/A by design — Flask PTY replaces external terminal |
