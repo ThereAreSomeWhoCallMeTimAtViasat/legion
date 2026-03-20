@@ -37,5 +37,6 @@ class DefaultNmapExporter(NmapExporter):
             p.wait()
             self.shell.move(f"{fileName}.html", outputFolder)
         except:
-            self.logger.error("nmap output export to html attempted, but failed.")
-            self.logger.error('Could not convert nmap XML to HTML. Try: apt-get install xsltproc')
+            # HTML export is a Qt6 display feature not used by the Flask web UI.
+            # xsltproc missing is expected and not an error in this context.
+            self.logger.debug("nmap HTML export skipped (xsltproc not available — not needed for Flask UI)")
