@@ -1378,11 +1378,17 @@ class WebController:
         outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{name}-{ip}")
         command = command.replace('[OUTPUT]', outputfile)
 
-        # Qt6: checkDuplicate before running user-triggered host actions
+        # Qt6: checkDuplicate before running user-triggered host actions.
+        # Only 'skip' actually blocks the run. Qt6's other modes ('newTab',
+        # 'append', 'askMe') all resulted in the tool running — via a new tab,
+        # appended output, or a user-confirmation dialog respectively.
+        # Flask has no Qt dialog, so 'askMe' falls through to run (user's
+        # explicit right-click is intent enough). 'newTab' and 'append' both
+        # run — Flask's process model treats every run as a new process anyway.
         dup_mode = self.checkDuplicate(name, ip, '')
-        if dup_mode != 'run':
-            log.info(f"[WebController] handleHostToolAction: duplicate {name} on {ip} — mode={dup_mode}, skipping")
-            return {'skipped': True, 'reason': dup_mode, 'tool': name, 'ip': ip}
+        if dup_mode == 'skip':
+            log.info(f"[WebController] handleHostToolAction: duplicate {name} on {ip} — mode=skip, not running")
+            return {'skipped': True, 'reason': 'skip', 'tool': name, 'ip': ip}
 
         # Detect python-script-* host actions and route to real Python scripts
         # Qt6: PythonImporter.run() ran scripts/python/<name>.py with dbHost + session
@@ -1432,11 +1438,15 @@ class WebController:
         results = []
         for target in targets:
             ip, port, protocol = target[0], target[1], target[2] if len(target) > 2 else 'tcp'
-            # Qt6: checkDuplicate before running user-triggered port actions
+            # Qt6: checkDuplicate before running user-triggered port actions.
+            # Only block on 'skip' — all other modes run the tool:
+            #   'newTab'  → Qt6 created "tool (80/tcp) [2]"; Flask runs a new process (same effect)
+            #   'append'  → Qt6 appended output to existing tab; Flask runs a new process
+            #   'askMe'   → Qt6 showed a dialog; Flask has no dialog so we run (user intent is clear)
             dup_mode = self.checkDuplicate(tool, ip, port, protocol)
-            if dup_mode != 'run':
-                log.info(f"[WebController] handleServiceNameAction: duplicate {tool} on {ip}:{port} — mode={dup_mode}, skipping")
-                results.append({'skipped': True, 'reason': dup_mode, 'tool': tool, 'ip': ip, 'port': port})
+            if dup_mode == 'skip':
+                log.info(f"[WebController] handleServiceNameAction: duplicate {tool} on {ip}:{port} — mode=skip, not running")
+                results.append({'skipped': True, 'reason': 'skip', 'tool': tool, 'ip': ip, 'port': port})
                 continue
             command = str(action[2])
             runningFolder = self.logic.activeProject.properties.runningFolder
