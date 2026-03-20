@@ -7,9 +7,11 @@ Run with: sudo python3 tests/test_phase5_polish.py
 Tests for Phase 5 gap items:
   L1-L7:  Log tab level filter — reads log file, filters INFO/DEBUG,
            auto-loads when Log tab is clicked
-  B1-B8:  Brute tab full implementation — hydra command built correctly,
+  B1-B15: Brute tab full implementation — hydra command built correctly,
            process appears in process table, credential extraction wired,
-           send-to-brute populates tab fields
+           send-to-brute populates tab fields, defaults pre-filled, hide/show
+  C1-C10: store-cleartext-passwords-on-exit wired, screenshooter-timeout,
+           tool-output-black-background CSS+JS
 
 Qt6 reference:
   - Log: handleLogFileLevelChange → reloadLogFile reads /tmp/legion-web.log
@@ -40,6 +42,7 @@ def ok(v, msg=""): return True if v else f"FAIL: {msg}"
 
 JS   = open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')).read()
 HTML = open(os.path.join(PROJECT_ROOT, 'app/web/templates/index.html')).read()
+CSS  = open(os.path.join(PROJECT_ROOT, 'app/web/static/css/legion.css')).read()
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 from app.web.testhelper import create_test_app
@@ -247,6 +250,92 @@ def test_b15_brute_run_accepts_single_creds():
     return ok(r.status_code in (200, 400, 404),
               f"unexpected status={r.status_code}: {r.get_data(as_text=True)[:200]}")
 test("B1.15: /api/brute/run accepts single username/password params", test_b15_brute_run_accepts_single_creds)
+
+
+# ══════════════════════════════════════════════════════════════
+# C: Conversation C — store-cleartext + low-priority settings
+# ══════════════════════════════════════════════════════════════
+
+print("\n" + "="*60)
+print("C: store-cleartext-passwords-on-exit + low-priority settings")
+print("="*60 + "\n")
+
+def test_c1_store_cleartext_wired_in_start():
+    """WebController.start() must call _apply_store_wordlists_setting"""
+    import inspect
+    src = inspect.getsource(wc.start)
+    return ok('_apply_store_wordlists_setting' in src,
+              "start() does not call _apply_store_wordlists_setting")
+test("C1.1: start() wires store-cleartext-passwords-on-exit", test_c1_store_cleartext_wired_in_start)
+
+def test_c2_store_cleartext_wired_in_apply():
+    """WebController.applySettings() must call _apply_store_wordlists_setting"""
+    import inspect
+    src = inspect.getsource(wc.applySettings)
+    return ok('_apply_store_wordlists_setting' in src,
+              "applySettings() does not call _apply_store_wordlists_setting")
+test("C1.2: applySettings() wires store-cleartext-passwords-on-exit", test_c2_store_cleartext_wired_in_apply)
+
+def test_c3_apply_store_sets_project_property():
+    """_apply_store_wordlists_setting must set project.properties.storeWordListsOnExit"""
+    import inspect
+    src = inspect.getsource(wc._apply_store_wordlists_setting)
+    return ok('setStoreWordListsOnExit' in src and 'brute_store_cleartext_passwords_on_exit' in src,
+              "_apply_store_wordlists_setting missing setStoreWordListsOnExit or setting attr")
+test("C1.3: _apply_store_wordlists_setting calls ProjectManager.setStoreWordListsOnExit", test_c3_apply_store_sets_project_property)
+
+def test_c4_store_cleartext_effect():
+    """storeWordListsOnExit on active project must match the setting from legion.conf"""
+    expected = (getattr(wc.settings, 'brute_store_cleartext_passwords_on_exit', 'True') == 'True')
+    actual = wc.logic.activeProject.properties.storeWordListsOnExit
+    return ok(actual == expected,
+              f"project.storeWordListsOnExit={actual} but setting says store={expected}")
+test("C1.4: project.storeWordListsOnExit matches legion.conf setting", test_c4_store_cleartext_effect)
+
+def test_c5_screenshooter_uses_timeout():
+    """_run_screenshot must use general_screenshooter_timeout not hardcoded --delay 5"""
+    import inspect
+    src = inspect.getsource(wc._run_screenshot)
+    return ok('general_screenshooter_timeout' in src and '--delay 5' not in src,
+              "_run_screenshot still has hardcoded --delay 5 or missing general_screenshooter_timeout")
+test("C1.5: _run_screenshot uses general_screenshooter_timeout", test_c5_screenshooter_uses_timeout)
+
+def test_c6_screenshooter_delay_converts_ms():
+    """screenshooter delay must convert ms to seconds (// 1000)"""
+    import inspect
+    src = inspect.getsource(wc._run_screenshot)
+    return ok('1000' in src and 'delay_s' in src,
+              "_run_screenshot missing ms→s conversion (delay_s or 1000 not found)")
+test("C1.6: _run_screenshot converts ms to seconds", test_c6_screenshooter_delay_converts_ms)
+
+def test_c7_ui_prefs_route():
+    """/api/settings/ui-prefs must return 200 JSON"""
+    r = client.get('/api/settings/ui-prefs')
+    return ok(r.status_code == 200 and r.is_json,
+              f"status={r.status_code}")
+test("C1.7: /api/settings/ui-prefs returns 200 JSON", test_c7_ui_prefs_route)
+
+def test_c8_ui_prefs_has_black_bg_key():
+    """/api/settings/ui-prefs must include tool_output_black_background as a bool"""
+    r = client.get('/api/settings/ui-prefs')
+    if r.status_code != 200: return "SKIP"
+    d = r.get_json()
+    val = d.get('tool_output_black_background')
+    return ok(isinstance(val, bool),
+              f"tool_output_black_background missing or not bool: {val!r}")
+test("C1.8: /api/settings/ui-prefs has tool_output_black_background bool", test_c8_ui_prefs_has_black_bg_key)
+
+def test_c9_css_black_output_rule():
+    """legion.css must have .black-output-bg rule for tool-output-area"""
+    return ok('black-output-bg' in CSS and 'tool-output-area' in CSS,
+              "CSS missing black-output-bg rule")
+test("C1.9: CSS has black-output-bg .tool-output-area rule", test_c9_css_black_output_rule)
+
+def test_c10_js_fetches_ui_prefs():
+    """legion.js must fetch /api/settings/ui-prefs on page load"""
+    return ok('/api/settings/ui-prefs' in JS and 'black-output-bg' in JS,
+              "JS missing ui-prefs fetch or black-output-bg class toggle")
+test("C1.10: JS fetches /api/settings/ui-prefs and applies black-output-bg", test_c10_js_fetches_ui_prefs)
 
 
 # ══════════════════════════════════════════════════════════════

@@ -803,6 +803,16 @@ def shutdown():
     wc.killRunningProcesses()
     return jsonify({"status": "ok", "message": "Shutdown complete"})
 
+@web_bp.get("/api/settings/ui-prefs")
+def settings_ui_prefs():
+    """Return UI-affecting settings so the browser can apply them at page load."""
+    s = _wc().settings
+    raw = getattr(s, 'general_tool_output_black_background', 'False')
+    return jsonify({
+        "tool_output_black_background": str(raw).strip().lower() == 'true',
+    })
+
+
 @web_bp.get("/api/settings/legion-conf")
 def settings_get():
     s = AppSettings()

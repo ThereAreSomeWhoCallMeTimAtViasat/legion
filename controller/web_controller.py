@@ -85,6 +85,19 @@ class WebController:
             log.info("[WebController] applySettings: settings reloaded from disk")
         except Exception as e:
             log.error(f"[WebController] applySettings error: {e}")
+        # Qt6: controller.py:213 — wire store-cleartext-passwords-on-exit after settings reload
+        self._apply_store_wordlists_setting()
+
+    def _apply_store_wordlists_setting(self):
+        """Wire brute_store_cleartext_passwords_on_exit from settings to the active project.
+        Qt6: controller.py:213 — called in applySettings and after project creation/open."""
+        try:
+            store = getattr(self.settings, 'brute_store_cleartext_passwords_on_exit', 'True') == 'True'
+            from app.ProjectManager import ProjectManager
+            ProjectManager.setStoreWordListsOnExit(self.logic.activeProject, store)
+            log.debug(f"[WebController] storeWordListsOnExit set to {store}")
+        except Exception as e:
+            log.debug(f"[WebController] _apply_store_wordlists_setting: {e}")
 
     # ──────────────────────────────────────────────────────────────
     # GROUP A: Lifecycle methods
@@ -101,6 +114,8 @@ class WebController:
         self.slowProcessesRunning = 0
         self._state_changed = True
         log.info(f"[WebController] start('{title}')")
+        # Qt6: controller.py:213 — apply store-cleartext setting on project init
+        self._apply_store_wordlists_setting()
 
     def createNewProject(self):
         """controller.py:303"""
@@ -401,7 +416,12 @@ class WebController:
         url = f"{proto}://{ip}:{port}"
 
         outputfile = os.path.join(screenshots_dir, f"{getTimestamp()}-{ip}-{port}")
-        cmd = (f"xvfb-run -a {eyewitness} --single {url} --no-prompt --web --delay 5 "
+        # Qt6: screenshooter-timeout is in ms; eyewitness --delay takes seconds
+        try:
+            delay_s = max(1, int(getattr(self.settings, 'general_screenshooter_timeout', '15000')) // 1000)
+        except (ValueError, TypeError):
+            delay_s = 15
+        cmd = (f"xvfb-run -a {eyewitness} --single {url} --no-prompt --web --delay {delay_s} "
                f"-d {outputfile}-dir")
 
         log.info(f"[WebController] Screenshot: {url}")

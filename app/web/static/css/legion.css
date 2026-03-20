@@ -243,6 +243,9 @@ button:active{background:var(--dark)}
   box-sizing:border-box;
 }
 
+/* tool-output-black-background setting → body gets this class when enabled */
+body.black-output-bg .tool-output-area{background:#000}
+
 /* === OS TAB (splitter: os-list | os-hosts) === */
 .os-split{display:flex;flex:1;min-height:0;overflow:hidden}
 .os-split .table-wrap{flex:1}

@@ -3092,6 +3092,15 @@ document.addEventListener('DOMContentLoaded', function() {
         document.addEventListener('legion:ports-rendered', applyStateFilter);
     })();
 
+    /* ── UI preferences (tool-output-black-background etc.) — applied once at load ── */
+    fetch('/api/settings/ui-prefs').then(function(r){ return r.json(); }).then(function(d) {
+        if (d.tool_output_black_background) {
+            document.body.classList.add('black-output-bg');
+        } else {
+            document.body.classList.remove('black-output-bg');
+        }
+    }).catch(function(){});
+
     /* ── Brute force tab (Qt6: callHydra → buildHydraCommand → runCommand) ── */
 
     /* Brute defaults: loaded once, used for hide/show and pre-fill */
