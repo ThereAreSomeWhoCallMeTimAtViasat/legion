@@ -69,6 +69,11 @@ function markTabUnread(tabId) {
        Previous code skipped active tabs → user never saw orange when watching Services tab. */
     var tabBtn = document.querySelector('[data-tab="' + tabId + '"]');
     if (tabBtn) tabBtn.classList.add('tab-unread');
+    /* Persist unread state per host so orange survives host switches */
+    if (L.selectedHostId) {
+        if (!L._hostUnreadTabs[L.selectedHostId]) L._hostUnreadTabs[L.selectedHostId] = {};
+        L._hostUnreadTabs[L.selectedHostId][tabId] = true;
+    }
 }
 
 /* ── Version string — read once from the DOM so JS never has a stale hardcoded value ── */
@@ -92,6 +97,7 @@ var L = {
     selectedService: null,
     _hostProcSig: null,
     _nmapSig: null,
+    _hostUnreadTabs: {},   /* hostId → {tabId: true} — persists orange indicators across host switches */
     _lastProcCount: 0,
     _pollCount: 0,
     _hostSort: {col: 'ip', dir: 1},   /* Qt6: sort(3, Descending) = by Host/IP */
@@ -1199,10 +1205,17 @@ function initInteractions() {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.hostId) return;
         var hostId = parseInt(tr.dataset.hostId);
-        /* Qt6: clearAllTabHighlights — reset orange tab-unread dots on host switch */
+        /* Qt6: clearAllTabHighlights then restore per-host unread state.
+           Tabs that were unread for the new host get orange back; tabs for
+           the previous host had their state already saved in L._hostUnreadTabs. */
         if (L.selectedHostId !== hostId) {
+            var unreadForNewHost = L._hostUnreadTabs[hostId] || {};
             $('right-tab-bar').querySelectorAll('.tab-btn').forEach(function(btn) {
                 btn.classList.remove('tab-unread');
+                var tabId = btn.dataset.tab || '';
+                if (tabId && unreadForNewHost[tabId]) {
+                    btn.classList.add('tab-unread');
+                }
             });
         }
         L.selectedHostId = hostId;
@@ -3091,13 +3104,17 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     }
-    /* Clear unread on tab click */
+    /* Clear unread on tab click — also remove from per-host persistent state */
     document.addEventListener('click', function(e) {
         var btn = e.target.closest('.tab-btn');
         if (btn) {
             btn.classList.remove('tab-unread');
             var tabId = btn.dataset.tab || '';
             if (tabId && L.snapshot) lastSeenData[tabId] = JSON.stringify(L.snapshot).length;
+            /* Remove from host's persisted unread set so it doesn't come back on host switch */
+            if (tabId && L.selectedHostId && L._hostUnreadTabs[L.selectedHostId]) {
+                delete L._hostUnreadTabs[L.selectedHostId][tabId];
+            }
         }
     });
 
