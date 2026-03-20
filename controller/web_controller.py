@@ -1270,20 +1270,22 @@ class WebController:
         tool_output_dir = self.logic.activeProject.properties.outputFolder
         outputfile = os.path.join(tool_output_dir, f"{getTimestamp()}-nmap-scan")
 
+        nmap_bin = getattr(self.settings, 'tools_path_nmap', '').strip() or 'nmap'
+
         if scanMode == 'Easy':
             if runStagedNmap:
                 return self.runStagedNmap(target, discovery=runHostDiscovery, enable_ipv6=enableIPv6)
             elif runHostDiscovery:
-                command = f"nmap -sV -O --version-light -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
+                command = f"{nmap_bin} -sV -O --version-light -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
                 return self.runCommand(command=command, name='nmap', tabTitle='nmap (discovery)',
                                        hostIp=target, outputfile=outputfile)
             else:
-                command = f"nmap -sL -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
+                command = f"{nmap_bin} -sL -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
                 return self.runCommand(command=command, name='nmap', tabTitle='nmap (list)',
                                        hostIp=target, outputfile=outputfile)
         elif scanMode == 'Hard':
             opts = ' '.join(nmapOptions or [])
-            command = f"nmap {opts} -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
+            command = f"{nmap_bin} {opts} -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
             return self.runCommand(command=command, name='nmap', tabTitle=f'nmap (custom {opts})',
                                    hostIp=target, outputfile=outputfile)
 
@@ -1433,6 +1435,11 @@ class WebController:
                 else:
                     arg = ip
                 command = f'python3 {script_path} {arg}'
+                if script_slug == 'pyShodan':
+                    api_key = getattr(self.settings, 'tools_pyshodan_api_key', '').strip()
+                    if api_key:
+                        import shlex
+                        command = f"SHODAN_API_KEY={shlex.quote(api_key)} {command}"
                 log.info(f"[WebController] python-script-{script_slug} → {command}")
             else:
                 log.warning(f"[WebController] python-script-{script_slug}: script not found at {script_path}")
@@ -1566,7 +1573,8 @@ class WebController:
             return
 
         # Build command
-        tokens = ['nmap']
+        nmap_bin = getattr(self.settings, 'tools_path_nmap', '').strip() or 'nmap'
+        tokens = [nmap_bin]
         if enable_ipv6:
             tokens.append('-6')
         if discovery:
@@ -1580,7 +1588,7 @@ class WebController:
                 tokens.extend(['-p', port_values])
             tokens.extend(['-vvvv', host_arg, '--stats-every', '5s', '-oA', outputfile])
         elif stageOp == 'NSE':
-            tokens = ['nmap']
+            tokens = [nmap_bin]
             if enable_ipv6:
                 tokens.append('-6')
             # --min-parallelism: run multiple NSE script instances concurrently so

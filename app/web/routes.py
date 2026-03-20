@@ -924,7 +924,8 @@ def brute_run():
     outputfile = os.path.join(output_folder, f"{getTimestamp()}-hydra-{ip}-{port}")
 
     # Qt6: bWidget.buildHydraCommand(runningFolder, userlistPath, passlistPath)
-    parts = ['hydra', '-s', port]
+    hydra_bin = getattr(wc.settings, 'tools_path_hydra', '').strip() or 'hydra'
+    parts = [hydra_bin, '-s', port]
     if userlist and passlist:
         parts += ['-L', userlist, '-P', passlist]
     elif userlist:

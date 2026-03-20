@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pyShodan import PyShodan
+import os
 import sys
 
 class PyShodanScript():
@@ -23,7 +24,7 @@ class PyShodanScript():
     def lookup(self, ip):
         try:
             pyShodanObj = PyShodan()
-            pyShodanObj.apiKey = "SNYEkE0gdwNu9BRURVDjWPXePCquXqht"
+            pyShodanObj.apiKey = os.environ.get('SHODAN_API_KEY', '')
             pyShodanObj.createSession()
             pyShodanResults = pyShodanObj.searchIp(ip, allData=True)
             if isinstance(pyShodanResults, dict) and pyShodanResults:
