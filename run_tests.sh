@@ -15,8 +15,8 @@
 set -uo pipefail
 
 # ── Colours ────────────────────────────────────────────────────────────────────
-GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m';  BOLD='\033[1m';   DIM='\033[2m'; NC='\033[0m'
+GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'
+CYAN=$'\033[0;36m';  BOLD=$'\033[1m';  DIM=$'\033[2m'; NC=$'\033[0m'
 
 # ── Parse arguments ────────────────────────────────────────────────────────────
 RUN_UNIT=false; RUN_SELENIUM=false; RUN_LIVE=false; LIVE_TARGET=""
@@ -134,18 +134,20 @@ trap 'spinner_stop; echo -e "\n${RED}Interrupted.${NC}"; exit 130' INT TERM
 # ── Free a TCP port and wait until it is confirmed free ───────────────────────
 free_port() {
     local port="$1"
-    # Kill whoever holds the port
-    fuser -k "${port}/tcp" 2>/dev/null || true
+    # Extract PID directly from ss (most reliable on Linux)
     local pid
+    pid=$(ss -tlnp "sport = :${port}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+    [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
+    # Fallback: fuser and lsof
+    fuser -k "${port}/tcp" 2>/dev/null || true
     pid=$(lsof -ti :"$port" 2>/dev/null | head -1 || true)
     [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
-    # Wait (up to 10s) until ss confirms the port is no longer in LISTEN/CLOSE_WAIT
+    # Wait (up to 10s) until ss confirms the port is released
     local i=0
     while ss -tlnp 2>/dev/null | grep -q ":${port}\b" && [[ $i -lt 20 ]]; do
         sleep 0.5
         i=$(( i + 1 ))
     done
-    # One extra breath so the OS finalises the socket table
     sleep 0.3
 }
 
@@ -226,11 +228,15 @@ run_unit() {
     f=$(_extract "$rl" "failed")
     s=$(_extract "$rl" "skipped")
 
-    if [[ "$f" -eq 0 ]]; then
+    if [[ "$f" -eq 0 && "$s" -eq 0 ]]; then
         print_result "$name" "pass" "$p" "$f" "$s" "$secs"
     else
-        print_result "$name" "fail" "$p" "$f" "$s" "$secs"
-        echo "$out" | grep "^  ✗" | head -10 | sed "s/^/      /" >&2
+        [[ "$f" -gt 0 ]] && print_result "$name" "fail" "$p" "$f" "$s" "$secs" \
+                         || print_result "$name" "pass" "$p" "$f" "$s" "$secs"
+        # Print failed test names
+        echo "$out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
+        # Print skipped test names
+        echo "$out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
     fi
 }
 
@@ -256,8 +262,8 @@ run_pytest() {
             local err
             err=$(echo "$out" | grep -i "error" | head -2 | tr '\n' ' ' || true)
             print_result "$name" "fail" 0 1 0 "$secs"
-            echo "      ${err:-rc=$rc}" >&2
-            echo "$out" | tail -8 | sed "s/^/      /" >&2
+            echo "      ${err:-rc=$rc}"
+            echo "$out" | tail -8 | sed "s/^/      /"
         fi
         return
     fi
@@ -268,9 +274,14 @@ run_pytest() {
 
     if [[ "$rc" -eq 0 ]]; then
         print_result "$name" "pass" "$p" "$f" "$s" "$secs"
+        # Print skipped test names if any (deselected by -m marker don't count)
+        echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
     else
         print_result "$name" "fail" "$p" "$f" "$s" "$secs"
-        echo "$out" | grep "FAILED" | head -10 | sed "s/^/      /" >&2
+        # Print every failed test name
+        echo "$out" | grep "^FAILED" | sed "s/^FAILED /      ${RED}FAILED${NC} /"
+        # Print skipped test names
+        echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
     fi
 }
 
@@ -324,9 +335,16 @@ if $RUN_LIVE; then
     t7_p=$(_extract "$t7_line" "passed")
     t7_f=$(_extract "$t7_line" "failed")
     t7_s=$(_extract "$t7_line" "skipped")
-    [[ "$t7_f" -eq 0 ]] \
-        && print_result "$local_name" "pass" "$t7_p" "$t7_f" "$t7_s" "$(( $(date +%s) - t0 ))" \
-        || print_result "$local_name" "fail" "$t7_p" "$t7_f" "$t7_s" "$(( $(date +%s) - t0 ))"
+    _t7_secs=$(( $(date +%s) - t0 ))
+    if [[ "$t7_f" -eq 0 && "$t7_s" -eq 0 ]]; then
+        print_result "$local_name" "pass" "$t7_p" "$t7_f" "$t7_s" "$_t7_secs"
+    else
+        [[ "$t7_f" -gt 0 ]] \
+            && print_result "$local_name" "fail" "$t7_p" "$t7_f" "$t7_s" "$_t7_secs" \
+            || print_result "$local_name" "pass" "$t7_p" "$t7_f" "$t7_s" "$_t7_secs"
+        echo "$t7_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
+        echo "$t7_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
+    fi
 fi
 
 if $RUN_LIVE; then
@@ -344,9 +362,16 @@ if $RUN_LIVE; then
     hydra_p=$(_extract "$hydra_line" "passed")
     hydra_f=$(_extract "$hydra_line" "failed")
     hydra_s=$(_extract "$hydra_line" "skipped")
-    [[ "$hydra_f" -eq 0 ]] \
-        && print_result "$hydra_name" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$(( $(date +%s) - t0 ))" \
-        || print_result "$hydra_name" "fail" "$hydra_p" "$hydra_f" "$hydra_s" "$(( $(date +%s) - t0 ))"
+    _hydra_secs=$(( $(date +%s) - t0 ))
+    if [[ "$hydra_f" -eq 0 && "$hydra_s" -eq 0 ]]; then
+        print_result "$hydra_name" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$_hydra_secs"
+    else
+        [[ "$hydra_f" -gt 0 ]] \
+            && print_result "$hydra_name" "fail" "$hydra_p" "$hydra_f" "$hydra_s" "$_hydra_secs" \
+            || print_result "$hydra_name" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$_hydra_secs"
+        echo "$hydra_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
+        echo "$hydra_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
+    fi
 fi
 
 if $RUN_SELENIUM; then
