@@ -2957,12 +2957,20 @@ document.addEventListener('DOMContentLoaded', function() {
         var _pt = parseInt(localStorage.getItem(LS_KEY)) || 10;
 
         function applyFontSize() {
-            /* Set CSS custom property on :root — cascades instantly to every
-               .tool-output-area (plain-output, log-output, all dyn-output-*)
-               including elements created after this call, without needing to
-               iterate the DOM. Avoids the tab-switch timing issue where
-               querySelectorAll only caught elements existing at call time. */
-            document.documentElement.style.setProperty('--output-font-size', _pt + 'pt');
+            var px = _pt + 'pt';
+            /* Set font-size on stable container elements that persist across
+               tab switches and snapshot polls. Their children use font:inherit
+               so the size cascades automatically — including dynamically
+               created elements (dyn-output-*) added after this call. */
+            var containers = [
+                'process-output-inline',  /* contains plain-output */
+                'log-panel',              /* contains log-output */
+                'dynamic-tabs-container'  /* contains dyn-output-* upper tabs */
+            ];
+            containers.forEach(function(id) {
+                var el = $(id);
+                if (el) el.style.fontSize = px;
+            });
             var lbl = $('output-font-label');
             if (lbl) lbl.textContent = _pt;
             localStorage.setItem(LS_KEY, _pt);
