@@ -610,8 +610,10 @@ class WebController:
             return
 
         try:
-            max_fast = int(getattr(self.settings, 'general_max_fast_processes', 5))
-            max_scans = int(getattr(self.settings, 'general_max_concurrent_scans', 3))
+            max_fast  = int(getattr(self.settings, 'general_max_fast_processes', 5))
+            # Qt6: max-slow-processes controls concurrent nmap scans
+            # was wrongly reading non-existent 'general_max_concurrent_scans'
+            max_scans = int(getattr(self.settings, 'general_max_slow_processes', 3))
         except Exception:
             max_fast, max_scans = 5, 3
 
@@ -621,7 +623,7 @@ class WebController:
                        and not getattr(p, 'isInteractive', False)]
         running_scans = [p for p in running_all if 'nmap' in str(p.name).lower()]
 
-        log.info(f"[Queue] running={len(running_all)}/{max_fast} scans={len(running_scans)}/{max_scans} queued={self.fastProcessQueue.qsize()}")
+        log.debug(f"[Queue] running={len(running_all)}/{max_fast} scans={len(running_scans)}/{max_scans} queued={self.fastProcessQueue.qsize()}")
 
         # Start processes while under limits (controller.py:1590-1591)
         while not self.fastProcessQueue.empty():
@@ -673,7 +675,7 @@ class WebController:
                 t = threading.Thread(target=self._capture_output, args=(proc, processRepo),
                                       daemon=True, name=f"capture-{proc_id}")
                 t.start()
-                log.info(f"[Queue] Started {proc.name} pid={popen.pid}")
+                log.debug(f"[Queue] Started {proc.name} pid={popen.pid}")
             except Exception as e:
                 log.error(f"[Queue] Failed to start {getattr(proc, 'name', '?')}: {e}")
 
