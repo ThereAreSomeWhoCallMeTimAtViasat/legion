@@ -241,6 +241,9 @@ button:active{background:var(--dark)}
   align-self:stretch;
   /* Ensure parent background fills entire pane for short content */
   box-sizing:border-box;
+  /* Font size controlled by JS via CSS variable — cascades to all instances
+     including dynamically created ones (dynamic tool tabs) */
+  font-size:var(--output-font-size,10pt);
 }
 
 /* === OS TAB (splitter: os-list | os-hosts) === */
