@@ -2299,10 +2299,58 @@ document.addEventListener('DOMContentLoaded', function() {
         openModal('manual-scan-modal');
     });
 
-    /* ── File → Exit ── */
+    /* ── File → Exit — prompt to save if project is unsaved ── */
+    function _doExit() {
+        /* Close the browser tab/window; beforeunload sends /api/shutdown beacon */
+        window.close();
+        /* Fallback: if window.close() is blocked (direct navigation), send shutdown */
+        setTimeout(function() {
+            navigator.sendBeacon('/api/shutdown', '{}');
+        }, 200);
+    }
+
+    function _exitFlow() {
+        var proj = (L.snapshot && L.snapshot.project) || {};
+        var isTemp = proj.is_temporary !== false;
+        var hasData = L.hosts && L.hosts.length > 0;
+
+        if (isTemp && hasData) {
+            /* Unsaved project with data — show save/don't-save/cancel modal */
+            openModal('save-on-exit-modal');
+        } else {
+            _doExit();
+        }
+    }
+
     var exitBtn = $('action-exit');
-    if (exitBtn) exitBtn.addEventListener('click', function() {
-        if (confirm('Exit Legion?')) window.close();
+    if (exitBtn) exitBtn.addEventListener('click', _exitFlow);
+
+    /* Save-on-exit modal button handlers */
+    var exitSaveBtn   = $('exit-save-btn');
+    var exitNosaveBtn = $('exit-nosave-btn');
+    var exitCancelBtn = $('exit-cancel-btn');
+
+    if (exitSaveBtn) exitSaveBtn.addEventListener('click', function() {
+        closeModal('save-on-exit-modal');
+        fbOpen('Save Project', '.legion', 'save', '/root').then(function(path) {
+            if (!path) return;   /* user cancelled file browser — don't exit */
+            if (!path.endsWith('.legion')) path += '.legion';
+            postJson('/api/project/save-as', { path: path })
+                .then(function() {
+                    setText('window-title', _VERSION + ' \u2013 ' + path.split('/').pop());
+                    _doExit();
+                })
+                .catch(function(err) { alert('Save failed: ' + err.message); });
+        });
+    });
+
+    if (exitNosaveBtn) exitNosaveBtn.addEventListener('click', function() {
+        closeModal('save-on-exit-modal');
+        _doExit();
+    });
+
+    if (exitCancelBtn) exitCancelBtn.addEventListener('click', function() {
+        closeModal('save-on-exit-modal');
     });
 
     /* ── Help ── */
@@ -3140,11 +3188,21 @@ document.addEventListener('DOMContentLoaded', function() {
         if (bottomSec) saveSplitterPos('bottom', bottomSec);
     });
 
-    /* P8: Graceful shutdown on page unload */
-    window.addEventListener('beforeunload', function() {
+    /* P8: Graceful shutdown on page unload.
+       Also warn if the project has unsaved data (tab close, browser nav, refresh). */
+    window.addEventListener('beforeunload', function(e) {
         try {
             navigator.sendBeacon('/api/shutdown', '{}');
-        } catch(e) {}
+        } catch(e2) {}
+        /* Warn about unsaved data — browser shows its own generic dialog */
+        var proj = (L.snapshot && L.snapshot.project) || {};
+        var isTemp = proj.is_temporary !== false;
+        var hasData = L.hosts && L.hosts.length > 0;
+        if (isTemp && hasData) {
+            e.preventDefault();
+            e.returnValue = 'Your project has unsaved changes.';
+            return e.returnValue;
+        }
     });
 
     /* ── Populate manual scan tool selector when snapshot updates ── */
