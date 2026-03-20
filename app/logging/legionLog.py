@@ -19,10 +19,40 @@ Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@
 import os
 import logging
 from logging import Logger
+from collections import deque
 
 cachedAppLogger = None
 cachedStartupLogger = None
 cachedDbLogger = None
+
+
+class _InMemoryLogHandler(logging.Handler):
+    """Captures log records in memory so /api/logs works without a file redirect.
+    Thread-safe: deque append/popleft are atomic in CPython."""
+    def __init__(self, maxlen=2000):
+        super().__init__()
+        self._buf = deque(maxlen=maxlen)
+        self.setFormatter(logging.Formatter(
+            '%(asctime)s  %(levelname)-8s  %(name)s: %(message)s',
+            datefmt='%H:%M:%S'))
+
+    def emit(self, record):
+        try:
+            self._buf.append(self.format(record))
+        except Exception:
+            pass
+
+    def get_lines(self, level='INFO'):
+        """Return formatted lines filtered by level name."""
+        level = level.upper()
+        if level == 'DEBUG':
+            return list(self._buf)
+        keep = {'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+        return [l for l in self._buf if any(f'  {k}' in l for k in keep)]
+
+
+# Singleton — shared by all loggers in the process
+_mem_handler = _InMemoryLogHandler(maxlen=2000)
 
 
 def get_cache_path():
@@ -116,5 +146,9 @@ def getOrCreateCachedLogger(logName: str, logPath: str, console: bool, cachedLog
         log.debug(f"Successfully created file handler for {logName} at {logPath}")
     except Exception as e:
         log.error(f"Error creating file handler for {logName} at {logPath}: {e}")
+
+    # In-memory handler — so /api/logs works without stdout redirect
+    if _mem_handler not in log.handlers:
+        log.addHandler(_mem_handler)
     
     return log

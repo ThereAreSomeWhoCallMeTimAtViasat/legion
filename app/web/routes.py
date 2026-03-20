@@ -485,34 +485,51 @@ def processes_clear():
 
 @web_bp.post("/api/nmap/scan")
 def nmap_scan():
-    """Matches view.py:callAddHosts → controller.addHosts"""
+    """Matches view.py:callAddHosts → controller.addHosts.
+    Comma, semicolon, and newline all separate multiple targets — each gets
+    its own parallel nmap process (Qt6: one process per host)."""
+    import re as _re
     wc = _wc()
     payload = request.get_json(silent=True) or {}
-    targets = str(payload.get("targets", "")).strip()
-    if not targets:
+    raw = str(payload.get("targets", "")).strip()
+    if not raw:
         return _err("targets required")
-    if not validateNmapInput(targets):
-        return _err("Invalid target: only IPs, CIDRs, and hostnames are accepted")
-    scan_mode = str(payload.get("scan_mode", "Easy"))
-    staged = payload.get("staged", False)
-    discovery = payload.get("discovery", True)
-    timing = str(payload.get("timing", "4"))
-    nmap_options = payload.get("nmap_options", [])
-    enable_ipv6 = payload.get("enable_ipv6", False)
 
+    # Split on newline or comma — each becomes a separate parallel nmap process.
+    # Semicolons are NOT split here — they are injection-protection characters
+    # and nmap handles comma-separated targets natively in a single invocation.
+    parts = [t.strip() for t in _re.split(r'[\n,]+', raw) if t.strip()]
+    if not parts:
+        return _err("targets required")
+
+    # Validate every part before starting any scan
+    for part in parts:
+        if not validateNmapInput(part):
+            return _err(f"Invalid target: only IPs, CIDRs, and hostnames are accepted — rejected: {part!r}")
+
+    scan_mode = str(payload.get("scan_mode", "Easy"))
+    staged     = payload.get("staged", False)
+    discovery  = payload.get("discovery", True)
+    timing     = str(payload.get("timing", "4"))
+    nmap_options = payload.get("nmap_options", [])
+    enable_ipv6  = payload.get("enable_ipv6", False)
     if not isinstance(nmap_options, list):
         nmap_options = []
 
-    result = wc.addHosts(
-        targetHosts=targets,
-        runHostDiscovery=discovery,
-        runStagedNmap=staged,
-        nmapSpeed=timing,
-        scanMode=scan_mode,
-        nmapOptions=nmap_options,
-        enableIPv6=enable_ipv6,
-    )
-    return jsonify({"status": "ok", "result": result})
+    results = []
+    for target in parts:
+        r = wc.addHosts(
+            targetHosts=target,
+            runHostDiscovery=discovery,
+            runStagedNmap=staged,
+            nmapSpeed=timing,
+            scanMode=scan_mode,
+            nmapOptions=nmap_options,
+            enableIPv6=enable_ipv6,
+        )
+        results.append(r)
+
+    return jsonify({"status": "ok", "result": results if len(results) > 1 else results[0]})
 
 
 @web_bp.post("/api/workspace/hosts/import-file")
@@ -817,28 +834,36 @@ def settings_save():
 @web_bp.get("/api/logs")
 def get_logs():
     """Qt6: reloadLogFile reads log file and filters by INFO/DEBUG level.
-    Serves /tmp/legion-web.log filtered by level query param."""
+    Primary source: in-memory handler (_mem_handler) — works without any
+    stdout redirect. Falls back to /tmp/legion-web.log if it exists and
+    the in-memory buffer is empty (e.g. server restarted mid-session)."""
+    from app.logging.legionLog import _mem_handler
     level = request.args.get('level', 'INFO').upper()
-    log_path = '/tmp/legion-web.log'
-    lines = []
-    if os.path.isfile(log_path):
-        try:
-            with open(log_path, 'r', errors='replace') as f:
-                for line in f:
-                    stripped = line.rstrip()
-                    if not stripped:
-                        continue
-                    if level == 'DEBUG':
-                        lines.append(stripped)
-                    else:  # INFO — include INFO, WARNING, ERROR, CRITICAL but not DEBUG
-                        if any(lvl in stripped for lvl in
-                               (' INFO ', ' WARNING ', ' ERROR ', ' CRITICAL ', 'INFO', 'ERROR')):
-                            if ' DEBUG ' not in stripped:
-                                lines.append(stripped)
-        except Exception as e:
-            lines = [f"Error reading log: {e}"]
-    return jsonify({'lines': lines[-500:], 'level': level,
-                    'file': log_path, 'total': len(lines)})
+
+    # In-memory lines (always available when loggers are initialised)
+    lines = _mem_handler.get_lines(level)
+
+    # Fallback: also read the legacy file if it exists and in-memory is empty
+    if not lines:
+        log_path = '/tmp/legion-web.log'
+        if os.path.isfile(log_path):
+            try:
+                with open(log_path, 'r', errors='replace') as f:
+                    for line in f:
+                        stripped = line.rstrip()
+                        if not stripped:
+                            continue
+                        if level == 'DEBUG':
+                            lines.append(stripped)
+                        else:
+                            if any(lvl in stripped for lvl in
+                                   (' INFO ', ' WARNING ', ' ERROR ', ' CRITICAL ')):
+                                if ' DEBUG ' not in stripped:
+                                    lines.append(stripped)
+            except Exception as e:
+                lines = [f"Error reading log file: {e}"]
+
+    return jsonify({'lines': lines[-500:], 'level': level, 'total': len(lines)})
 
 
 @web_bp.post("/api/processes/custom")

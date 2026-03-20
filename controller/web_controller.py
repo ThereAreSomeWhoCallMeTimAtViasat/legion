@@ -1093,6 +1093,20 @@ class WebController:
                 except Exception:
                     pass
 
+                # P2: nmap real-time progress (--stats-every 5s output)
+                # Lines look like: "SYN Scan Timing: About 42.93% done; ETC: 15:22 (0:01:23 remaining)"
+                if 'nmap' in str(toolName).lower() and '% done' in text:
+                    try:
+                        import re as _re
+                        m = _re.search(r'About ([\d.]+)% done(?:.*?ETC: ([\d:]+))?', text)
+                        if m:
+                            pct = m.group(1)
+                            etc = m.group(2) or ''
+                            pct_str = f"{pct}%" + (f" ETC:{etc}" if etc else "")
+                            processRepo.storeProcessPercent(dbId, pct_str)
+                    except Exception:
+                        pass
+
             # Process finished — close temp file and write final output to SQLite once
             if live_file:
                 try:
@@ -1258,16 +1272,16 @@ class WebController:
             if runStagedNmap:
                 return self.runStagedNmap(target, discovery=runHostDiscovery, enable_ipv6=enableIPv6)
             elif runHostDiscovery:
-                command = f"nmap -sV -O --version-light -T{nmapSpeed} {target} --stats-every 10s -oA {outputfile}"
+                command = f"nmap -sV -O --version-light -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
                 return self.runCommand(command=command, name='nmap', tabTitle='nmap (discovery)',
                                        hostIp=target, outputfile=outputfile)
             else:
-                command = f"nmap -sL -T{nmapSpeed} {target} --stats-every 10s -oA {outputfile}"
+                command = f"nmap -sL -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
                 return self.runCommand(command=command, name='nmap', tabTitle='nmap (list)',
                                        hostIp=target, outputfile=outputfile)
         elif scanMode == 'Hard':
             opts = ' '.join(nmapOptions or [])
-            command = f"nmap {opts} -T{nmapSpeed} {target} --stats-every 10s -oA {outputfile}"
+            command = f"nmap {opts} -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
             return self.runCommand(command=command, name='nmap', tabTitle=f'nmap (custom {opts})',
                                    hostIp=target, outputfile=outputfile)
 
@@ -1562,7 +1576,7 @@ class WebController:
             port_values = stageOpValues.strip()
             if port_values:
                 tokens.extend(['-p', port_values])
-            tokens.extend(['-vvvv', host_arg, '--stats-every', '10s', '-oA', outputfile])
+            tokens.extend(['-vvvv', host_arg, '--stats-every', '5s', '-oA', outputfile])
         elif stageOp == 'NSE':
             tokens = ['nmap']
             if enable_ipv6:
@@ -1573,9 +1587,9 @@ class WebController:
             tokens.extend(['-sV', f'--script={stageOpValues.strip()}', '-vvvv',
                           '--min-parallelism', '20', '--max-parallelism', '50',
                           '--script-timeout', '30s',
-                          host_arg, '--stats-every', '10s', '-oA', outputfile])
+                          host_arg, '--stats-every', '5s', '-oA', outputfile])
         else:
-            tokens.extend(['-vvvv', host_arg, '--stats-every', '10s', '-oA', outputfile])
+            tokens.extend(['-vvvv', host_arg, '--stats-every', '5s', '-oA', outputfile])
 
         command = ' '.join(t for t in tokens if t)
         log.info(f"[WebController] Stage {stage} command: {command}")

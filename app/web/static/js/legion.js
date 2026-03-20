@@ -947,6 +947,8 @@ function _drawPorts() {
         body.appendChild(tr);
     });
     _updateSortHeaders('ports-table',_portsSort,{port:'Port',protocol:'Proto',state:'State',name:'Service'});
+    /* Notify port state filter to re-apply after each render */
+    document.dispatchEvent(new CustomEvent('legion:ports-rendered'));
 }
 
 /* Scripts tab */
@@ -2936,6 +2938,77 @@ document.addEventListener('DOMContentLoaded', function() {
     if (logLevel) logLevel.addEventListener('change', loadLog);
     var logRefresh = $('log-refresh');
     if (logRefresh) logRefresh.addEventListener('click', loadLog);
+
+    /* ── Font size control for output and log panels ── */
+    (function() {
+        var MIN_PT = 7, MAX_PT = 24;
+        var LS_KEY = 'legion_output_font_pt';
+        var _pt = parseInt(localStorage.getItem(LS_KEY)) || 10;
+
+        function applyFontSize() {
+            var px = _pt + 'pt';
+            var targets = ['plain-output', 'log-output'];
+            targets.forEach(function(id) {
+                var el = $(id);
+                if (el) el.style.fontSize = px;
+            });
+            var lbl = $('output-font-label');
+            if (lbl) lbl.textContent = _pt;
+            localStorage.setItem(LS_KEY, _pt);
+        }
+        applyFontSize();
+
+        function changeFontSize(delta) {
+            _pt = Math.max(MIN_PT, Math.min(MAX_PT, _pt + delta));
+            applyFontSize();
+        }
+
+        /* Process output panel buttons */
+        var fdec = $('output-font-dec'), finc = $('output-font-inc');
+        if (fdec) fdec.addEventListener('click', function() { changeFontSize(-1); });
+        if (finc) finc.addEventListener('click', function() { changeFontSize(+1); });
+
+        /* Log panel buttons (share same font size) */
+        var lfdec = $('log-font-dec'), lfinc = $('log-font-inc');
+        if (lfdec) lfdec.addEventListener('click', function() { changeFontSize(-1); });
+        if (lfinc) lfinc.addEventListener('click', function() { changeFontSize(+1); });
+    })();
+
+    /* ── Port state filter (Services right tab) ── */
+    (function() {
+        function getStateFilter() {
+            return {
+                open:     ($('filter-state-open')     || {}).checked !== false,
+                filtered: !!($('filter-state-filtered') || {}).checked,
+                closed:   !!($('filter-state-closed')   || {}).checked
+            };
+        }
+        function applyStateFilter() {
+            /* Re-draw ports table with current filter applied */
+            var sf = getStateFilter();
+            var body = $('host-detail-ports');
+            if (!body) return;
+            body.querySelectorAll('tr').forEach(function(tr) {
+                var stateCell = tr.cells[3];
+                if (!stateCell) return;
+                var state = stateCell.textContent.trim().toLowerCase();
+                var show = false;
+                if (state === 'open' && sf.open) show = true;
+                if ((state === 'filtered' || state === 'open|filtered') && sf.filtered) show = true;
+                if (state === 'closed' && sf.closed) show = true;
+                tr.style.display = show ? '' : 'none';
+            });
+        }
+        /* Wire checkboxes */
+        ['filter-state-open','filter-state-filtered','filter-state-closed'].forEach(function(id) {
+            var el = $(id);
+            if (el) el.addEventListener('change', applyStateFilter);
+        });
+        /* Re-apply after each ports render (renderPorts is called from loadHostDetail) */
+        var _origDrawPorts = window._drawPortsOrig;
+        /* Hook into _drawPorts — called after render so we filter the new rows */
+        document.addEventListener('legion:ports-rendered', applyStateFilter);
+    })();
 
     /* ── Brute force tab (Qt6: callHydra → buildHydraCommand → runCommand) ── */
     var bruteRun = $('brute-run');
