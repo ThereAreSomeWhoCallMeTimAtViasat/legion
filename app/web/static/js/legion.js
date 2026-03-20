@@ -1116,6 +1116,10 @@ function renderDynamicToolTabs(hostIp) {
         panel.className = 'tab-content';  /* CSS provides: display:none, flex:1, min-height:0, flex-direction:column */
         panel.id = tabId;
         panel.innerHTML = '<div class="tool-output-area ansi" id="dyn-output-' + proc.id + '"></div>';
+        /* Apply current font size so upper tabs match lower output panel */
+        var _savedPt = parseInt(localStorage.getItem('legion_output_font_pt')) || 10;
+        var _dynOut = panel.querySelector('.tool-output-area');
+        if (_dynOut) _dynOut.style.fontSize = _savedPt + 'pt';
         container.appendChild(panel);
     });
 
@@ -2947,10 +2951,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function applyFontSize() {
             var px = _pt + 'pt';
-            var targets = ['plain-output', 'log-output'];
-            targets.forEach(function(id) {
-                var el = $(id);
-                if (el) el.style.fontSize = px;
+            /* Apply to all output areas — static (plain-output, log-output)
+               and dynamic (dyn-output-* in the upper tab panel) */
+            document.querySelectorAll('.tool-output-area').forEach(function(el) {
+                el.style.fontSize = px;
             });
             var lbl = $('output-font-label');
             if (lbl) lbl.textContent = _pt;
