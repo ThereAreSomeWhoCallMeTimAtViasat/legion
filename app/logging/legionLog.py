@@ -52,7 +52,7 @@ class _InMemoryLogHandler(logging.Handler):
 
 
 # Singleton — shared by all loggers in the process
-_mem_handler = _InMemoryLogHandler(maxlen=2000)
+_mem_handler = _InMemoryLogHandler(maxlen=10000)
 
 
 def get_cache_path():

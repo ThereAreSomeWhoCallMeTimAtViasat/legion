@@ -177,7 +177,8 @@ def snapshot():
 
     _elapsed_ms = int((_snap_time.monotonic() - _t0) * 1000)
     import logging as _logging
-    _logging.getLogger('legion').info(
+    # DEBUG not INFO — snapshot fires every 1.5s and would flood the log buffer
+    _logging.getLogger('legion').debug(
         f"[Snapshot] {_elapsed_ms}ms  hosts={len(hosts)} procs={len(processes)} "
         f"running={running} tools={len(tool_list)}"
     )
