@@ -1921,7 +1921,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* Tab bar */
         tabBar.innerHTML = '';
-        editors.querySelectorAll('textarea').forEach(function(t) { t.remove(); });
+        editors.querySelectorAll('.cfg-editor-wrap').forEach(function(w) { w.remove(); });
 
         /* Selector dropdown */
         selector.innerHTML = '';
@@ -1937,19 +1937,34 @@ document.addEventListener('DOMContentLoaded', function() {
                 cfgState.selectedTab = p.name;
                 tabBar.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
                 btn.classList.add('active');
-                editors.querySelectorAll('textarea').forEach(function(t) {
-                    t.style.display = t.dataset.profile === p.name ? '' : 'none';
+                editors.querySelectorAll('.cfg-editor-wrap').forEach(function(w) {
+                    w.style.display = w.dataset.profile === p.name ? '' : 'none';
                 });
             });
             tabBar.appendChild(btn);
 
-            /* Editor textarea */
+            /* Editor wrapper + textarea + highlight overlay */
+            var visible = p.name === (cfgState.selectedTab || cfgState.active);
+            var wrap = document.createElement('div');
+            wrap.className = 'cfg-editor-wrap';
+            wrap.dataset.profile = p.name;
+            wrap.style.display = visible ? '' : 'none';
+
             var ta = document.createElement('textarea');
             ta.dataset.profile = p.name;
             ta.value = p.text || '';
-            ta.style.cssText = 'width:100%;flex:1;min-height:400px;background:var(--base);color:var(--text);font:inherit;border:1px solid var(--border);padding:6px;resize:vertical;display:' +
-                (p.name === (cfgState.selectedTab || cfgState.active) ? '' : 'none');
-            editors.appendChild(ta);
+            ta.spellcheck = false;
+            ta.style.cssText = 'width:100%;min-height:400px;background:var(--base);color:var(--text);font:inherit;border:1px solid var(--border);padding:6px;resize:vertical;box-sizing:border-box';
+
+            var overlay = document.createElement('div');
+            overlay.className = 'cfg-find-overlay';
+            overlay.setAttribute('aria-hidden', 'true');
+            /* Keep overlay scroll in sync when user scrolls the textarea */
+            ta.addEventListener('scroll', function() { overlay.scrollTop = ta.scrollTop; });
+
+            wrap.appendChild(ta);
+            wrap.appendChild(overlay);
+            editors.appendChild(wrap);
 
             /* Selector option */
             var opt = document.createElement('option');
@@ -1992,6 +2007,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var ta = cfgFindGetTA();
         if (!ta || !query) {
             setText('cfg-find-count', query ? '0 matches' : '');
+            cfgFindClearHighlight();
             return;
         }
         var text = ta.value.toLowerCase();
@@ -2006,7 +2022,33 @@ document.addEventListener('DOMContentLoaded', function() {
             cfgFindSelect(0);
         } else {
             setText('cfg-find-count', '0 matches');
+            cfgFindClearHighlight();
         }
+    }
+
+    function cfgFindEsc(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function cfgFindHighlight(ta, start, end) {
+        var overlay = ta.parentNode && ta.parentNode.querySelector('.cfg-find-overlay');
+        if (!overlay) return;
+        var text = ta.value;
+        overlay.innerHTML = cfgFindEsc(text.substring(0, start)) +
+            '<mark>' + cfgFindEsc(text.substring(start, end)) + '</mark>' +
+            cfgFindEsc(text.substring(end));
+        /* Use mark.offsetTop to scroll reliably — overlay must be overflow:auto */
+        var mark = overlay.querySelector('mark');
+        if (mark) {
+            overlay.scrollTop = Math.max(0, mark.offsetTop - overlay.clientHeight / 2);
+            ta.scrollTop = overlay.scrollTop;
+        }
+    }
+
+    function cfgFindClearHighlight() {
+        document.querySelectorAll('#config-editors .cfg-find-overlay').forEach(function(o) {
+            o.innerHTML = '';
+        });
     }
 
     function cfgFindSelect(i) {
@@ -2014,12 +2056,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!ta || i < 0 || i >= cfgFind.matches.length) return;
         var start = cfgFind.matches[i];
         var end   = start + cfgFind.query.length;
-        ta.focus();
-        ta.setSelectionRange(start, end);
-        /* Scroll to ~centre the match in the textarea */
-        var lineH = parseInt(window.getComputedStyle(ta).lineHeight) || 18;
-        var lineNum = ta.value.substr(0, start).split('\n').length - 1;
-        ta.scrollTop = Math.max(0, lineNum * lineH - ta.clientHeight / 2);
+        /* cfgFindHighlight scrolls both overlay and textarea via mark.offsetTop */
+        cfgFindHighlight(ta, start, end);
         setText('cfg-find-count', (i + 1) + ' / ' + cfgFind.matches.length);
     }
 
@@ -2051,15 +2089,17 @@ document.addEventListener('DOMContentLoaded', function() {
         setText('cfg-find-count', '');
         var inp = $('cfg-find-input');
         if (inp) inp.value = '';
+        cfgFindClearHighlight();
         var ta = cfgFindGetTA();
-        if (ta) { ta.focus(); ta.setSelectionRange(0, 0); }
+        if (ta) ta.focus();
     }
 
     var cfgFindInp = $('cfg-find-input');
     if (cfgFindInp) {
         cfgFindInp.addEventListener('input', function() { cfgFindRun(this.value); });
         cfgFindInp.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter')  { e.preventDefault(); e.shiftKey ? cfgFindPrev() : cfgFindNext(); }
+            if (e.key === 'ArrowDown' || (e.key === 'Enter' && !e.shiftKey))  { e.preventDefault(); cfgFindNext(); }
+            else if (e.key === 'ArrowUp' || (e.key === 'Enter' && e.shiftKey)) { e.preventDefault(); cfgFindPrev(); }
             else if (e.key === 'Escape') { cfgFindHide(); }
         });
     }

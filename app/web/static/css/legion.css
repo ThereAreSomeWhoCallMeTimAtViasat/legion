@@ -255,6 +255,19 @@ body.black-output-bg .tool-output-area{background:#000}
 #cfg-find-count{color:var(--disabled);font-size:8pt;white-space:nowrap;min-width:6em;text-align:center}
 #cfg-find-bar button{padding:2px 8px;font-size:9pt}
 #cfg-find-close{color:#f44;border-color:rgba(255,80,80,.4)}
+/* Wrapper so the highlight overlay can sit on top of the textarea */
+.cfg-editor-wrap{position:relative}
+/* Highlight overlay: mirrors textarea text, pointer-events off, only <mark> is visible */
+.cfg-find-overlay{
+  position:absolute;top:0;left:0;right:0;bottom:0;
+  pointer-events:none;overflow:auto;scrollbar-width:none;
+  white-space:pre-wrap;word-wrap:break-word;
+  color:transparent;
+  font:inherit;padding:6px;
+  border:1px solid transparent;box-sizing:border-box
+}
+.cfg-find-overlay::-webkit-scrollbar{display:none}
+.cfg-find-overlay mark{background:rgba(255,165,0,0.45);color:transparent;border-radius:2px}
 
 /* === OS TAB (splitter: os-list | os-hosts) === */
 .os-split{display:flex;flex:1;min-height:0;overflow:hidden}
