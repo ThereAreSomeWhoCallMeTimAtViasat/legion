@@ -16,6 +16,9 @@ Tests for Phase 5 gap items:
            Next/Prev/Show/Hide, Ctrl+F, Enter/Shift+Enter/Esc, scroll to match
   E1-E10: Terminal Ctrl+B → Notes — xterm.getSelection priority over
            window.getSelection; lower + upper panel; orange flash; DB save
+  G1-G10: Settings live-apply — reapplyLiveSettings() re-fetches brute defaults
+           + ui-prefs after profile activate/save/raw save; profile save of
+           active profile now calls applySettings() on server
 
 Qt6 reference:
   - Log: handleLogFileLevelChange → reloadLogFile reads /tmp/legion-web.log
@@ -512,6 +515,97 @@ def test_e10_three_source_priority():
     return ok(fn_body and 0 <= lower_pos < upper_pos < browser_pos,
               f"source priority wrong in fn body: lower={lower_pos} upper={upper_pos} browser={browser_pos}")
 test("E1.10: xterm sources checked before window.getSelection", test_e10_three_source_priority)
+
+
+# ══════════════════════════════════════════════════════════════
+# G: Settings live-apply (hot-reload UI without page reload)
+# ══════════════════════════════════════════════════════════════
+
+print("\n" + "="*60)
+print("G: Settings live-apply (hot-reload UI without page reload)")
+print("="*60 + "\n")
+
+def test_g1_reapply_fn_in_js():
+    """JS must define reapplyLiveSettings function"""
+    return ok('reapplyLiveSettings' in JS,
+              "reapplyLiveSettings missing from JS")
+test("G1.1: JS defines reapplyLiveSettings()", test_g1_reapply_fn_in_js)
+
+def test_g2_reapply_fetches_brute_defaults():
+    """reapplyLiveSettings must re-fetch /api/brute/defaults"""
+    fn_start = JS.find('function reapplyLiveSettings')
+    fn_end   = JS.find('\n    }', fn_start + 50)
+    fn_body  = JS[fn_start:fn_end] if fn_start >= 0 else ''
+    return ok('/api/brute/defaults' in fn_body,
+              "reapplyLiveSettings does not fetch /api/brute/defaults")
+test("G1.2: reapplyLiveSettings fetches /api/brute/defaults", test_g2_reapply_fetches_brute_defaults)
+
+def test_g3_reapply_fetches_ui_prefs():
+    """reapplyLiveSettings must re-fetch /api/settings/ui-prefs"""
+    fn_start = JS.find('function reapplyLiveSettings')
+    fn_end   = JS.find('\n    }', fn_start + 50)
+    fn_body  = JS[fn_start:fn_end] if fn_start >= 0 else ''
+    return ok('/api/settings/ui-prefs' in fn_body,
+              "reapplyLiveSettings does not fetch /api/settings/ui-prefs")
+test("G1.3: reapplyLiveSettings fetches /api/settings/ui-prefs", test_g3_reapply_fetches_ui_prefs)
+
+def test_g4_reapply_updates_no_svc_lists():
+    """reapplyLiveSettings must update L._bruteNoUserSvcs and L._bruteNoPassSvcs"""
+    return ok('_bruteNoUserSvcs' in JS and '_bruteNoPassSvcs' in JS and 'reapplyLiveSettings' in JS,
+              "_bruteNoUserSvcs/_bruteNoPassSvcs update missing from reapplyLiveSettings area")
+test("G1.4: reapplyLiveSettings updates no-username/no-password service lists", test_g4_reapply_updates_no_svc_lists)
+
+def test_g5_reapply_called_on_activate():
+    """reapplyLiveSettings must be called after profile activate succeeds"""
+    act_pos  = JS.find("'/activate'")
+    reapp_pos = JS.find('reapplyLiveSettings', act_pos)
+    return ok(act_pos >= 0 and reapp_pos >= 0 and reapp_pos - act_pos < 500,
+              "reapplyLiveSettings not called near profile activate handler")
+test("G1.5: reapplyLiveSettings called after profile activate", test_g5_reapply_called_on_activate)
+
+def test_g6_reapply_called_on_raw_save():
+    """reapplyLiveSettings must be called after raw settings-config save"""
+    save_pos  = JS.find("settings-config-save-button")
+    reapp_pos = JS.find('reapplyLiveSettings', save_pos)
+    return ok(save_pos >= 0 and reapp_pos >= 0 and reapp_pos - save_pos < 600,
+              "reapplyLiveSettings not called near settings-config-save-button handler")
+test("G1.6: reapplyLiveSettings called after raw legion-conf save", test_g6_reapply_called_on_raw_save)
+
+def test_g7_profile_save_route_returns_applied():
+    """/api/config/profiles/<name>/save must return 200 with applied bool on success,
+    or 400 on validation error — never 500. On 200, must include 'applied' key."""
+    import json
+    import inspect
+    from app.web.routes import config_save
+    # Check source — route must contain 'applied' as a response key
+    src = inspect.getsource(config_save)
+    return ok("'applied'" in src or '"applied"' in src,
+              "config_save route response missing 'applied' key")
+test("G1.7: /api/config/profiles/<name>/save returns applied bool", test_g7_profile_save_route_returns_applied)
+
+def test_g8_profile_save_active_calls_apply():
+    """saving active profile must include applySettings call in route source"""
+    import inspect
+    from app.web.routes import config_save
+    src = inspect.getsource(config_save)
+    return ok('applySettings' in src and 'applied' in src,
+              "config_save route missing applySettings or applied response key")
+test("G1.8: config_save route calls applySettings when saving active profile", test_g8_profile_save_active_calls_apply)
+
+def test_g9_reapply_hides_shows_fields():
+    """reapplyLiveSettings must call bruteHideShowFields after fetching new service lists"""
+    fn_start = JS.find('function reapplyLiveSettings')
+    fn_end   = JS.find('\n    }', fn_start + 50)
+    fn_body  = JS[fn_start:fn_end] if fn_start >= 0 else ''
+    return ok('bruteHideShowFields' in fn_body,
+              "reapplyLiveSettings does not call bruteHideShowFields after update")
+test("G1.9: reapplyLiveSettings calls bruteHideShowFields after service list update", test_g9_reapply_hides_shows_fields)
+
+def test_g10_save_status_shows_applied():
+    """config-save success message must indicate 'applied' when active profile saved"""
+    return ok('applied' in JS and ('Saved & applied' in JS or "d.applied" in JS),
+              "JS save handler does not show 'applied' status or check d.applied")
+test("G1.10: config-save shows 'Saved & applied' when active profile was hot-applied", test_g10_save_status_shows_applied)
 
 
 # ══════════════════════════════════════════════════════════════

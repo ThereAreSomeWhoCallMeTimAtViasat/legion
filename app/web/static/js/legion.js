@@ -2090,6 +2090,25 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     /* Save */
+    /* ── Settings live-apply: re-fetch brute defaults + ui-prefs after any config save/activate ──
+       Keeps the running UI in sync without requiring a page reload. */
+    function reapplyLiveSettings() {
+        /* Re-fetch brute defaults — update service lists and re-run hide/show */
+        fetch('/api/brute/defaults').then(function(r){ return r.json(); }).then(function(d) {
+            L._bruteNoUserSvcs = (d.no_username_services || []).map(function(s){ return s.toLowerCase(); });
+            L._bruteNoPassSvcs = (d.no_password_services || []).map(function(s){ return s.toLowerCase(); });
+            bruteHideShowFields(($('brute-service')||{}).value||'');
+        }).catch(function(){});
+        /* Re-fetch UI prefs — re-apply tool-output-black-background */
+        fetch('/api/settings/ui-prefs').then(function(r){ return r.json(); }).then(function(d) {
+            if (d.tool_output_black_background) {
+                document.body.classList.add('black-output-bg');
+            } else {
+                document.body.classList.remove('black-output-bg');
+            }
+        }).catch(function(){});
+    }
+
     var configSave = $('config-save');
     if (configSave) configSave.addEventListener('click', function() {
         var name = cfgGetCurrentName();
@@ -2100,7 +2119,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 setText('config-status', '❌ ' + d.errors.length + ' syntax error(s) — not saved');
                 alert('Cannot save — ' + d.errors.length + ' syntax error(s):\n\n' + d.errors.join('\n\n'));
             } else {
-                setText('config-status', '✓ Saved ' + name);
+                setText('config-status', d.applied ? '✓ Saved & applied ' + name : '✓ Saved ' + name);
+                if (d.applied) reapplyLiveSettings();
             }
         })
         .catch(function(err) {
@@ -2123,6 +2143,7 @@ document.addEventListener('DOMContentLoaded', function() {
             setText('config-status', name + ' activated!');
             cfgState.active = name;
             cfgLoadProfiles();
+            reapplyLiveSettings();
         })
         .catch(function(err) { setText('config-status', 'Error: ' + err.message); });
     });
@@ -3007,7 +3028,10 @@ document.addEventListener('DOMContentLoaded', function() {
     var asSave = $('settings-config-save-button');
     if (asSave) asSave.addEventListener('click', function() {
         postJson('/api/settings/legion-conf', {text:$('settings-config-text').value})
-        .then(function() { setText('settings-config-status','Saved!'); })
+        .then(function() {
+            setText('settings-config-status','Saved!');
+            reapplyLiveSettings();
+        })
         .catch(function(e) { setText('settings-config-status','Error: '+e.message); });
     });
 

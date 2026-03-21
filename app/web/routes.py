@@ -1259,7 +1259,19 @@ def config_save(name):
         return jsonify({"status": "error", "errors": errors}), 400
 
     open(path, 'w', encoding='utf-8').write(text)
-    return jsonify({"status": "ok"})
+
+    # If saving the active profile, hot-reload settings immediately
+    active = 'default'
+    if os.path.exists(_ACTIVE_FILE):
+        try: active = open(_ACTIVE_FILE).read().strip() or 'default'
+        except Exception: pass
+    applied = False
+    if name == active:
+        import shutil as _shutil
+        _shutil.copy(path, _WORKING_CONF)
+        _wc().applySettings()
+        applied = True
+    return jsonify({"status": "ok", "applied": applied})
 
 @web_bp.post("/api/config/profiles/<name>/activate")
 def config_activate(name):
