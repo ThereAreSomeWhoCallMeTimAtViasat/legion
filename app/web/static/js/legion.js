@@ -1977,13 +1977,117 @@ document.addEventListener('DOMContentLoaded', function() {
         return cfgState.selectedTab || cfgState.active;
     }
 
+    /* ── Config Manager Find/Search (Ctrl+F, backlog #4) ── */
+    var cfgFind = { matches: [], current: -1, query: '' };
+
+    function cfgFindGetTA() {
+        var name = cfgGetCurrentName();
+        return document.querySelector('#config-editors textarea[data-profile="' + name + '"]');
+    }
+
+    function cfgFindRun(query) {
+        cfgFind.query = query;
+        cfgFind.matches = [];
+        cfgFind.current = -1;
+        var ta = cfgFindGetTA();
+        if (!ta || !query) {
+            setText('cfg-find-count', query ? '0 matches' : '');
+            return;
+        }
+        var text = ta.value.toLowerCase();
+        var q = query.toLowerCase();
+        var idx = 0;
+        while ((idx = text.indexOf(q, idx)) !== -1) {
+            cfgFind.matches.push(idx);
+            idx += q.length || 1;
+        }
+        if (cfgFind.matches.length) {
+            cfgFind.current = 0;
+            cfgFindSelect(0);
+        } else {
+            setText('cfg-find-count', '0 matches');
+        }
+    }
+
+    function cfgFindSelect(i) {
+        var ta = cfgFindGetTA();
+        if (!ta || i < 0 || i >= cfgFind.matches.length) return;
+        var start = cfgFind.matches[i];
+        var end   = start + cfgFind.query.length;
+        ta.focus();
+        ta.setSelectionRange(start, end);
+        /* Scroll to ~centre the match in the textarea */
+        var lineH = parseInt(window.getComputedStyle(ta).lineHeight) || 18;
+        var lineNum = ta.value.substr(0, start).split('\n').length - 1;
+        ta.scrollTop = Math.max(0, lineNum * lineH - ta.clientHeight / 2);
+        setText('cfg-find-count', (i + 1) + ' / ' + cfgFind.matches.length);
+    }
+
+    function cfgFindNext() {
+        if (!cfgFind.matches.length) return;
+        cfgFind.current = (cfgFind.current + 1) % cfgFind.matches.length;
+        cfgFindSelect(cfgFind.current);
+    }
+
+    function cfgFindPrev() {
+        if (!cfgFind.matches.length) return;
+        cfgFind.current = (cfgFind.current - 1 + cfgFind.matches.length) % cfgFind.matches.length;
+        cfgFindSelect(cfgFind.current);
+    }
+
+    function cfgFindShow() {
+        var bar = $('cfg-find-bar');
+        if (bar) bar.style.display = '';
+        var inp = $('cfg-find-input');
+        if (inp) { inp.focus(); inp.select(); }
+        /* Re-run with current query so results appear immediately */
+        if (cfgFind.query) cfgFindRun(cfgFind.query);
+    }
+
+    function cfgFindHide() {
+        var bar = $('cfg-find-bar');
+        if (bar) bar.style.display = 'none';
+        cfgFind.matches = []; cfgFind.current = -1; cfgFind.query = '';
+        setText('cfg-find-count', '');
+        var inp = $('cfg-find-input');
+        if (inp) inp.value = '';
+        var ta = cfgFindGetTA();
+        if (ta) { ta.focus(); ta.setSelectionRange(0, 0); }
+    }
+
+    var cfgFindInp = $('cfg-find-input');
+    if (cfgFindInp) {
+        cfgFindInp.addEventListener('input', function() { cfgFindRun(this.value); });
+        cfgFindInp.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter')  { e.preventDefault(); e.shiftKey ? cfgFindPrev() : cfgFindNext(); }
+            else if (e.key === 'Escape') { cfgFindHide(); }
+        });
+    }
+    var cfgFPrev = $('cfg-find-prev');
+    if (cfgFPrev) cfgFPrev.addEventListener('click', cfgFindPrev);
+    var cfgFNext = $('cfg-find-next');
+    if (cfgFNext) cfgFNext.addEventListener('click', cfgFindNext);
+    var cfgFClose = $('cfg-find-close');
+    if (cfgFClose) cfgFClose.addEventListener('click', cfgFindHide);
+
+    /* Re-run find when profile tab switches while bar is open */
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest && e.target.closest('#config-tab-bar .tab-btn');
+        if (btn && cfgFind.query) {
+            setTimeout(function() { cfgFindRun(cfgFind.query); }, 0);
+        }
+    });
+
     var configBtn = $('action-config');
     if (configBtn) configBtn.addEventListener('click', function() {
         openModal('config-modal');
         cfgLoadProfiles();
     });
     var configClose = $('config-close');
-    if (configClose) configClose.addEventListener('click', function() { closeModal('config-modal'); });
+    if (configClose) configClose.addEventListener('click', function() {
+        cfgFindHide();
+        closeModal('config-modal');
+    });
 
     /* Save */
     var configSave = $('config-save');
@@ -2449,6 +2553,14 @@ document.addEventListener('DOMContentLoaded', function() {
             if (e.key === 'h') { e.preventDefault(); $('action-add-hosts') && $('action-add-hosts').click(); }
             if (e.key === 'i') { e.preventDefault(); $('action-import-nmap') && $('action-import-nmap').click(); }
             if (e.key === 'e') { e.preventDefault(); $('action-export-json') && $('action-export-json').click(); }
+            /* Ctrl+F: open find bar when Config Manager is open */
+            if (e.key === 'f') {
+                var cm = $('config-modal');
+                if (cm && cm.classList.contains('is-open')) {
+                    e.preventDefault();
+                    cfgFindShow();
+                }
+            }
         }
         if (e.key === 'F1') { e.preventDefault(); $('action-help') && $('action-help').click(); }
         if (e.key === 'F2') { e.preventDefault(); $('action-config') && $('action-config').click(); }

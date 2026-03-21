@@ -246,6 +246,16 @@ button:active{background:var(--dark)}
 /* tool-output-black-background setting → body gets this class when enabled */
 body.black-output-bg .tool-output-area{background:#000}
 
+/* === CONFIG MANAGER FIND BAR (Ctrl+F) === */
+#cfg-find-bar{
+  display:flex;align-items:center;gap:6px;
+  padding:4px 6px;background:var(--panel);border-bottom:1px solid var(--border);
+}
+#cfg-find-input{flex:1;min-width:0;padding:3px 6px;font:inherit;font-size:9pt}
+#cfg-find-count{color:var(--disabled);font-size:8pt;white-space:nowrap;min-width:6em;text-align:center}
+#cfg-find-bar button{padding:2px 8px;font-size:9pt}
+#cfg-find-close{color:#f44;border-color:rgba(255,80,80,.4)}
+
 /* === OS TAB (splitter: os-list | os-hosts) === */
 .os-split{display:flex;flex:1;min-height:0;overflow:hidden}
 .os-split .table-wrap{flex:1}

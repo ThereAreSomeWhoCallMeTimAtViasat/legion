@@ -12,6 +12,8 @@ Tests for Phase 5 gap items:
            send-to-brute populates tab fields, defaults pre-filled, hide/show
   C1-C10: store-cleartext-passwords-on-exit wired, screenshooter-timeout,
            tool-output-black-background CSS+JS
+  D1-D14: Config Manager find/search — find bar HTML/CSS, cfgFindRun/Select/
+           Next/Prev/Show/Hide, Ctrl+F, Enter/Shift+Enter/Esc, scroll to match
 
 Qt6 reference:
   - Log: handleLogFileLevelChange → reloadLogFile reads /tmp/legion-web.log
@@ -336,6 +338,101 @@ def test_c10_js_fetches_ui_prefs():
     return ok('/api/settings/ui-prefs' in JS and 'black-output-bg' in JS,
               "JS missing ui-prefs fetch or black-output-bg class toggle")
 test("C1.10: JS fetches /api/settings/ui-prefs and applies black-output-bg", test_c10_js_fetches_ui_prefs)
+
+
+# ══════════════════════════════════════════════════════════════
+# D: Config Manager find/search (F2 backlog #4)
+# ══════════════════════════════════════════════════════════════
+
+print("\n" + "="*60)
+print("D: Config Manager find/search (backlog #4)")
+print("="*60 + "\n")
+
+def test_d1_find_bar_in_html():
+    """index.html must have the find bar elements"""
+    required = ['cfg-find-bar', 'cfg-find-input', 'cfg-find-count',
+                'cfg-find-prev', 'cfg-find-next', 'cfg-find-close']
+    missing = [f for f in required if f not in HTML]
+    return ok(not missing, f"missing find bar elements: {missing}")
+test("D1.1: HTML has all find bar elements", test_d1_find_bar_in_html)
+
+def test_d2_find_bar_hidden_by_default():
+    """cfg-find-bar must start hidden (display:none)"""
+    return ok('cfg-find-bar' in HTML and 'display:none' in HTML,
+              "cfg-find-bar not hidden by default")
+test("D1.2: find bar starts hidden (display:none)", test_d2_find_bar_hidden_by_default)
+
+def test_d3_js_cfgfind_state():
+    """legion.js must define cfgFind state object"""
+    return ok('cfgFind' in JS and 'matches' in JS and 'current' in JS,
+              "cfgFind state object missing from JS")
+test("D1.3: JS defines cfgFind state (matches, current)", test_d3_js_cfgfind_state)
+
+def test_d4_js_cfgfindrun():
+    """legion.js must define cfgFindRun (search all matches in textarea)"""
+    return ok('cfgFindRun' in JS and 'indexOf' in JS,
+              "cfgFindRun missing from JS or missing indexOf loop")
+test("D1.4: JS has cfgFindRun (all-matches finder)", test_d4_js_cfgfindrun)
+
+def test_d5_js_cfgfindselect():
+    """legion.js must define cfgFindSelect using setSelectionRange"""
+    return ok('cfgFindSelect' in JS and 'setSelectionRange' in JS,
+              "cfgFindSelect or setSelectionRange missing from JS")
+test("D1.5: JS has cfgFindSelect (setSelectionRange navigation)", test_d5_js_cfgfindselect)
+
+def test_d6_js_cfgfindnext_prev():
+    """legion.js must define cfgFindNext and cfgFindPrev"""
+    return ok('cfgFindNext' in JS and 'cfgFindPrev' in JS,
+              "cfgFindNext or cfgFindPrev missing from JS")
+test("D1.6: JS has cfgFindNext and cfgFindPrev", test_d6_js_cfgfindnext_prev)
+
+def test_d7_js_cfgfindshow_hide():
+    """legion.js must define cfgFindShow and cfgFindHide"""
+    return ok('cfgFindShow' in JS and 'cfgFindHide' in JS,
+              "cfgFindShow or cfgFindHide missing from JS")
+test("D1.7: JS has cfgFindShow and cfgFindHide", test_d7_js_cfgfindshow_hide)
+
+def test_d8_ctrl_f_wiring():
+    """Ctrl+F must call cfgFindShow when config modal is open"""
+    return ok('cfg-find-input' in JS and 'cfgFindShow' in JS and 'is-open' in JS,
+              "Ctrl+F → cfgFindShow wiring missing (is-open check or cfgFindShow not found)")
+test("D1.8: Ctrl+F opens find bar when config modal is open", test_d8_ctrl_f_wiring)
+
+def test_d9_enter_key_navigation():
+    """find input must handle Enter (next) and Shift+Enter (prev)"""
+    return ok('shiftKey' in JS and 'cfgFindPrev' in JS and 'cfgFindNext' in JS,
+              "Enter/Shift+Enter key navigation missing from JS")
+test("D1.9: Enter/Shift+Enter navigate next/prev match", test_d9_enter_key_navigation)
+
+def test_d10_escape_closes_bar():
+    """find input must close bar on Escape"""
+    return ok('Escape' in JS and 'cfgFindHide' in JS,
+              "Escape → cfgFindHide missing from JS")
+test("D1.10: Escape closes find bar", test_d10_escape_closes_bar)
+
+def test_d11_css_find_bar_styled():
+    """CSS must have #cfg-find-bar styling"""
+    return ok('#cfg-find-bar' in CSS and 'cfg-find-count' in CSS,
+              "CSS missing #cfg-find-bar styling")
+test("D1.11: CSS styles the find bar", test_d11_css_find_bar_styled)
+
+def test_d12_scroll_to_match():
+    """cfgFindSelect must set scrollTop to bring match into view"""
+    return ok('scrollTop' in JS and 'lineH' in JS,
+              "cfgFindSelect missing scrollTop calculation")
+test("D1.12: cfgFindSelect scrolls textarea to matched line", test_d12_scroll_to_match)
+
+def test_d13_close_btn_wired():
+    """cfg-find-close button must call cfgFindHide"""
+    return ok('cfg-find-close' in JS and 'cfgFindHide' in JS,
+              "cfg-find-close not wired to cfgFindHide")
+test("D1.13: close button calls cfgFindHide", test_d13_close_btn_wired)
+
+def test_d14_find_bar_placeholder():
+    """find input placeholder must mention Enter and Esc shortcuts"""
+    return ok('Enter' in HTML and 'Esc' in HTML and 'cfg-find-input' in HTML,
+              "find input placeholder missing keyboard hints")
+test("D1.14: find input placeholder shows keyboard hints", test_d14_find_bar_placeholder)
 
 
 # ══════════════════════════════════════════════════════════════

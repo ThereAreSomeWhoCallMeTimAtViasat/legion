@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.7-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.8-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -617,6 +617,14 @@
         <div class="tab-widget" style="flex:1;min-height:0">
             <div class="tab-bar" id="config-tab-bar" style="flex-wrap:wrap">
                 <!-- tabs added by JS -->
+            </div>
+            <!-- Find bar (Ctrl+F) -->
+            <div id="cfg-find-bar" style="display:none">
+                <input id="cfg-find-input" type="text" placeholder="Find in config… (Enter=next, Shift+Enter=prev, Esc=close)">
+                <span id="cfg-find-count"></span>
+                <button id="cfg-find-prev" type="button" title="Previous match (Shift+Enter)">▲</button>
+                <button id="cfg-find-next" type="button" title="Next match (Enter)">▼</button>
+                <button id="cfg-find-close" type="button" title="Close find bar (Esc)">✕</button>
             </div>
             <div id="config-editors" style="flex:1;min-height:0;display:flex;flex-direction:column">
                 <!-- textareas added by JS -->
