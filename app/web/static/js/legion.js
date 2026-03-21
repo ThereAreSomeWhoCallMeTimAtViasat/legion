@@ -2466,59 +2466,88 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Ctrl+B / Send selection to notes (Qt6: view.py:sendSelectionToNotes) ──
        Gets selected text + title from active output area, APPENDS to notes with
        an orange header "=== Selection from {title} ===", flashes source orange,
-       activates Notes tab. Matches Qt6 behavior exactly. */
+       activates Notes tab. Matches Qt6 behavior exactly.
+       xterm.js terminals use their own selection API (not window.getSelection),
+       so we check both terminal states before falling back to browser selection. */
     function sendSelectionToNotes() {
-        var sel = window.getSelection();
-        var text = sel ? sel.toString() : '';
-        if (!text || !L.selectedHostId) return;
+        if (!L.selectedHostId) return;
 
-        /* Determine title from context (which output area / tab the text came from) */
+        var text = '';
         var title = 'Output';
         var sourceEl = null;
-        try {
-            var node = sel.anchorNode;
-            while (node && node !== document.body) {
-                if (node.id === 'script-output-inline') {
-                    /* Scripts tab — include script name + port */
-                    var scriptRow = $('host-detail-scripts').querySelector('tr.selected');
-                    var scriptName = scriptRow ? (scriptRow.cells[0]||{}).textContent : '';
-                    var scriptPort = scriptRow ? (scriptRow.cells[1]||{}).textContent : '';
-                    title = 'Scripts - ' + (scriptName || 'Script') + (scriptPort ? ' (Port ' + scriptPort + ')' : '');
-                    sourceEl = $('script-output-inline');
-                    break;
-                }
-                if (node.id === 'process-output-inline' || node.id === 'plain-output') {
-                    /* Processes tab — plain output */
-                    var procRow = $('processes-body').querySelector('tr.selected');
-                    var procName = procRow ? (procRow.cells[1]||{}).textContent : '';
-                    title = 'Process ' + (procName || String(L.selectedProcessId || ''));
-                    sourceEl = $('plain-output');
-                    break;
-                }
-                if (node.id === 'tool-output-text') {
-                    /* Tools display middle panel */
-                    var toolHostRow = $('tool-hosts-body').querySelector('tr.selected');
-                    var toolHost = toolHostRow ? (toolHostRow.cells[0]||{}).textContent : '';
-                    title = (L.selectedTool || 'Tool') + (toolHost ? ' - ' + toolHost : '');
-                    sourceEl = $('tool-output-text');
-                    break;
-                }
-                if (node.classList && node.classList.contains('tool-output-area')) {
-                    /* Dynamic tool output tab — get label from active tab button */
-                    var activeTabBtn = $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
-                    title = activeTabBtn ? activeTabBtn.textContent.trim() : 'Tool Output';
-                    sourceEl = node;
-                    break;
-                }
-                node = node.parentElement;
+
+        /* ── 1. Check lower-panel xterm (Interactive processes) ── */
+        if (!text && _termState.xterm && typeof _termState.xterm.getSelection === 'function') {
+            var xtSel = _termState.xterm.getSelection();
+            if (xtSel) {
+                text = xtSel;
+                var procRow = $('processes-body').querySelector('tr.selected');
+                var procLabel = procRow ? (procRow.cells[1]||{}).textContent.trim() : '';
+                title = 'Terminal' + (procLabel ? ' - ' + procLabel : '');
+                sourceEl = $('terminal-output');
             }
-        } catch(e) {}
+        }
+
+        /* ── 2. Check upper-panel dynamic xterm (dynamic tool tabs) ── */
+        if (!text && _dynTermState.xterm && typeof _dynTermState.xterm.getSelection === 'function') {
+            var dynSel = _dynTermState.xterm.getSelection();
+            if (dynSel) {
+                text = dynSel;
+                var dynTabBtn = $('right-tab-bar') && $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
+                title = 'Terminal - ' + (dynTabBtn ? dynTabBtn.textContent.trim() : 'Tab');
+                sourceEl = _dynTermState.containerId ? $(_dynTermState.containerId) : null;
+            }
+        }
+
+        /* ── 3. Fall back to browser text selection (non-terminal areas) ── */
+        if (!text) {
+            var sel = window.getSelection();
+            text = sel ? sel.toString() : '';
+            if (text) {
+                try {
+                    var node = sel.anchorNode;
+                    while (node && node !== document.body) {
+                        if (node.id === 'script-output-inline') {
+                            var scriptRow = $('host-detail-scripts').querySelector('tr.selected');
+                            var scriptName = scriptRow ? (scriptRow.cells[0]||{}).textContent : '';
+                            var scriptPort = scriptRow ? (scriptRow.cells[1]||{}).textContent : '';
+                            title = 'Scripts - ' + (scriptName || 'Script') + (scriptPort ? ' (Port ' + scriptPort + ')' : '');
+                            sourceEl = $('script-output-inline');
+                            break;
+                        }
+                        if (node.id === 'process-output-inline' || node.id === 'plain-output') {
+                            var procRow2 = $('processes-body').querySelector('tr.selected');
+                            var procName2 = procRow2 ? (procRow2.cells[1]||{}).textContent : '';
+                            title = 'Process ' + (procName2 || String(L.selectedProcessId || ''));
+                            sourceEl = $('plain-output');
+                            break;
+                        }
+                        if (node.id === 'tool-output-text') {
+                            var toolHostRow = $('tool-hosts-body').querySelector('tr.selected');
+                            var toolHost = toolHostRow ? (toolHostRow.cells[0]||{}).textContent : '';
+                            title = (L.selectedTool || 'Tool') + (toolHost ? ' - ' + toolHost : '');
+                            sourceEl = $('tool-output-text');
+                            break;
+                        }
+                        if (node.classList && node.classList.contains('tool-output-area')) {
+                            var activeTabBtn = $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
+                            title = activeTabBtn ? activeTabBtn.textContent.trim() : 'Tool Output';
+                            sourceEl = node;
+                            break;
+                        }
+                        node = node.parentElement;
+                    }
+                } catch(e) {}
+            }
+        }
+
+        if (!text) return;
 
         /* Flash source area orange (Qt6: viewport orange 200ms) */
         if (sourceEl) {
-            var orig = sourceEl.style.background;
+            var origBg = sourceEl.style.background;
             sourceEl.style.background = 'rgba(255,165,0,0.35)';
-            setTimeout(function() { sourceEl.style.background = orig; }, 200);
+            setTimeout(function() { sourceEl.style.background = origBg; }, 200);
         }
 
         /* Build formatted block: orange header + selection + spacing */

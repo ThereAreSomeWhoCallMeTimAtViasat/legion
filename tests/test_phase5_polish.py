@@ -14,6 +14,8 @@ Tests for Phase 5 gap items:
            tool-output-black-background CSS+JS
   D1-D14: Config Manager find/search — find bar HTML/CSS, cfgFindRun/Select/
            Next/Prev/Show/Hide, Ctrl+F, Enter/Shift+Enter/Esc, scroll to match
+  E1-E10: Terminal Ctrl+B → Notes — xterm.getSelection priority over
+           window.getSelection; lower + upper panel; orange flash; DB save
 
 Qt6 reference:
   - Log: handleLogFileLevelChange → reloadLogFile reads /tmp/legion-web.log
@@ -433,6 +435,83 @@ def test_d14_find_bar_placeholder():
     return ok('Enter' in HTML and 'Esc' in HTML and 'cfg-find-input' in HTML,
               "find input placeholder missing keyboard hints")
 test("D1.14: find input placeholder shows keyboard hints", test_d14_find_bar_placeholder)
+
+
+# ══════════════════════════════════════════════════════════════
+# E: Terminal Ctrl+B → Notes (backlog #5)
+# ══════════════════════════════════════════════════════════════
+
+print("\n" + "="*60)
+print("E: Terminal Ctrl+B → Notes (backlog #5)")
+print("="*60 + "\n")
+
+def test_e1_xterm_selection_checked_first():
+    """sendSelectionToNotes must check _termState.xterm.getSelection before window.getSelection"""
+    return ok('_termState.xterm' in JS and 'getSelection' in JS and 'sendSelectionToNotes' in JS,
+              "_termState.xterm.getSelection not referenced in sendSelectionToNotes")
+test("E1.1: lower-panel _termState.xterm.getSelection checked for Ctrl+B", test_e1_xterm_selection_checked_first)
+
+def test_e2_dyn_xterm_selection_checked():
+    """sendSelectionToNotes must also check _dynTermState.xterm.getSelection"""
+    return ok('_dynTermState.xterm' in JS and 'getSelection' in JS,
+              "_dynTermState.xterm.getSelection not referenced in JS")
+test("E1.2: upper-panel _dynTermState.xterm.getSelection checked for Ctrl+B", test_e2_dyn_xterm_selection_checked)
+
+def test_e3_terminal_title_in_header():
+    """terminal selection must produce 'Terminal' prefix in the notes header"""
+    return ok("'Terminal'" in JS or '"Terminal"' in JS,
+              "Terminal title string missing from JS sendSelectionToNotes")
+test("E1.3: terminal selection uses 'Terminal' prefix in header", test_e3_terminal_title_in_header)
+
+def test_e4_terminal_flash_orange():
+    """terminal-output element must be flashed orange on Ctrl+B from terminal"""
+    return ok('terminal-output' in JS and 'rgba(255,165,0' in JS,
+              "terminal-output or orange flash missing from JS")
+test("E1.4: terminal-output element flashed orange on Ctrl+B", test_e4_terminal_flash_orange)
+
+def test_e5_getselection_typeof_guard():
+    """must guard getSelection call with typeof check to handle older xterm versions"""
+    return ok("typeof _termState.xterm.getSelection === 'function'" in JS or
+              "typeof _termState.xterm.getSelection==='function'" in JS,
+              "typeof guard on getSelection missing — will throw if xterm lacks the method")
+test("E1.5: typeof guard protects _termState.xterm.getSelection call", test_e5_getselection_typeof_guard)
+
+def test_e6_dyn_getselection_typeof_guard():
+    """must guard _dynTermState.xterm.getSelection with typeof check too"""
+    return ok("typeof _dynTermState.xterm.getSelection === 'function'" in JS or
+              "typeof _dynTermState.xterm.getSelection==='function'" in JS,
+              "typeof guard on _dynTermState.xterm.getSelection missing")
+test("E1.6: typeof guard protects _dynTermState.xterm.getSelection call", test_e6_dyn_getselection_typeof_guard)
+
+def test_e7_ctrl_b_still_wired():
+    """Ctrl+B keydown handler must still call sendSelectionToNotes"""
+    return ok("e.key === 'b'" in JS and 'sendSelectionToNotes' in JS,
+              "Ctrl+B keydown handler or sendSelectionToNotes missing")
+test("E1.7: Ctrl+B keydown still calls sendSelectionToNotes", test_e7_ctrl_b_still_wired)
+
+def test_e8_host_guard_preserved():
+    """sendSelectionToNotes must still guard on L.selectedHostId"""
+    return ok('selectedHostId' in JS and 'sendSelectionToNotes' in JS,
+              "selectedHostId guard missing from sendSelectionToNotes")
+test("E1.8: L.selectedHostId guard preserved in sendSelectionToNotes", test_e8_host_guard_preserved)
+
+def test_e9_notes_append_preserved():
+    """sendSelectionToNotes must still append to existing notes and save to DB"""
+    return ok('/api/workspace/hosts/' in JS and 'markTabUnread' in JS,
+              "DB save or markTabUnread missing from sendSelectionToNotes")
+test("E1.9: notes append + DB save + markTabUnread preserved", test_e9_notes_append_preserved)
+
+def test_e10_three_source_priority():
+    """JS must check sources in order within sendSelectionToNotes: lower xterm → upper xterm → browser"""
+    fn_start = JS.find('function sendSelectionToNotes')
+    fn_end   = JS.find('\n    }', fn_start + 100)   # closing brace of the function
+    fn_body  = JS[fn_start:fn_end] if fn_start >= 0 else ''
+    lower_pos  = fn_body.find('_termState.xterm.getSelection')
+    upper_pos  = fn_body.find('_dynTermState.xterm.getSelection')
+    browser_pos = fn_body.find('window.getSelection')
+    return ok(fn_body and 0 <= lower_pos < upper_pos < browser_pos,
+              f"source priority wrong in fn body: lower={lower_pos} upper={upper_pos} browser={browser_pos}")
+test("E1.10: xterm sources checked before window.getSelection", test_e10_three_source_priority)
 
 
 # ══════════════════════════════════════════════════════════════
