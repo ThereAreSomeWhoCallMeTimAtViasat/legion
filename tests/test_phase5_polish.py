@@ -380,10 +380,11 @@ def test_d4_js_cfgfindrun():
 test("D1.4: JS has cfgFindRun (all-matches finder)", test_d4_js_cfgfindrun)
 
 def test_d5_js_cfgfindselect():
-    """legion.js must define cfgFindSelect using setSelectionRange"""
-    return ok('cfgFindSelect' in JS and 'setSelectionRange' in JS,
-              "cfgFindSelect or setSelectionRange missing from JS")
-test("D1.5: JS has cfgFindSelect (setSelectionRange navigation)", test_d5_js_cfgfindselect)
+    """legion.js must define cfgFindSelect using cfgFindHighlight (overlay approach).
+    v10.13 replaced setSelectionRange+lineH with overlay highlight + mark.offsetTop scroll."""
+    return ok('cfgFindSelect' in JS and 'cfgFindHighlight' in JS,
+              "cfgFindSelect or cfgFindHighlight missing from JS")
+test("D1.5: JS has cfgFindSelect (cfgFindHighlight navigation)", test_d5_js_cfgfindselect)
 
 def test_d6_js_cfgfindnext_prev():
     """legion.js must define cfgFindNext and cfgFindPrev"""
@@ -422,9 +423,10 @@ def test_d11_css_find_bar_styled():
 test("D1.11: CSS styles the find bar", test_d11_css_find_bar_styled)
 
 def test_d12_scroll_to_match():
-    """cfgFindSelect must set scrollTop to bring match into view"""
-    return ok('scrollTop' in JS and 'lineH' in JS,
-              "cfgFindSelect missing scrollTop calculation")
+    """cfgFindHighlight must scroll to match via mark.offsetTop.
+    v10.13 replaced lineH line-height calculation with overlay mark.offsetTop."""
+    return ok('scrollTop' in JS and 'offsetTop' in JS,
+              "cfgFindHighlight missing scrollTop/offsetTop scroll calculation")
 test("D1.12: cfgFindSelect scrolls textarea to matched line", test_d12_scroll_to_match)
 
 def test_d13_close_btn_wired():
