@@ -72,6 +72,7 @@ class WebController:
         self._state_changed = False
         self._matches = {}
         self._deleted_hosts = set()   # Qt6: screenshooter blacklist for deleted hosts
+        self._exit_requested = False  # set True by SIGINT; JS detects via snapshot → shows save dialog
         log.info("[WebController] initialized")
 
     def applySettings(self):
@@ -431,15 +432,28 @@ class WebController:
                         outputfile=outputfile, run_actions=False)
 
     def saveRunningProcessOutputs(self):
-        """controller.py:2305 — flush active process output to DB before save."""
+        """controller.py:2305 — flush active process output to DB before save/shutdown.
+        Reads the .live_output temp file for each still-running process and writes
+        whatever has been captured so far to SQLite (preserve_status=True so the
+        process stays 'Running' — it's being killed anyway)."""
         processRepo = self.logic.activeProject.repositoryContainer.processRepository
         saved = 0
         for proc in list(self._active_processes.values()):
             try:
                 if proc._popen and proc._popen.poll() is None:
-                    # Process still running — read what we have so far
-                    # (the background thread is already flushing, but do one more)
-                    log.info(f"[WebController] Flushing output for running process {proc.id}")
+                    live_path = getattr(proc, '_live_output_path', None)
+                    content = ''
+                    if live_path and os.path.isfile(live_path):
+                        try:
+                            with open(live_path, 'r', encoding='ISO-8859-1', errors='replace') as f:
+                                content = f.read()
+                        except Exception as read_err:
+                            log.warning(f"[WebController] Could not read live output for {proc.id}: {read_err}")
+                    if content:
+                        processRepo.storeProcessOutput(proc.id, content, preserve_status=True)
+                        log.info(f"[WebController] Flushed {len(content)} bytes for running process {proc.id}")
+                    else:
+                        log.info(f"[WebController] No live output to flush for process {proc.id}")
                     saved += 1
             except Exception as e:
                 log.error(f"[WebController] saveRunningProcessOutputs error: {e}")

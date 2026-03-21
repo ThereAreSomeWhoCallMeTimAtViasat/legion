@@ -1735,6 +1735,17 @@ function pollSnapshot() {
         /* Keep OS list current when OS tab is active */
         var osPanel = $('os-panel');
         if (osPanel && osPanel.classList.contains('active')) renderOsList();
+
+        /* Ctrl+C in terminal — server sets exit_requested flag; show save dialog here.
+           NOTE: _exitFlow is defined inside DOMContentLoaded so it is not in this
+           scope — access it via L._exitFlow which is set once DOMContentLoaded runs. */
+        if ((snap.project || {}).exit_requested && !L._exitDialogShown) {
+            L._exitDialogShown = true;
+            if (typeof L._exitFlow === 'function') L._exitFlow();
+        }
+        if (!(snap.project || {}).exit_requested) {
+            L._exitDialogShown = false;   /* reset if server cancelled */
+        }
     }).catch(function(err) {
         console.error('Snapshot poll error:', err);
     });
@@ -2466,26 +2477,33 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /* ── File → Exit — prompt to save if project is unsaved ── */
     function _doExit() {
-        /* Close the browser tab/window; beforeunload sends /api/shutdown beacon */
-        window.close();
-        /* Fallback: if window.close() is blocked (direct navigation), send shutdown */
-        setTimeout(function() {
-            navigator.sendBeacon('/api/shutdown', '{}');
-        }, 200);
+        /* Tell the server to clean up and stop, then try to close the tab.
+           window.close() only works when the tab was opened by script (window.open).
+           If it is blocked we show an alert so the user knows the server is stopped. */
+        function _afterShutdown() {
+            window.close();
+            setTimeout(function() {
+                if (!window.closed) {
+                    alert('The Legion server has been stopped.\nPlease close this browser tab manually.');
+                }
+            }, 300);
+        }
+        L._exitDialogShown = false;
+        fetch('/api/exit', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+            .then(_afterShutdown)
+            .catch(_afterShutdown);   /* server already stopping — still close/alert */
     }
 
     function _exitFlow() {
-        var proj = (L.snapshot && L.snapshot.project) || {};
-        var isTemp = proj.is_temporary !== false;
         var hasData = L.hosts && L.hosts.length > 0;
-
-        if (isTemp && hasData) {
-            /* Unsaved project with data — show save/don't-save/cancel modal */
+        if (hasData) {
             openModal('save-on-exit-modal');
         } else {
             _doExit();
         }
     }
+    /* Expose on L so pollSnapshot() (top-level scope) can call it */
+    L._exitFlow = _exitFlow;
 
     var exitBtn = $('action-exit');
     if (exitBtn) exitBtn.addEventListener('click', _exitFlow);
@@ -2516,6 +2534,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (exitCancelBtn) exitCancelBtn.addEventListener('click', function() {
         closeModal('save-on-exit-modal');
+        /* If exit was triggered by Ctrl+C in terminal, tell server to cancel it */
+        fetch('/api/cancel-exit', {method:'POST'}).catch(function(){});
     });
 
     /* ── Help ── */

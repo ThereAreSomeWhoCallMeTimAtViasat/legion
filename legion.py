@@ -273,7 +273,49 @@ if __name__ == "__main__":
         from app.web.routes import web_bp
         app.register_blueprint(web_bp)
 
-        print("Legion web UI starting at http://127.0.0.1:5000")
+        import signal as _signal
+
+        def _web_shutdown(signum=None, frame=None):
+            """SIGINT/SIGTERM handler for Flask mode.
+            First press: set _exit_requested flag — JS detects it via snapshot and
+            shows the save dialog in the browser.  A 60-second timeout force-exits
+            if the browser never responds.  Second press force-exits immediately."""
+            import os as _os, threading as _threading
+            if getattr(wc, '_exit_requested', False):
+                # Second Ctrl+C — user is insistent, force exit now
+                print("\n[Legion] Force exit.")
+                try:
+                    wc.saveRunningProcessOutputs()
+                    wc.closeProject()
+                except Exception:
+                    pass
+                _os._exit(0)
+
+            wc._exit_requested = True
+            print("\n[Legion] Exit requested — respond in the browser to save your project.")
+            print("[Legion] Press Ctrl+C again to force-quit without saving.")
+
+            def _force_exit_timeout():
+                import time
+                time.sleep(60)
+                if getattr(wc, '_exit_requested', False):
+                    print("\n[Legion] No browser response after 60s — force exiting.")
+                    try:
+                        wc.saveRunningProcessOutputs()
+                        wc.closeProject()
+                    except Exception:
+                        pass
+                    _os._exit(0)
+            _threading.Thread(target=_force_exit_timeout, daemon=True).start()
+
+        # Register BOTH signals before app.run().
+        # IMPORTANT: Werkzeug swallows KeyboardInterrupt internally in serve_forever(),
+        # so 'except KeyboardInterrupt' around app.run() never fires.
+        # Explicit signal handlers run before Werkzeug sees the signal.
+        _signal.signal(_signal.SIGINT,  _web_shutdown)
+        _signal.signal(_signal.SIGTERM, _web_shutdown)
+
+        print("LEGION v10.16-flask — web UI starting at http://127.0.0.1:5000")
         app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
         sys.exit(0)
 

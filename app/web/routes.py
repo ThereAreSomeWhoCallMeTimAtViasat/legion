@@ -193,7 +193,8 @@ def snapshot():
                      "running_processes": running, "finished_processes": finished},
         "project": {"name": getattr(logic.activeProject.properties, "projectName", "*untitled"),
                      "output_folder": getattr(logic.activeProject.properties, "outputFolder", ""),
-                     "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True)},
+                     "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True),
+                     "exit_requested": getattr(wc, '_exit_requested', False)},
         "os_groups": os_groups,
         "scheduler_decisions": [],
         "scheduler_approvals": [],
@@ -797,11 +798,37 @@ def scheduler_provider_logs():
 
 @web_bp.post("/api/shutdown")
 def shutdown():
-    """Graceful shutdown — kill processes, save output, cleanup."""
+    """Cleanup on tab-close (beforeunload beacon).  Flushes output and kills
+    subprocesses but does NOT exit the server — the user may have cancelled the
+    navigation (browser 'Leave page?' → Cancel)."""
     wc = _wc()
     wc.saveRunningProcessOutputs()
     wc.killRunningProcesses()
     return jsonify({"status": "ok", "message": "Shutdown complete"})
+
+@web_bp.post("/api/cancel-exit")
+def cancel_exit():
+    """Browser cancel button — user chose not to exit (e.g. cancelled save dialog)."""
+    wc = _wc()
+    wc._exit_requested = False
+    return jsonify({"status": "ok"})
+
+@web_bp.post("/api/exit")
+def exit_server():
+    """Full exit — called by File → Exit.  Flushes output, closes project
+    (handles storeWordListsOnExit), then schedules os._exit(0) so the Flask
+    server terminates after the response is sent."""
+    import threading, os as _os
+    wc = _wc()
+    wc._exit_requested = False
+    wc.saveRunningProcessOutputs()
+    wc.closeProject()
+    def _stop():
+        import time
+        time.sleep(0.5)     # let response reach the browser
+        _os._exit(0)
+    threading.Thread(target=_stop, daemon=True).start()
+    return jsonify({"status": "ok", "message": "Server stopping"})
 
 @web_bp.get("/api/settings/ui-prefs")
 def settings_ui_prefs():
