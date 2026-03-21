@@ -312,30 +312,34 @@ print("\n" + "="*60)
 print("C: Chain and scheduler")
 print("="*60 + "\n")
 
+def _staged_nmap_src():
+    import inspect
+    methods = [wc.runStagedNmap]
+    for name in ('_launch_ports_stage', '_launch_nse_stage', '_stage_completed'):
+        m = getattr(wc, name, None)
+        if m:
+            methods.append(m)
+    return '\n'.join(inspect.getsource(m) for m in methods)
+
 def test_c1_chain_waits_for_popen():
-    """_chain_next_stage must poll until proc._popen is set before waiting.
+    """Staged nmap chain must poll until proc._popen is set before waiting.
     Fix: if process was still queued (_popen=None), chain skipped wait and started next
     stage immediately — stages ran out of order, XML never imported."""
-    import inspect
-    src = inspect.getsource(wc.runStagedNmap)
+    src = _staged_nmap_src()
     return ok('_popen is not None' in src or 'popen is not None' in src,
               "_chain_next_stage does not poll for _popen before waiting")
 test("C1: _chain_next_stage polls for proc._popen before waiting", test_c1_chain_waits_for_popen)
 
 def test_c2_chain_calls_scheduler():
-    """_chain_next_stage must call scheduler after each XML import.
+    """Staged nmap chain must call scheduler after each XML import.
     Fix: scheduler was never called from the chain — only nmap ran, no automated tools."""
-    import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    return ok('scheduler' in src, "_chain_next_stage does not call scheduler after import")
+    return ok('scheduler' in _staged_nmap_src(), "_chain_next_stage does not call scheduler after import")
 test("C2: _chain_next_stage calls scheduler after each XML import", test_c2_chain_calls_scheduler)
 
 def test_c3_scheduler_isNmapImport_false():
-    """_chain_next_stage must call scheduler(isNmapImport=False) not True.
+    """Staged nmap chain must call scheduler(isNmapImport=False) not True.
     Fix: isNmapImport=True → enable-scheduler-on-import=False config blocked tools from running."""
-    import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    return ok('isNmapImport=False' in src, "chain calls scheduler(isNmapImport=True) — blocks tool auto-run")
+    return ok('isNmapImport=False' in _staged_nmap_src(), "chain calls scheduler(isNmapImport=True) — blocks tool auto-run")
 test("C3: chain calls scheduler(isNmapImport=False)", test_c3_scheduler_isNmapImport_false)
 
 def test_c4_screenshooter_before_portactions():

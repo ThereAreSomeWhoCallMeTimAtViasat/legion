@@ -69,6 +69,8 @@ class WebController:
         self.fastProcessQueue = queue.Queue()
         self.fastProcessesRunning = 0
         self.slowProcessesRunning = 0
+        self._pending_ports_stages = {}    # hostIp -> set of stage nums still running
+        self._pending_stages_lock = threading.Lock()
         self._state_changed = False
         self._matches = {}
         self._deleted_hosts = set()   # Qt6: screenshooter blacklist for deleted hosts
@@ -113,6 +115,7 @@ class WebController:
         self.fastProcessQueue = queue.Queue()
         self.fastProcessesRunning = 0
         self.slowProcessesRunning = 0
+        self._pending_ports_stages = {}
         self._state_changed = True
         log.info(f"[WebController] start('{title}')")
         # Qt6: controller.py:213 — apply store-cleartext setting on project init
@@ -1572,42 +1575,62 @@ class WebController:
         return None
 
     def runStagedNmap(self, targetHosts, discovery=True, stage=1, stop=False, enable_ipv6=False):
-        """controller.py:2055 — run staged nmap scan."""
-        from app.timing import getTimestamp
+        """Flask-only parallel staged nmap (Qt6 controller.py is unchanged).
+
+        All PORTS stages run simultaneously; the NSE stage runs last against
+        every open TCP port discovered by all PORTS stages combined.
+        The stage/stop params are kept for API compatibility but stage is always 1
+        from external callers; the parallel launcher handles sequencing internally.
+        """
         host_arg = str(targetHosts).strip()
-        if not host_arg:
+        if not host_arg or stop:
             return
 
-        log.info(f"[WebController] runStagedNmap stage {stage} for {host_arg}")
-        # Use outputFolder — the designated tool-output directory.
-        # runningFolder is a separate temp dir that ProjectManager creates for
-        # interactive tool output, but nmap XML files end up in outputFolder.
-        # The session_path approach was wrong: session_path=None so it fell back
-        # to runningFolder, but that's where ecjt6f6v-running lives (no XML files).
+        log.info(f"[WebController] runStagedNmap starting parallel scan for {host_arg}")
         tool_output_dir = self.logic.activeProject.properties.outputFolder
-        log.info(f"[WebController] Stage {stage} output dir: {tool_output_dir}")
+        nmap_bin = getattr(self.settings, 'tools_path_nmap', '').strip() or 'nmap'
 
-        if stop:
+        # Classify all configured stages into PORTS (parallel) and NSE (serial, last)
+        ports_stages = []   # [(stage_num, stageOpValues), ...]
+        nse_stage = None    # (stage_num, stageOpValues)
+        for s in range(1, 7):
+            data = getattr(self.settings, f'tools_nmap_stage{s}_ports', '')
+            if not data:
+                continue
+            parts = str(data).split('|', maxsplit=1)
+            op = parts[0].strip()
+            values = parts[1] if len(parts) > 1 else ''
+            if op in ('', 'NOOP', 'SKIP'):
+                continue
+            if op == 'NSE':
+                nse_stage = (s, values)
+            elif op == 'PORTS':
+                ports_stages.append((s, values))
+
+        if not ports_stages and not nse_stage:
+            log.info(f"[WebController] No stage data configured for {host_arg}")
             return
 
+        if ports_stages:
+            # Register all PORTS stages as pending before launching any, so the
+            # completion handler never sees an empty set prematurely.
+            with self._pending_stages_lock:
+                self._pending_ports_stages[host_arg] = {s for s, _ in ports_stages}
+            for (s, values) in ports_stages:
+                self._launch_ports_stage(host_arg, s, values, discovery, enable_ipv6,
+                                         tool_output_dir, nmap_bin, nse_stage)
+        elif nse_stage:
+            # No PORTS stages configured — run NSE immediately
+            self._launch_nse_stage(host_arg, nse_stage[0], nse_stage[1],
+                                   enable_ipv6, tool_output_dir, nmap_bin)
+
+    def _launch_ports_stage(self, host_arg, stage, stageOpValues, discovery, enable_ipv6,
+                             tool_output_dir, nmap_bin, nse_stage):
+        """Launch one PORTS stage and monitor it in a background thread.
+        Calls _stage_completed when done (whether success, empty XML, or error)."""
+        from app.timing import getTimestamp
         outputfile = os.path.join(tool_output_dir, f"{getTimestamp()}-nmapstage{stage}")
 
-        # Get stage config from settings
-        stage_attr = f'tools_nmap_stage{stage}_ports'
-        stageData = getattr(self.settings, stage_attr, '')
-        if not stageData:
-            log.info(f"[WebController] No data for stage {stage}, done")
-            return
-
-        parts = str(stageData).split('|', maxsplit=1)
-        stageOp = parts[0]
-        stageOpValues = parts[1] if len(parts) > 1 else ''
-
-        if stageOp in ('', 'NOOP', 'SKIP'):
-            return
-
-        # Build command
-        nmap_bin = getattr(self.settings, 'tools_path_nmap', '').strip() or 'nmap'
         tokens = [nmap_bin]
         if enable_ipv6:
             tokens.append('-6')
@@ -1615,101 +1638,192 @@ class WebController:
             tokens.extend(['-T4', '-sV', '-sSU', '-O'])
         else:
             tokens.extend(['-Pn', '-sS', '-O'])
-
-        if stageOp == 'PORTS':
-            port_values = stageOpValues.strip()
-            if port_values:
-                tokens.extend(['-p', port_values])
-            tokens.extend(['-vvvv', host_arg, '--stats-every', '5s', '-oA', outputfile])
-        elif stageOp == 'NSE':
-            tokens = [nmap_bin]
-            if enable_ipv6:
-                tokens.append('-6')
-            # --min-parallelism: run multiple NSE script instances concurrently so
-            # scripts like vulners (which make external HTTP calls) don't block each
-            # other sequentially. --script-timeout caps any single script that hangs.
-            tokens.extend(['-sV', f'--script={stageOpValues.strip()}', '-vvvv',
-                          '--min-parallelism', '20', '--max-parallelism', '50',
-                          '--script-timeout', '30s',
-                          host_arg, '--stats-every', '5s', '-oA', outputfile])
-        else:
-            tokens.extend(['-vvvv', host_arg, '--stats-every', '5s', '-oA', outputfile])
+        port_values = stageOpValues.strip()
+        if port_values:
+            tokens.extend(['-p', port_values])
+        tokens.extend(['-vvvv', host_arg, '--stats-every', '5s', '-oA', outputfile])
 
         command = ' '.join(t for t in tokens if t)
         log.info(f"[WebController] Stage {stage} command: {command}")
 
-        # Run and chain to next stage on completion
         result = self.runCommand(command=command, name='nmap', tabTitle=f'nmap (stage {stage})',
                                  hostIp=host_arg, outputfile=outputfile, _is_staged=True)
 
-        # Chain next stage via background thread monitoring
-        if stage < 6 and result and result.get('process_id'):
-            proc_id = result['process_id']
-            def _chain_next_stage():
-                log.info(f"[Chain{stage}] WAITING for process {proc_id} to start...")
-                # Wait for process to START (it may still be in fastProcessQueue)
-                deadline = time.monotonic() + 600
-                proc = None
-                while time.monotonic() < deadline:
-                    proc = self._active_processes.get(proc_id)
-                    if proc and proc._popen is not None:
-                        break
-                    time.sleep(0.5)
+        if not result or not result.get('process_id'):
+            log.warning(f"[WebController] Stage {stage} failed to launch for {host_arg}")
+            self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
+            return
 
+        proc_id = result['process_id']
+
+        def _wait_and_import():
+            log.info(f"[Chain{stage}] Waiting for process {proc_id} to start...")
+            deadline = time.monotonic() + 600
+            proc = None
+            while time.monotonic() < deadline:
+                proc = self._active_processes.get(proc_id)
                 if proc and proc._popen is not None:
-                    log.info(f"[Chain{stage}] Process {proc_id} STARTED (pid={proc.pid}), waiting for finish...")
-                    proc._popen.wait()
-                    log.info(f"[Chain{stage}] Process {proc_id} FINISHED (exit={proc._popen.returncode})")
-                else:
-                    log.warning(f"[Chain{stage}] Stage {stage} never started (proc_id={proc_id}), stopping chain")
-                    return
+                    break
+                time.sleep(0.5)
 
-                # Check if killed
-                processRepo = self.logic.activeProject.repositoryContainer.processRepository
-                if processRepo.isKilledProcess(str(proc_id)):
-                    log.info(f"[Chain{stage}] Stage {stage} was killed, stopping chain")
-                    return
+            if not proc or proc._popen is None:
+                log.warning(f"[Chain{stage}] Stage {stage} never started for {host_arg}")
+                self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
+                return
 
-                # Import nmap results
-                exit_code = proc._popen.returncode
-                xml_path = outputfile + '.xml'
-                xml_exists = os.path.isfile(xml_path)
-                xml_size = os.path.getsize(xml_path) if xml_exists else -1
-                log.info(f"[Chain{stage}] nmap exit={exit_code}  xml_path={xml_path}  exists={xml_exists}  size={xml_size}b")
-                if xml_exists and xml_size > 0:
+            log.info(f"[Chain{stage}] Process {proc_id} started (pid={proc.pid}), waiting...")
+            proc._popen.wait()
+            log.info(f"[Chain{stage}] Process {proc_id} finished (exit={proc._popen.returncode})")
+
+            processRepo = self.logic.activeProject.repositoryContainer.processRepository
+            if processRepo.isKilledProcess(str(proc_id)):
+                log.info(f"[Chain{stage}] Stage {stage} was killed")
+                self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
+                return
+
+            xml_path = outputfile + '.xml'
+            xml_exists = os.path.isfile(xml_path)
+            xml_size = os.path.getsize(xml_path) if xml_exists else -1
+            log.info(f"[Chain{stage}] xml={xml_path} exists={xml_exists} size={xml_size}b")
+
+            if xml_exists and xml_size > 0:
+                try:
+                    from app.importers.nmap_import import import_nmap_xml
+                    import_nmap_xml(project=self.logic.activeProject,
+                                    xml_path=xml_path, output="")
+                    log.info(f"[WebController] Stage {stage} XML imported: {xml_path}")
                     try:
-                        from app.importers.nmap_import import import_nmap_xml
-                        import_nmap_xml(project=self.logic.activeProject,
-                                        xml_path=xml_path, output="")
-                        log.info(f"[WebController] Stage {stage} XML imported: {xml_path}")
-                        # Verify host/port counts using raw sqlite3 — bypasses ALL
-                        # SQLAlchemy session/transaction caching to see actual DB state.
-                        try:
-                            import sqlite3 as _sq3
-                            _xml_size = os.path.getsize(xml_path) if os.path.isfile(xml_path) else -1
-                            _db_path = self.logic.activeProject.database.name
-                            with _sq3.connect(_db_path) as _rc:
-                                _hc = _rc.execute("SELECT COUNT(*) FROM hostObj").fetchone()[0]
-                                _pc = _rc.execute("SELECT COUNT(*) FROM portObj").fetchone()[0]
-                                _sc = _rc.execute("SELECT COUNT(*) FROM serviceObj").fetchone()[0]
-                            log.info(f"[Chain{stage}] XML={_xml_size}b  raw-DB: {_hc} hosts, {_pc} ports, {_sc} services")
-                        except Exception as _ve:
-                            log.error(f"[Chain{stage}] DB verify failed: {_ve}")
-                        # Qt6: NmapImporter.schedule.connect(self.scheduler) fires after every
-                        # stage import. Run automated attacks on newly discovered ports.
-                        self.scheduler(isNmapImport=False)
-                    except Exception as e:
-                        log.error(f"[WebController] Stage {stage} import error: {e}")
-                else:
-                    log.warning(f"[WebController] Stage {stage} XML not found: {xml_path}")
-                # Run next stage
-                self.runStagedNmap(host_arg, discovery=discovery, stage=stage+1, enable_ipv6=enable_ipv6)
+                        import sqlite3 as _sq3
+                        _db_path = self.logic.activeProject.database.name
+                        with _sq3.connect(_db_path) as _rc:
+                            _hc = _rc.execute("SELECT COUNT(*) FROM hostObj").fetchone()[0]
+                            _pc = _rc.execute("SELECT COUNT(*) FROM portObj").fetchone()[0]
+                            _sc = _rc.execute("SELECT COUNT(*) FROM serviceObj").fetchone()[0]
+                        log.info(f"[Chain{stage}] raw-DB: {_hc} hosts, {_pc} ports, {_sc} services")
+                    except Exception as _ve:
+                        log.error(f"[Chain{stage}] DB verify failed: {_ve}")
+                    self.scheduler(isNmapImport=False)
+                except Exception as e:
+                    log.error(f"[WebController] Stage {stage} import error: {e}")
+            else:
+                log.warning(f"[WebController] Stage {stage} XML not found: {xml_path}")
 
-            t = threading.Thread(target=_chain_next_stage, daemon=True,
-                                name=f"stage-chain-{stage}-{host_arg}")
-            t.start()
+            self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
 
-        return result
+        t = threading.Thread(target=_wait_and_import, daemon=True,
+                             name=f"stage-chain-{stage}-{host_arg}")
+        t.start()
+
+    def _stage_completed(self, host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin):
+        """Remove a finished PORTS stage from the pending set.
+        When the set empties, launch the NSE stage."""
+        with self._pending_stages_lock:
+            pending = self._pending_ports_stages.get(host_arg, set())
+            pending.discard(stage)
+            self._pending_ports_stages[host_arg] = pending
+            all_done = len(pending) == 0
+        log.info(f"[WebController] Stage {stage} done for {host_arg}, remaining={pending}")
+        if all_done and nse_stage:
+            nse_stage_num, nse_values = nse_stage
+            self._launch_nse_stage(host_arg, nse_stage_num, nse_values,
+                                   enable_ipv6, tool_output_dir, nmap_bin)
+
+    def _launch_nse_stage(self, host_arg, stage, nse_values, enable_ipv6, tool_output_dir, nmap_bin):
+        """Query all discovered open TCP ports for host, then run NSE against them.
+        Runs after all PORTS stages complete so vulners sees every discovered port."""
+        from app.timing import getTimestamp
+        import sqlite3 as _sq3
+
+        # Use raw sqlite3 to bypass SQLAlchemy session cache — DB was written by
+        # multiple concurrent PORTS-stage threads; ORM may not see their commits.
+        port_list = ''
+        try:
+            _db_path = self.logic.activeProject.database.name
+            with _sq3.connect(_db_path) as _rc:
+                rows = _rc.execute(
+                    "SELECT portObj.portId FROM portObj "
+                    "JOIN hostObj ON portObj.hostId = hostObj.id "
+                    "WHERE hostObj.ip = ? AND portObj.protocol = 'tcp' AND portObj.state = 'open'",
+                    (host_arg,)
+                ).fetchall()
+            port_list = ','.join(str(r[0]) for r in rows) if rows else ''
+            if port_list:
+                log.info(f"[WebController] NSE targeting {len(rows)} open TCP ports: {port_list[:120]}")
+            else:
+                log.warning(f"[WebController] NSE: no open TCP ports in DB for {host_arg} — scanning nmap defaults")
+        except Exception as e:
+            log.error(f"[WebController] NSE port query failed: {e}")
+
+        outputfile = os.path.join(tool_output_dir, f"{getTimestamp()}-nmapstage{stage}")
+
+        tokens = [nmap_bin]
+        if enable_ipv6:
+            tokens.append('-6')
+        # --min-parallelism: run multiple NSE script instances concurrently so
+        # scripts like vulners (which make external HTTP calls) don't block each
+        # other sequentially. --script-timeout caps any single script that hangs.
+        tokens.extend(['-sV', f'--script={nse_values.strip()}', '-vvvv',
+                       '--min-parallelism', '20', '--max-parallelism', '50',
+                       '--script-timeout', '30s'])
+        if port_list:
+            tokens.extend(['-p', port_list])
+        tokens.extend([host_arg, '--stats-every', '5s', '-oA', outputfile])
+
+        command = ' '.join(t for t in tokens if t)
+        log.info(f"[WebController] NSE stage {stage} command: {command}")
+
+        result = self.runCommand(command=command, name='nmap', tabTitle=f'nmap (stage {stage})',
+                                 hostIp=host_arg, outputfile=outputfile, _is_staged=True)
+
+        if not result or not result.get('process_id'):
+            with self._pending_stages_lock:
+                self._pending_ports_stages.pop(host_arg, None)
+            return
+
+        proc_id = result['process_id']
+
+        def _wait_nse():
+            deadline = time.monotonic() + 1800  # NSE can be slow (vulners makes HTTP calls)
+            proc = None
+            while time.monotonic() < deadline:
+                proc = self._active_processes.get(proc_id)
+                if proc and proc._popen is not None:
+                    break
+                time.sleep(0.5)
+
+            if not proc or proc._popen is None:
+                log.warning(f"[NSE] NSE stage never started for {host_arg}")
+                with self._pending_stages_lock:
+                    self._pending_ports_stages.pop(host_arg, None)
+                return
+
+            proc._popen.wait()
+            log.info(f"[NSE] NSE finished (exit={proc._popen.returncode})")
+
+            processRepo = self.logic.activeProject.repositoryContainer.processRepository
+            if processRepo.isKilledProcess(str(proc_id)):
+                with self._pending_stages_lock:
+                    self._pending_ports_stages.pop(host_arg, None)
+                return
+
+            xml_path = outputfile + '.xml'
+            if os.path.isfile(xml_path) and os.path.getsize(xml_path) > 0:
+                try:
+                    from app.importers.nmap_import import import_nmap_xml
+                    import_nmap_xml(project=self.logic.activeProject,
+                                    xml_path=xml_path, output="")
+                    log.info(f"[WebController] NSE XML imported: {xml_path}")
+                    self.scheduler(isNmapImport=False)
+                except Exception as e:
+                    log.error(f"[WebController] NSE import error: {e}")
+            else:
+                log.warning(f"[WebController] NSE XML not found: {xml_path}")
+
+            with self._pending_stages_lock:
+                self._pending_ports_stages.pop(host_arg, None)
+
+        t = threading.Thread(target=_wait_nse, daemon=True, name=f"nse-chain-{host_arg}")
+        t.start()
 
     def getSettings(self):
         """controller.py:253"""

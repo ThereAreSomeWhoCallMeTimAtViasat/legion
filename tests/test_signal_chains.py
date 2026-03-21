@@ -328,18 +328,23 @@ print("\n" + "="*60)
 print("C7: Staged nmap chain")
 print("="*60 + "\n")
 
-def test_c7_staged_marked():
-    """runStagedNmap marks processes with _is_staged=True"""
+def _staged_nmap_src():
     import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    return ok('_is_staged=True' in src, "runStagedNmap must pass _is_staged=True")
+    methods = [wc.runStagedNmap]
+    for name in ('_launch_ports_stage', '_launch_nse_stage', '_stage_completed'):
+        m = getattr(wc, name, None)
+        if m:
+            methods.append(m)
+    return '\n'.join(inspect.getsource(m) for m in methods)
+
+def test_c7_staged_marked():
+    """runStagedNmap (or its helpers) marks processes with _is_staged=True"""
+    return ok('_is_staged=True' in _staged_nmap_src(), "runStagedNmap must pass _is_staged=True")
 test("C7.1: Staged processes marked with _is_staged=True", test_c7_staged_marked)
 
 def test_c7_chain_imports_xml():
-    """runStagedNmap chain imports XML between stages"""
-    import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    return ok('import_nmap_xml' in src, "runStagedNmap must import XML in chain")
+    """runStagedNmap chain (or its helpers) imports XML between stages"""
+    return ok('import_nmap_xml' in _staged_nmap_src(), "runStagedNmap must import XML in chain")
 test("C7.2: Stage chain imports XML", test_c7_chain_imports_xml)
 
 def test_c7_stage_settings_loaded():

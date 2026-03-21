@@ -322,18 +322,23 @@ print("\n" + "="*60)
 print("N: NSE stage options")
 print("="*60 + "\n")
 
-def test_n1_nse_parallelism():
-    """NSE stage command must include --min-parallelism"""
+def _staged_nmap_src():
     import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    return ok('min-parallelism' in src, "--min-parallelism not in NSE stage command")
+    methods = [wc.runStagedNmap]
+    for name in ('_launch_ports_stage', '_launch_nse_stage', '_stage_completed'):
+        m = getattr(wc, name, None)
+        if m:
+            methods.append(m)
+    return '\n'.join(inspect.getsource(m) for m in methods)
+
+def test_n1_nse_parallelism():
+    """NSE stage command must include --min-parallelism (in _launch_nse_stage after parallel refactor)"""
+    return ok('min-parallelism' in _staged_nmap_src(), "--min-parallelism not in NSE stage command")
 test("N1.1: NSE stage uses --min-parallelism for concurrent script execution", test_n1_nse_parallelism)
 
 def test_n2_nse_script_timeout():
-    """NSE stage must include --script-timeout to prevent hanging scripts"""
-    import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    return ok('script-timeout' in src, "--script-timeout not in NSE stage command")
+    """NSE stage must include --script-timeout (in _launch_nse_stage after parallel refactor)"""
+    return ok('script-timeout' in _staged_nmap_src(), "--script-timeout not in NSE stage command")
 test("N1.2: NSE stage uses --script-timeout to kill hung scripts", test_n2_nse_script_timeout)
 
 

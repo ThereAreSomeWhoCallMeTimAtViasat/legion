@@ -178,14 +178,19 @@ def test_b3_stage_chain_import_callable():
 test("B3.1: runStagedNmap chain import is callable (not nmap_runner!)", test_b3_stage_chain_import_callable)
 
 def test_b3_chain_uses_correct_module():
-    """runStagedNmap actually calls nmap_import, not nmap_runner"""
-    import inspect, ast
-    src = inspect.getsource(wc.runStagedNmap)
-    # Check for the WRONG module name
-    if 'nmap_runner' in src:
-        return "FAIL: runStagedNmap still references nmap_runner (upstream module)"
-    # Check for the RIGHT module name
-    return ok('nmap_import' in src, "runStagedNmap should reference nmap_import")
+    """runStagedNmap chain actually calls nmap_import, not nmap_runner.
+    nmap_import may live in the helper methods (_launch_ports_stage / _launch_nse_stage)
+    after the parallel refactor, so check all staged-nmap methods."""
+    import inspect
+    methods = [wc.runStagedNmap]
+    for name in ('_launch_ports_stage', '_launch_nse_stage', '_stage_completed'):
+        m = getattr(wc, name, None)
+        if m:
+            methods.append(m)
+    combined = '\n'.join(inspect.getsource(m) for m in methods)
+    if 'nmap_runner' in combined:
+        return "FAIL: staged nmap chain still references nmap_runner (upstream module)"
+    return ok('nmap_import' in combined, "staged nmap chain should reference nmap_import")
 test("B3.2: runStagedNmap uses nmap_import not nmap_runner", test_b3_chain_uses_correct_module)
 
 def test_b3_capture_output_uses_correct_module():
