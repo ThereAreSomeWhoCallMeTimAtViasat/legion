@@ -970,6 +970,7 @@ def brute_run():
     passlist = str(payload.get('passlist', '')).strip()
     username = str(payload.get('username', '')).strip()
     password = str(payload.get('password', '')).strip()
+    combo    = str(payload.get('combo', '')).strip()
     options  = str(payload.get('options', '')).strip()
 
     if not ip or not port or not service:
@@ -983,20 +984,24 @@ def brute_run():
     hydra_bin = getattr(wc.settings, 'tools_path_hydra', '').strip() or 'hydra'
     parts = [hydra_bin, '-s', port]
 
-    # Username: wordlist (-L) takes priority over single (-l)
-    if userlist:
-        parts += ['-L', userlist]
-    elif username:
-        parts += ['-l', username]
+    if combo:
+        # Combo file: colon-separated user:pass lines → hydra -C
+        parts += ['-C', combo]
+    else:
+        # Username: wordlist (-L) takes priority over single (-l)
+        if userlist:
+            parts += ['-L', userlist]
+        elif username:
+            parts += ['-l', username]
 
-    # Password: wordlist (-P) takes priority over single (-p)
-    if passlist:
-        parts += ['-P', passlist]
-    elif password:
-        parts += ['-p', password]
+        # Password: wordlist (-P) takes priority over single (-p)
+        if passlist:
+            parts += ['-P', passlist]
+        elif password:
+            parts += ['-p', password]
 
-    if not userlist and not username and not passlist and not password:
-        return _err("at least a username or wordlist is required")
+    if not combo and not userlist and not username and not passlist and not password:
+        return _err("at least a username, password, wordlist, or combo file is required")
 
     if options:
         parts += options.split()

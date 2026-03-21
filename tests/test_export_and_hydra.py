@@ -399,7 +399,7 @@ def _run_hydra(ip, port, service, combo, options=''):
     the status update in _capture_output) has time to write wordlist files."""
     r = client.post('/api/brute/run', json={
         'ip': ip, 'port': port, 'service': service,
-        'userlist': combo, 'options': options,
+        'combo': combo, 'options': options,
     })
     if r.status_code != 200:
         return None, f"brute/run {r.status_code}"
@@ -499,7 +499,7 @@ def test_h2_hydra_mysql_finds_root():
             'ip': _LIVE_TARGET,
             'port': _MYSQL_PORT,
             'service': 'mysql',
-            'userlist': combo,
+            'combo': combo,
             'options': '-t 1 -e n',   # -e n = try empty password; -t 1 = single thread
         })
         if r.status_code != 200:
@@ -528,7 +528,7 @@ def test_h2_hydra_mysql_password_in_wordlist():
     try:
         r = client.post('/api/brute/run', json={
             'ip': _LIVE_TARGET, 'port': _MYSQL_PORT,
-            'service': 'mysql', 'userlist': combo,
+            'service': 'mysql', 'combo': combo,
             'options': '-t 1 -e n',
         })
         pid = r.get_json().get('process_id') if r.status_code == 200 else None
