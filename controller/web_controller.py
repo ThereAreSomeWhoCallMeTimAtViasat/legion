@@ -1729,30 +1729,59 @@ class WebController:
                                    enable_ipv6, tool_output_dir, nmap_bin)
 
     def _launch_nse_stage(self, host_arg, stage, nse_values, enable_ipv6, tool_output_dir, nmap_bin):
-        """Query all discovered open TCP ports for host, then run NSE against them.
+        """Query all discovered open ports for host, then run NSE against them.
         Runs after all PORTS stages complete so vulners sees every discovered port."""
         from app.timing import getTimestamp
         import sqlite3 as _sq3
 
-        # Use raw sqlite3 to bypass SQLAlchemy session cache — DB was written by
-        # multiple concurrent PORTS-stage threads; ORM may not see their commits.
-        port_list = ''
+        # Flush ORM session pool so any pending state is released before raw sqlite3 reads.
+        try:
+            self.logic.activeProject.database.session.remove()
+        except Exception:
+            pass
+
+        # Query open ports using raw sqlite3 (bypasses ORM cache).
+        # Use a subquery keyed on hostObj.id to avoid TEXT/INTEGER JOIN type mismatch
+        # (portObj.hostId is Column(String) but hostObj.id is Column(Integer)).
+        # state LIKE 'open%' catches both 'open' and 'open|filtered'.
+        tcp_ports = []
+        udp_ports = []
         try:
             _db_path = self.logic.activeProject.database.name
             with _sq3.connect(_db_path) as _rc:
-                rows = _rc.execute(
-                    "SELECT portObj.portId FROM portObj "
-                    "JOIN hostObj ON portObj.hostId = hostObj.id "
-                    "WHERE hostObj.ip = ? AND portObj.protocol = 'tcp' AND portObj.state = 'open'",
-                    (host_arg,)
+                host_rows = _rc.execute(
+                    "SELECT id FROM hostObj WHERE ip = ?", (host_arg,)
                 ).fetchall()
-            port_list = ','.join(str(r[0]) for r in rows) if rows else ''
-            if port_list:
-                log.info(f"[WebController] NSE targeting {len(rows)} open TCP ports: {port_list[:120]}")
-            else:
-                log.warning(f"[WebController] NSE: no open TCP ports in DB for {host_arg} — scanning nmap defaults")
+                log.info(f"[NSE] DB host lookup for {host_arg!r}: {len(host_rows)} row(s) found")
+                if host_rows:
+                    host_ids = [str(r[0]) for r in host_rows]
+                    ph = ','.join('?' * len(host_ids))
+                    all_ports = _rc.execute(
+                        f"SELECT portId, protocol, state FROM portObj "
+                        f"WHERE hostId IN ({ph}) AND state LIKE 'open%'",
+                        host_ids
+                    ).fetchall()
+                    log.info(f"[NSE] Found {len(all_ports)} open port(s): {all_ports[:30]}")
+                    tcp_ports = [str(r[0]) for r in all_ports if r[1] == 'tcp']
+                    udp_ports = [str(r[0]) for r in all_ports if r[1] == 'udp']
+                else:
+                    log.warning(f"[NSE] No host found in DB with ip={host_arg!r}")
         except Exception as e:
             log.error(f"[WebController] NSE port query failed: {e}")
+
+        # Build -p argument: T:<tcp_ports>,U:<udp_ports> if both present
+        port_list = ''
+        if tcp_ports and udp_ports:
+            port_list = f"T:{','.join(tcp_ports)},U:{','.join(udp_ports)}"
+        elif tcp_ports:
+            port_list = ','.join(tcp_ports)
+        elif udp_ports:
+            port_list = f"U:{','.join(udp_ports)}"
+
+        if port_list:
+            log.info(f"[NSE] Port spec: {port_list[:200]}")
+        else:
+            log.warning(f"[NSE] No open ports found — NSE will scan nmap defaults")
 
         outputfile = os.path.join(tool_output_dir, f"{getTimestamp()}-nmapstage{stage}")
 
@@ -1770,9 +1799,10 @@ class WebController:
         tokens.extend([host_arg, '--stats-every', '5s', '-oA', outputfile])
 
         command = ' '.join(t for t in tokens if t)
-        log.info(f"[WebController] NSE stage {stage} command: {command}")
+        log.info(f"[WebController] NSE command: {command}")
 
-        result = self.runCommand(command=command, name='nmap', tabTitle=f'nmap (stage {stage})',
+        script_name = nse_values.strip().split(',')[0]  # e.g. 'vulners'
+        result = self.runCommand(command=command, name='nmap', tabTitle=f'nmap ({script_name})',
                                  hostIp=host_arg, outputfile=outputfile, _is_staged=True)
 
         if not result or not result.get('process_id'):
