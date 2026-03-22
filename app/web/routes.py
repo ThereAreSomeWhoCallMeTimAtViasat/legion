@@ -1263,10 +1263,30 @@ def _validate_legion_conf(config_text):
             errors.append(f"Line {line_num}: Unknown setting '{key}' in [{current_section}] — "
                            f"valid: {', '.join(sorted(fixed_section_keys[current_section]))}")
         # Staged nmap port value validation
+        # Format: KEYWORD or KEYWORD|spec  (e.g. PORTS|T:80,443 or NSE|vulners)
+        # The pipe is only valid as a separator after an uppercase keyword —
+        # validateNmapPorts is applied to the spec part only, not the full raw value.
         if current_section == 'StagedNmapSettings' and key in fixed_section_keys.get('StagedNmapSettings', set()):
-            if value and not validateNmapPorts(value):
-                errors.append(f"Line {line_num}: Invalid nmap port expression in '{key}': {value!r} "
-                               f"— only digits, commas, hyphens, colons, and wildcards are allowed")
+            if value:
+                raw = value.strip('"\'')          # strip surrounding quotes
+                valid_keywords = {'PORTS', 'NSE', 'NOOP', 'SKIP'}
+                if '|' in raw:
+                    keyword, spec = raw.split('|', 1)
+                    if keyword not in valid_keywords:
+                        errors.append(
+                            f"Line {line_num}: Unknown keyword '{keyword}' in '{key}': {value!r} "
+                            f"— valid keywords before '|' are: {', '.join(sorted(valid_keywords))}")
+                    elif keyword == 'PORTS' and spec and not validateNmapPorts(spec):
+                        errors.append(
+                            f"Line {line_num}: Invalid port spec after 'PORTS|' in '{key}': {spec!r} "
+                            f"— only digits, commas, hyphens, colons, T:/U: prefixes, and wildcards allowed")
+                    # NSE|scriptname: script name is always alphanumeric — no further check needed
+                else:
+                    # No pipe: bare keyword or legacy plain port spec
+                    if raw not in valid_keywords and not validateNmapPorts(raw):
+                        errors.append(
+                            f"Line {line_num}: Invalid staged nmap value in '{key}': {value!r} "
+                            f"— use PORTS|T:ports or NSE|script format, or a bare keyword")
         # Element count validation for dynamic sections
         if current_section in section_element_counts:
             expected = section_element_counts[current_section]

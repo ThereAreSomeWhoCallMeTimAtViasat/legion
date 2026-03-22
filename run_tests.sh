@@ -65,6 +65,8 @@ declare -a SUITE_ELAPSED=()
 GRAND_PASS=0; GRAND_FAIL=0; GRAND_SKIP=0
 SUITE_COUNT=0; SUITE_DONE=0
 SCRIPT_START=$(date +%s)
+# Section-level counters — reset at each ══ section ══ header
+SECTION_PASS=0; SECTION_FAIL=0; SECTION_SKIP=0; SECTION_START=$SCRIPT_START
 
 # Count total suites up front so we can show X/N progress.
 # When RUN_LIVE=true, test_terminal.py is skipped in the unit loop
@@ -166,7 +168,27 @@ echo "  Cleared /tmp/legion* artefacts"
 # ── Helpers ────────────────────────────────────────────────────────────────────
 _extract() { echo "$1" | grep -oP "\\d+(?= $2)" 2>/dev/null | head -1 || echo "0"; }
 
-section() { echo -e "\n${CYAN}${BOLD}══ $1 ══${NC}"; }
+_section_subtotal() {
+    local sec_total=$(( SECTION_PASS + SECTION_FAIL + SECTION_SKIP ))
+    [[ $sec_total -eq 0 ]] && return
+    local sec_elapsed=$(( $(date +%s) - SECTION_START ))
+    local sc="${GREEN}${SECTION_PASS} passed${NC}"
+    [[ $SECTION_FAIL -gt 0 ]] && sc="${sc}  ${RED}${SECTION_FAIL} failed${NC}" \
+                               || sc="${sc}  ${DIM}0 failed${NC}"
+    [[ $SECTION_SKIP -gt 0 ]] && sc="${sc}  ${YELLOW}${SECTION_SKIP} skipped${NC}" \
+                               || sc="${sc}  ${DIM}0 skipped${NC}"
+    printf "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
+    printf "  ${DIM}Section total: %b  of %d  [%dm%ds]${NC}\n\n" \
+        "$sc" "$sec_total" $(( sec_elapsed/60 )) $(( sec_elapsed%60 ))
+}
+
+section() {
+    _section_subtotal          # print previous section's totals (if any ran)
+    SECTION_PASS=0; SECTION_FAIL=0; SECTION_SKIP=0; SECTION_START=$(date +%s)
+    echo -e "\n${CYAN}${BOLD}══ $1 ══${NC}"
+}
+
+_skip_note() { printf "               ${DIM}↳ %s${NC}\n" "$1"; }
 
 # Print one result row immediately after a suite finishes
 print_result() {
@@ -190,17 +212,18 @@ print_result() {
 
     printf "  %b %-42s  %b  ${DIM}%s${NC}\n" "$mark" "$name" "$counts" "$timestr"
 
-    # Running grand total on a dim line
+    # Accumulate into grand total and section total
     SUITE_DONE=$(( SUITE_DONE + 1 ))
     GRAND_PASS=$(( GRAND_PASS + p ))
     GRAND_FAIL=$(( GRAND_FAIL + f ))
     GRAND_SKIP=$(( GRAND_SKIP + s ))
-    local gtotal=$(( GRAND_PASS + GRAND_FAIL + GRAND_SKIP ))
+    SECTION_PASS=$(( SECTION_PASS + p ))
+    SECTION_FAIL=$(( SECTION_FAIL + f ))
+    SECTION_SKIP=$(( SECTION_SKIP + s ))
+    # Progress indicator on a dim line (suite count only — no carried failure totals)
     local elapsed=$(( $(date +%s) - SCRIPT_START ))
-    printf "  ${DIM}  running total: %d passed, %d failed, %d skipped of %d  [%02d:%02d  suite %d/%d]${NC}\n" \
-        "$GRAND_PASS" "$GRAND_FAIL" "$GRAND_SKIP" "$gtotal" \
-        $(( elapsed/60 )) $(( elapsed%60 )) \
-        "$SUITE_DONE" "$SUITE_TOTAL"
+    printf "  ${DIM}  [%02d:%02d  suite %d/%d]${NC}\n" \
+        $(( elapsed/60 )) $(( elapsed%60 )) "$SUITE_DONE" "$SUITE_TOTAL"
 }
 
 # ── run_unit ──────────────────────────────────────────────────────────────────
@@ -235,8 +258,25 @@ run_unit() {
                          || print_result "$name" "pass" "$p" "$f" "$s" "$secs"
         # Print failed test names
         echo "$out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
-        # Print skipped test names
-        echo "$out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
+        # Print skipped test names with context
+        if [[ "$s" -gt 0 ]]; then
+            echo "$out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
+            # Annotate skip reason based on which file is running
+            if [[ "$file" == *"test_export_and_hydra"* ]]; then
+                if $RUN_LIVE; then
+                    _skip_note "PERMANENT: Hydra libssh2 MAC incompatibility with Metasploitable OpenSSH 4.7 (T9)"
+                    _skip_note "FTP (H3) and MySQL (H2) confirm the Hydra pipeline — already ran in Live Hydra section"
+                else
+                    _skip_note "No live VM target — all ${s} rerun in 'Live Hydra tests' with --live or --all 192.168.85.11"
+                fi
+            elif [[ "$file" == *"test_terminal"* ]]; then
+                if $RUN_LIVE; then
+                    _skip_note "Live tests require LEGION_TEST_TARGET — set on the T7 section which already ran above"
+                else
+                    _skip_note "No live VM target — T7 tests rerun in 'Live terminal tests' with --live or --all 192.168.85.11"
+                fi
+            fi
+        fi
     fi
 }
 
@@ -274,14 +314,20 @@ run_pytest() {
 
     if [[ "$rc" -eq 0 ]]; then
         print_result "$name" "pass" "$p" "$f" "$s" "$secs"
-        # Print skipped test names if any (deselected by -m marker don't count)
+        # Print skipped test names (deselected by -m marker don't show here)
         echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
+        if [[ "$s" -gt 0 ]]; then
+            _skip_note "pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)"
+        fi
     else
         print_result "$name" "fail" "$p" "$f" "$s" "$secs"
         # Print every failed test name
         echo "$out" | grep "^FAILED" | sed "s/^FAILED /      ${RED}FAILED${NC} /"
         # Print skipped test names
         echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
+        if [[ "$s" -gt 0 ]]; then
+            _skip_note "pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)"
+        fi
     fi
 }
 
@@ -385,6 +431,10 @@ if $RUN_LIVE; then
             || print_result "$hydra_name" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$_hydra_secs"
         echo "$hydra_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
         echo "$hydra_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
+        if [[ "$hydra_s" -gt 0 ]]; then
+            _skip_note "PERMANENT: Hydra libssh2 MAC incompatibility with Metasploitable OpenSSH 4.7"
+            _skip_note "FTP (H3) and MySQL (H2) above confirm the Hydra pipeline works — see T9"
+        fi
     fi
 fi
 
@@ -434,6 +484,10 @@ if $RUN_LIVE; then
         print_result "$_live_name" "fail" "$_live_p" "$_live_f" "$_live_s" "$_live_secs"
     fi
 fi
+
+# Print the last section's subtotal before the final summary
+_section_subtotal
+SECTION_PASS=0; SECTION_FAIL=0; SECTION_SKIP=0
 
 # ── Final summary ──────────────────────────────────────────────────────────────
 TOTAL_ELAPSED=$(( $(date +%s) - SCRIPT_START ))
