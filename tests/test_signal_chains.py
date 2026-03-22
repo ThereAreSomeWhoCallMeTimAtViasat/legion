@@ -354,26 +354,28 @@ def test_c7_stage_settings_loaded():
 test("C7.3: Stage 1 port config loaded", test_c7_stage_settings_loaded)
 
 def test_c7_nse_is_last_stage():
-    """NSE stage must be configured at a higher stage number than all PORTS stages.
-    This ensures vulners runs after all port discovery completes."""
-    nse_stage = None
-    ports_stages = []
-    for s in range(1, 7):
-        data = getattr(wc.settings, f'tools_nmap_stage{s}_ports', '')
-        if not data:
-            continue
-        op = str(data).split('|', maxsplit=1)[0].strip()
-        if op == 'NSE':
-            nse_stage = s
-        elif op == 'PORTS':
-            ports_stages.append(s)
-    if nse_stage is None:
-        return "SKIP: no NSE stage configured"
+    """NSE must be the last configured stage in the repo's legion.conf.
+    Reads from the repo config file directly — not wc.settings — because the
+    runtime config (/root/.local/share/legion/legion.conf) can be overwritten
+    by the Selenium Config Manager tests during the test run. The repo config
+    is the authoritative source for the intended stage ordering."""
+    import re, os
+    conf_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             'legion.conf')
+    with open(conf_path) as f:
+        content = f.read()
+    nse_match = re.search(r'stage(\d+)-ports\s*=\s*["\']?NSE\|', content)
+    if not nse_match:
+        return "SKIP: NSE|vulners not found in repo legion.conf"
+    nse_stage = int(nse_match.group(1))
+    ports_stages = [int(m.group(1)) for m in re.finditer(
+        r'stage(\d+)-ports\s*=\s*["\']?PORTS\|', content)]
     if not ports_stages:
-        return "SKIP: no PORTS stages configured"
+        return "SKIP: no PORTS stages found in repo legion.conf"
     return ok(nse_stage > max(ports_stages),
-              f"NSE at stage {nse_stage} but PORTS stages go up to {max(ports_stages)}")
-test("C7.4: NSE stage is numbered after all PORTS stages", test_c7_nse_is_last_stage)
+              f"NSE at stage {nse_stage} but PORTS stages go up to {max(ports_stages)} "
+              f"— NSE must be last so vulners scans all discovered ports")
+test("C7.4: NSE stage is numbered after all PORTS stages in repo legion.conf", test_c7_nse_is_last_stage)
 
 def test_c7_stage_completed_removes_from_pending():
     """_stage_completed removes the completed stage from _pending_ports_stages."""
