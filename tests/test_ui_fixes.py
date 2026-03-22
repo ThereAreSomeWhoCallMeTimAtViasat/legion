@@ -581,6 +581,98 @@ def test_f5_hydra_combo_route():
               "brute_run route missing combo= field or -C flag for Hydra combo files")
 test("F3.1: brute/run route supports combo= field (Hydra -C flag)", test_f5_hydra_combo_route)
 
+def test_f6_hydra_combo_api():
+    """POST /api/brute/run with combo= produces command containing -C."""
+    r = client.post('/api/brute/run', json={
+        'ip': '10.10.10.1', 'port': '21', 'service': 'ftp',
+        'combo': '/tmp/combo.txt', 'options': ''
+    })
+    if r.status_code != 200:
+        return f"FAIL: status={r.status_code}"
+    cmd = (r.get_json() or {}).get('command', '')
+    return ok('-C' in cmd and '/tmp/combo.txt' in cmd,
+              f"combo= did not produce -C in command: {cmd!r}")
+test("F3.2: combo= field produces -C /path in Hydra command", test_f6_hydra_combo_api)
+
+def test_f7_hydra_combo_no_regression_userlist():
+    """brute/run with userlist= and passlist= must still work (not broken by combo addition)."""
+    r = client.post('/api/brute/run', json={
+        'ip': '10.10.10.1', 'port': '22', 'service': 'ssh',
+        'userlist': '/tmp/users.txt', 'passlist': '/tmp/pass.txt'
+    })
+    if r.status_code != 200:
+        return f"FAIL: status={r.status_code}"
+    cmd = (r.get_json() or {}).get('command', '')
+    return ok('-L' in cmd and '-P' in cmd,
+              f"userlist/passlist broken by combo addition — cmd: {cmd!r}")
+test("F3.3: userlist/passlist still produce -L/-P (no regression from combo)", test_f7_hydra_combo_no_regression_userlist)
+
+def test_f8_hydra_no_creds_returns_400():
+    """brute/run with no creds, no combo, no wordlists must return 400."""
+    r = client.post('/api/brute/run', json={
+        'ip': '10.10.10.1', 'port': '22', 'service': 'ssh',
+        'username': '', 'password': '', 'userlist': '', 'passlist': '', 'combo': ''
+    })
+    return ok(r.status_code == 400,
+              f"expected 400 for no credentials, got {r.status_code}")
+test("F3.4: brute/run returns 400 when no credentials supplied", test_f8_hydra_no_creds_returns_400)
+
+def test_f9_xterm_both_terminals_covered():
+    """applyFontSize must reference BOTH _termState and _dynTermState for terminal font update."""
+    return ok('_termState' in JS and '_dynTermState' in JS,
+              "applyFontSize must update both lower PTY terminal and upper dynamic tab terminal")
+test("F1.3: applyFontSize covers both _termState and _dynTermState terminals", test_f9_xterm_both_terminals_covered)
+
+def test_f10_xterm_fit_called():
+    """After fontSize change, fitAddon.fit() must be called to reflow the terminal layout."""
+    # Check that fit() is called inside the forEach that updates terminals
+    fit_idx = JS.rfind('fitAddon')
+    fit_call = JS.rfind('fit()')
+    fontsize_idx = JS.rfind('options.fontSize')
+    return ok(fontsize_idx != -1 and fit_call > fontsize_idx,
+              "fitAddon.fit() not called after options.fontSize update")
+test("F1.4: fitAddon.fit() called after xterm fontSize change to reflow layout", test_f10_xterm_fit_called)
+
+def test_f11_scan_tab_auto_select_first_host():
+    """Scan tab restore must auto-select first host when no host was previously selected."""
+    return ok('hosts.length' in JS and 'firstHost' in JS and 'click()' in JS,
+              "Scan tab restore missing auto-select first host fallback")
+test("F2.3: Scan tab restore auto-selects first host when none was previously selected", test_f11_scan_tab_auto_select_first_host)
+
+def test_f12_scan_tab_host_row_highlight():
+    """Scan tab restore must re-highlight the selected host row (remove all selected, re-add)."""
+    return ok("classList.remove('selected')" in JS or 'classList.remove("selected")' in JS,
+              "Scan tab restore missing host row re-highlight logic")
+test("F2.4: Scan tab restore re-highlights selected host row", test_f12_scan_tab_host_row_highlight)
+
+def test_f13_startup_banner_reads_index():
+    """legion.py startup banner must read version from index.html not hardcode it."""
+    import re
+    with open(os.path.join(PROJECT_ROOT, 'legion.py')) as f:
+        src = f.read()
+    hardcoded = re.search(r'print\s*\(.*v\d+\.\d+-flask', src)
+    reads_file = 'index.html' in src and ('open(' in src or 'read()' in src)
+    return ok(not hardcoded and reads_file,
+              "startup banner still has hardcoded version string — must read from index.html")
+test("F4.1: legion.py startup banner reads version from index.html dynamically", test_f13_startup_banner_reads_index)
+
+def test_f14_repo_conf_nse_is_stage6():
+    """Repo legion.conf must have NSE|vulners at stage6 not an earlier stage.
+    Prevents config drift where NSE runs before all ports are discovered."""
+    conf_path = os.path.join(PROJECT_ROOT, 'legion.conf')
+    with open(conf_path) as f:
+        content = f.read()
+    # Find which stage NSE is on
+    import re
+    nse_match = re.search(r'stage(\d+)-ports\s*=\s*["\']?NSE\|', content)
+    if not nse_match:
+        return "FAIL: NSE|vulners not found in legion.conf"
+    nse_stage = int(nse_match.group(1))
+    ports_stages = [int(m.group(1)) for m in re.finditer(r'stage(\d+)-ports\s*=\s*["\']?PORTS\|', content)]
+    return ok(nse_stage > max(ports_stages) if ports_stages else nse_stage > 1,
+              f"NSE at stage{nse_stage} but PORTS stages go to stage{max(ports_stages) if ports_stages else '?'}")
+test("F4.2: repo legion.conf has NSE|vulners at last stage (after all PORTS stages)", test_f14_repo_conf_nse_is_stage6)
+
 
 # ══════════════════════════════════════════════════════════════
 # SUMMARY

@@ -406,6 +406,76 @@ def test_c7_nse_tab_title_uses_script_name():
               "NSE tab title still uses stage number — should show script name")
 test("C7.8: NSE tab title shows script name not stage number", test_c7_nse_tab_title_uses_script_name)
 
+def test_c7_helper_methods_exist():
+    """_launch_ports_stage and _stage_completed must exist as methods on WebController."""
+    return ok(callable(getattr(wc, '_launch_ports_stage', None)) and
+              callable(getattr(wc, '_stage_completed', None)),
+              "_launch_ports_stage or _stage_completed missing from WebController")
+test("C7.9: _launch_ports_stage and _stage_completed exist as methods", test_c7_helper_methods_exist)
+
+def test_c7_stage_completed_calls_nse():
+    """_stage_completed must launch NSE when pending set is empty."""
+    import inspect
+    src = inspect.getsource(wc._stage_completed)
+    return ok('_launch_nse_stage' in src and 'all_done' in src,
+              "_stage_completed must call _launch_nse_stage when all PORTS done")
+test("C7.10: _stage_completed launches NSE only when all PORTS stages done", test_c7_stage_completed_calls_nse)
+
+def test_c7_stage_completed_resilient():
+    """_launch_ports_stage must call _stage_completed even when launch fails."""
+    import inspect
+    src = inspect.getsource(wc._launch_ports_stage)
+    # Must call _stage_completed in the early-exit (failed launch) path
+    return ok(src.count('_stage_completed') >= 2,
+              "_stage_completed not called on failed launch — stages would hang forever")
+test("C7.11: _launch_ports_stage calls _stage_completed on failed launch", test_c7_stage_completed_resilient)
+
+def test_c7_nse_session_remove():
+    """_launch_nse_stage must call session.remove() before raw sqlite3 query."""
+    import inspect
+    src = inspect.getsource(wc._launch_nse_stage)
+    return ok('session.remove()' in src,
+              "_launch_nse_stage must flush ORM session before raw sqlite3 port query")
+test("C7.12: NSE port query flushes ORM session before reading DB", test_c7_nse_session_remove)
+
+def test_c7_nse_includes_udp_ports():
+    """_launch_nse_stage must query UDP ports as well as TCP."""
+    import inspect
+    src = inspect.getsource(wc._launch_nse_stage)
+    return ok("'udp'" in src or '"udp"' in src,
+              "_launch_nse_stage ignores UDP ports — vulners misses UDP services")
+test("C7.13: NSE port query includes UDP ports", test_c7_nse_includes_udp_ports)
+
+def test_c7_nse_port_spec_format():
+    """_launch_nse_stage must produce T:<tcp>,U:<udp> port spec format for mixed protocols."""
+    import inspect
+    src = inspect.getsource(wc._launch_nse_stage)
+    # T: appears in the f-string that builds the port spec; U: for UDP prefix
+    return ok('T:' in src and 'U:' in src,
+              "_launch_nse_stage missing T:/U: prefixes for mixed TCP/UDP port spec")
+test("C7.14: NSE port spec uses T:<tcp>,U:<udp> format for mixed protocols", test_c7_nse_port_spec_format)
+
+def test_c7_ports_stages_classified_not_nse():
+    """runStagedNmap must not include NSE stage in ports_stages list."""
+    import inspect
+    src = inspect.getsource(wc.runStagedNmap)
+    return ok("op == 'NSE'" in src or "op == \"NSE\"" in src,
+              "runStagedNmap must explicitly classify NSE stages separately from PORTS")
+test("C7.15: runStagedNmap classifies NSE stages separately from PORTS stages", test_c7_ports_stages_classified_not_nse)
+
+def test_c7_pending_set_registered_before_launch():
+    """_pending_ports_stages must be populated BEFORE any stage thread starts.
+    If a fast stage completes before all stages are registered, the set must
+    not appear empty prematurely, or NSE would fire too early."""
+    import inspect
+    src = inspect.getsource(wc.runStagedNmap)
+    # The set must be written before the loop that calls _launch_ports_stage
+    set_idx = src.find('_pending_ports_stages[host_arg]')
+    launch_idx = src.find('_launch_ports_stage')
+    return ok(set_idx != -1 and launch_idx != -1 and set_idx < launch_idx,
+              "_pending_ports_stages must be populated before _launch_ports_stage is called")
+test("C7.16: pending set registered before any stage launched (no premature NSE)", test_c7_pending_set_registered_before_launch)
+
 
 # ══════════════════════════════════════════════════════════════
 # C8: Cancelled process skipped in queue

@@ -258,6 +258,60 @@ def test_b15_brute_run_accepts_single_creds():
               f"unexpected status={r.status_code}: {r.get_data(as_text=True)[:200]}")
 test("B1.15: /api/brute/run accepts single username/password params", test_b15_brute_run_accepts_single_creds)
 
+def test_b16_brute_combo_produces_c_flag():
+    """combo= field must produce -C in the Hydra command (not -L/-P)."""
+    r = client.post('/api/brute/run', json={
+        'ip': '127.0.0.1', 'port': '21', 'service': 'ftp',
+        'combo': '/tmp/combo.txt'
+    })
+    if r.status_code != 200:
+        return f"FAIL: status={r.status_code}"
+    cmd = (r.get_json() or {}).get('command', '')
+    return ok('-C' in cmd and '/tmp/combo.txt' in cmd and '-L' not in cmd,
+              f"-C not in command or -L incorrectly present: {cmd!r}")
+test("B1.16: combo= field produces -C flag not -L/-P", test_b16_brute_combo_produces_c_flag)
+
+def test_b17_brute_combo_with_options():
+    """combo= plus options= must both appear in the generated command."""
+    r = client.post('/api/brute/run', json={
+        'ip': '127.0.0.1', 'port': '3306', 'service': 'mysql',
+        'combo': '/tmp/combo.txt', 'options': '-t 1 -e n'
+    })
+    if r.status_code != 200:
+        return f"FAIL: status={r.status_code}"
+    cmd = (r.get_json() or {}).get('command', '')
+    return ok('-C' in cmd and '-t' in cmd and '-e' in cmd,
+              f"combo + options not both present in command: {cmd!r}")
+test("B1.17: combo= and options= both appear in generated command", test_b17_brute_combo_with_options)
+
+def test_b18_brute_single_username_password():
+    """username= and password= single creds must produce -l and -p flags."""
+    r = client.post('/api/brute/run', json={
+        'ip': '127.0.0.1', 'port': '22', 'service': 'ssh',
+        'username': 'root', 'password': 'toor'
+    })
+    if r.status_code != 200:
+        return f"FAIL: status={r.status_code}"
+    cmd = (r.get_json() or {}).get('command', '')
+    return ok('-l root' in cmd and '-p toor' in cmd,
+              f"-l/-p not in command: {cmd!r}")
+test("B1.18: username=/password= single creds produce -l/-p flags", test_b18_brute_single_username_password)
+
+def test_b19_brute_combo_priority_over_userlist():
+    """When combo= is supplied, it takes priority: -C used, not -L/-P."""
+    r = client.post('/api/brute/run', json={
+        'ip': '127.0.0.1', 'port': '21', 'service': 'ftp',
+        'combo': '/tmp/combo.txt',
+        'userlist': '/tmp/users.txt',  # should be ignored when combo= present
+        'passlist': '/tmp/pass.txt'
+    })
+    if r.status_code != 200:
+        return f"FAIL: status={r.status_code}"
+    cmd = (r.get_json() or {}).get('command', '')
+    return ok('-C' in cmd and '-L' not in cmd and '-P' not in cmd,
+              f"combo= did not take priority over userlist/passlist: {cmd!r}")
+test("B1.19: combo= takes priority over userlist/passlist", test_b19_brute_combo_priority_over_userlist)
+
 
 # ══════════════════════════════════════════════════════════════
 # C: Conversation C — store-cleartext + low-priority settings
