@@ -1223,7 +1223,11 @@ def _validate_legion_conf(config_text):
             else:
                 current.append(ch)
         last = ''.join(current).strip()
-        if last: elements.append(last)
+        # Always include the last element when preceding elements exist —
+        # a trailing comma with empty value (e.g. "label,command,") is intentional:
+        # it means no service-filter restriction (applies to all services).
+        if last or elements:
+            elements.append(last)
         return elements
 
     errors = []
