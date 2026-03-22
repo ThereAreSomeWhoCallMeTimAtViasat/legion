@@ -322,6 +322,20 @@ if $RUN_UNIT; then
         fi
         run_unit "$f"
     done
+
+    # Integration tests (pytest-style unittest classes) — shared DB/repository layer
+    # used by both Qt6 and Flask. These catch API regressions like renamed methods,
+    # changed constructor signatures, and missing attributes.
+    run_pytest "integration/core_workflows" \
+        tests/integration/test_CoreWorkflows.py \
+        tests/integration/test_SmokeTests.py \
+        tests/integration/test_CriticalPaths.py
+    run_pytest "features/db_and_model" \
+        tests/features/test_ConfigSyntaxValidation.py \
+        tests/features/test_HtmlOutputStorage.py \
+        tests/features/test_NotesSaveFix.py \
+        tests/features/test_TabSwitchingDataIntegrity.py \
+        tests/features/test_ToolTabOutputPersistence.py
 fi
 
 if $RUN_LIVE; then
