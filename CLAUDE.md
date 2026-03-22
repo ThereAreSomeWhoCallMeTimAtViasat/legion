@@ -17,18 +17,15 @@
 - `/clear` — wipe history, stay in same terminal session
 - `exit` then `claude` — full fresh start (best between separate features)
 
-### Conversation plan for remaining work
+### Remaining work
 | Conv | Work | Est. cost |
 |------|------|-----------|
-| A | Wire nmap-path, hydra-path, pyShodan API key | Cheap |
-| B | Brute tab pre-fill + no-username/no-password field hiding | Med |
-| C | store-cleartext-passwords-on-exit + low-priority settings | Cheap |
-| D | Config editor find/search (F2 — backlog #4) | Med |
-| E | Terminal Ctrl+B to Notes (backlog #5) | Med |
-| F | LLM AI tab (backlog #7 — largest) | Med |
-| G | Low-priority settings (screenshooter-timeout, black-background) | Cheap |
+| A | LLM AI tab (backlog #7) | Med |
+| B | pyShodan API key wiring | Cheap |
+| C | Auto per-service NSE scripts (backlog #9) | Med |
 
 **Rule:** CLAUDE.md + MEMORY.md auto-load in every new session — full project context is warm instantly.
+**Rule:** Update CLAUDE.md and MEMORY.md as part of completing every task — not after the fact.
 
 ---
 
@@ -37,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.4-flask
-- **Static asset cache:** `?v=20` in `base.html`
+- **Current Flask version:** v10.19-flask
+- **Static asset cache:** `?v=29` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -72,7 +69,7 @@ sudo python3 tests/test_behavioral.py
 
 | File | Purpose |
 |------|---------|
-| `controller/web_controller.py` | Qt-free WebController: scheduler, _chain_next_stage, screenshooter, process queue |
+| `controller/web_controller.py` | Qt-free WebController: scheduler, parallel staged nmap (_launch_ports_stage/_launch_nse_stage), screenshooter, process queue |
 | `controller/controller.py` | Original Qt6 controller — DO NOT modify |
 | `app/web/routes.py` | All Flask API endpoints |
 | `app/web/static/js/legion.js` | All UI interactions, rendering, polling |
@@ -96,10 +93,13 @@ sudo python3 tests/test_behavioral.py
 - `session.remove()` creates fresh session; `session.close()` just closes connection
 - NmapImporter uses `self.db.session()` and commits but never removes
 
-### Staged Nmap Chain
-- Stage ports: stage1=HTTP, stage2=NSE|vulners (slow, 2-3min), stage3=SMB/DB, stage4=FTP/SSH/RDP, stage5=remaining, stage6=high
-- `_chain_next_stage`: polls `_active_processes` until `_popen` is not None, then `wait()`
-- After each stage XML import: `self.scheduler(isNmapImport=False)`
+### Staged Nmap Chain (parallel — v10.19)
+- Stage order: 1=HTTP, 2=SMB/DB, 3=FTP/SSH/RDP, 4=remaining, 5=high, 6=NSE|vulners (last)
+- Stages 1–5 (PORTS) launch **simultaneously** via `_launch_ports_stage`
+- Stage 6 (NSE) runs **after all PORTS stages finish** via `_launch_nse_stage`
+- NSE gets `-p <all_open_tcp_ports>` queried from raw sqlite3 (bypasses ORM cache)
+- Completion tracked: `_pending_ports_stages[hostIp]` set + `_pending_stages_lock`
+- Each PORTS stage: polls `_active_processes` until `_popen` not None → `wait()` → import XML → `scheduler(isNmapImport=False)`
 - Scheduler calls `session.remove()` before `getHosts` to bypass cached session state
 
 ### Scheduler / Process Queue
@@ -120,15 +120,6 @@ sudo python3 tests/test_behavioral.py
 
 ---
 
-## Unresolved Issues (STILL OPEN — DO NOT MARK RESOLVED)
-
-### #30 — nmap stage 2 freezes everything while running
-**Symptom**: While stage 2 (NSE|vulners) actively runs (~2-3 min), entire UI appears frozen.
-**Attempted fixes — all insufficient**: WAL mode, temp file output, dynActive guard removal
-**True root cause NOT YET IDENTIFIED.** Do not close until user confirms freeze is gone.
-
----
-
 ## Completed Phases Summary
 - **All Qt6 gaps closed** (v9.6–v9.9): input validation, python-script routing, file import, PostgreSQL adapter, ORDER BY whitelist, dup check layer 2, .bak, XML archive, screenshot blacklist, CSV export, applySettings, custom command, hydra, dup check for user actions, 3 UI buttons
 - **v10.0**: percent column, multi-host parallel, in-memory log, font size, port state filter
@@ -136,6 +127,14 @@ sudo python3 tests/test_behavioral.py
 - **v10.2**: log buffer 10k, snapshot log demoted to DEBUG
 - **v10.3**: save-on-exit prompt, orange tab state preserved across host switches
 - **v10.4**: max_scans attribute name fixed, Queue logs demoted to DEBUG
+- **v10.6**: brute tab pre-fill defaults, hide/show for no-user/no-pass services
+- **v10.7**: store-cleartext-passwords-on-exit, screenshooter-timeout, black-background wired
+- **v10.8**: Config editor find/search (F2, Ctrl+F) — backlog #4
+- **v10.9**: Terminal Ctrl+B → Notes — backlog #5
+- **v10.10–v10.16**: settings live-apply, config find overlay, graceful shutdown
+- **v10.17**: Hydra combo file support (`-C` flag); live Hydra tests fixed
+- **v10.18**: NSE|vulners moved to stage 6 (last); closes Issue #30
+- **v10.19**: Parallel PORTS stages (1–5 simultaneous); NSE runs against all discovered ports
 
 ---
 
@@ -179,6 +178,7 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 ### Version String
 - `_VERSION` JS constant reads from `#window-title` DOM text at page load
 - All places that update the title use `_VERSION` — **never hardcode version in JS**
+- `legion.py` startup banner also reads version dynamically from `index.html` — never hardcode there either
 - Only `index.html` needs updating for a version bump
 
 ### Process Queue Limits
@@ -205,31 +205,30 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 | 1 | Port state filter on Services table | Low | ✅ Done v10.0 | |
 | 2 | Comma/newline multi-host + parallel nmap processes | Low | ✅ Done v10.0 | |
 | 3 | Font size control in output windows | Low | ✅ Done v10.1 | |
-| 4 | Config editor find/search (F2) | Low–Med | ❌ Not started | Find bar, prev/next, match count |
-| 5 | Terminal notes Ctrl+B | Med | ❌ Not started | `xterm.getSelection()` → append to host notes |
-| 6 | Parallel nmap stages | High | ⏸ Deferred | Wait for Issue #30 first |
+| 4 | Config editor find/search (F2) | Low–Med | ✅ Done v10.8 | |
+| 5 | Terminal notes Ctrl+B | Med | ✅ Done v10.9 | |
+| 6 | Parallel nmap stages | High | ✅ Done v10.19 | PORTS parallel; NSE last with all ports |
 | 7 | LLM host analysis (AI tab) | Med | ❌ Not started | Design approved above |
 | 8 | Save-on-exit prompt | Low | ✅ Done v10.3 | |
+| 9 | Auto per-service NSE scripts after discovery | Med | ❌ Not started | Flask only; after #7 |
 
-### legion.conf Settings — Not Yet Wired
-#### High priority
+### legion.conf Settings
+#### Already wired
+| Setting | Where |
+|---------|-------|
+| `nmap-path` | `tools_path_nmap` — used in all nmap commands |
+| `hydra-path` | `tools_path_hydra` — used in `brute_run` route |
+| `default-username` / `default-password` | Pre-fill brute tab — ✅ v10.6 |
+| `username-wordlist-path` / `password-wordlist-path` | Pre-fill brute tab — ✅ v10.6 |
+| `no-username-services` / `no-password-services` | Hide brute fields — ✅ v10.6 |
+| `store-cleartext-passwords-on-exit` | Delete wordlist files on close — ✅ v10.7 |
+| `screenshooter-timeout` | eyewitness delay — ✅ v10.7 |
+| `tool-output-black-background` | black-bg CSS toggle — ✅ v10.7 |
+
+#### Still unwired
 | Setting | Fix needed |
 |---------|-----------|
-| `nmap-path` | Use `self.settings.tools_path_nmap` in all nmap commands (currently hardcoded `nmap`) |
-| `hydra-path` | Use `self.settings.tools_path_hydra` in `brute_run` route |
 | `pyshodan-api-key` | Pass as env var `SHODAN_API_KEY` when invoking `pyShodan.py` |
-| `default-username` / `default-password` | Pre-fill brute tab on page load |
-| `username-wordlist-path` / `password-wordlist-path` | Pre-fill brute tab fields |
-| `no-username-services` | Hide username field for cisco/snmp/vnc etc |
-| `no-password-services` | Hide password field for oracle-sid/rsh etc |
-| `store-cleartext-passwords-on-exit` | Delete wordlist files on close if False |
-
-#### Low priority
-| Setting | Fix needed |
-|---------|-----------|
-| `screenshooter-timeout` | Use `general_screenshooter_timeout / 1000` as eyewitness delay |
-| `tool-output-black-background` | Force `#000` on `.tool-output-area` when True |
-| `default-terminal` | N/A by design — Flask PTY replaces external terminal |
 
 ---
 
