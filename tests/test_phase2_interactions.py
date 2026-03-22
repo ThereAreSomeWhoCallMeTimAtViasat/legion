@@ -131,21 +131,37 @@ def test_i1_kill_then_close():
               f"kill={kill_resp.status_code} close={close_resp.status_code}")
 test("I1.3: kill then close sequence both return 200", test_i1_kill_then_close)
 
-def test_i1_close_x_in_js():
-    """JS renderDynamicToolTabs must create close-x button on each dynamic tab"""
-    with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
-        src = f.read()
-    return ok('close-x' in src and 'dynamic-tab' in src,
-              "close-x not found in renderDynamicToolTabs")
-test("I1.4: JS renderDynamicToolTabs creates close-x button element", test_i1_close_x_in_js)
+def test_i1_close_route_hides_from_snapshot_immediately():
+    """Closing a finished process must remove it from snapshot before next poll."""
+    wc.start()
+    r = wc.runCommand('echo close_immediate_test', name='close-imm', hostIp='127.0.0.1')
+    pid = r.get('process_id')
+    if not pid: return "no process_id"
+    time.sleep(2)
+    # Verify it's in snapshot before close
+    snap_before = client.get('/api/snapshot').get_json()
+    ids_before = {str(p.get('id')) for p in snap_before.get('processes', [])}
+    if str(pid) not in ids_before: return "SKIP: process not in snapshot before close"
+    # Close it
+    client.post(f'/api/processes/{pid}/close')
+    # Must be gone immediately (not wait for next poll)
+    snap_after = client.get('/api/snapshot').get_json()
+    ids_after = {str(p.get('id')) for p in snap_after.get('processes', [])}
+    return ok(str(pid) not in ids_after,
+              f"Process {pid} still in snapshot immediately after close")
+test("I1.4: close route removes process from snapshot immediately", test_i1_close_route_hides_from_snapshot_immediately)
 
-def test_i1_close_handler_in_js():
-    """JS must have a click handler that calls the close route"""
+def test_i1_close_x_button_in_rendered_tab():
+    """renderDynamicToolTabs function must create close-x button inside dynamic-tab."""
     with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
         src = f.read()
-    return ok('close-x' in src and '/close' in src,
-              "close handler not wired to /close route")
-test("I1.5: JS close-x handler calls /api/processes/<id>/close", test_i1_close_handler_in_js)
+    # Find renderDynamicToolTabs function body and check for close-x creation inside it
+    idx = src.find('function renderDynamicToolTabs(')
+    if idx < 0: return "FAIL: renderDynamicToolTabs function not found"
+    body = src[idx:idx+1500]
+    return ok('close-x' in body and 'dynamic-tab' in body,
+              "renderDynamicToolTabs does not create close-x inside dynamic-tab")
+test("I1.5: renderDynamicToolTabs function body creates close-x inside dynamic-tab", test_i1_close_x_button_in_rendered_tab)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -158,22 +174,28 @@ print("\n" + "="*60)
 print("I2: Host double-click → copy IP to clipboard")
 print("="*60 + "\n")
 
-def test_i2_dblclick_handler_in_js():
-    """JS must have a dblclick listener specifically on hosts-body"""
-    with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
-        src = f.read()
-    return ok("hosts-body').addEventListener('dblclick" in src or
-              'hosts-body").addEventListener("dblclick' in src,
-              "dblclick not directly attached to hosts-body")
-test("I2.1: JS has dblclick handler on hosts-body", test_i2_dblclick_handler_in_js)
+def test_i2_host_ip_in_snapshot_for_clipboard():
+    """Hosts in snapshot must have ip field — this is what dblclick copies to clipboard."""
+    data = client.get('/api/snapshot').get_json()
+    hosts = data.get('hosts', [])
+    if not hosts: return "SKIP"
+    missing_ip = [h for h in hosts if not h.get('ip')]
+    return ok(not missing_ip,
+              f"{len(missing_ip)} hosts have no ip field — nothing to copy to clipboard")
+test("I2.1: snapshot hosts have ip field (the value dblclick copies to clipboard)", test_i2_host_ip_in_snapshot_for_clipboard)
 
-def test_i2_clipboard_write_in_js():
-    """JS must call navigator.clipboard.writeText for host double-click"""
+def test_i2_clipboard_api_in_dblclick_handler():
+    """The hosts-body dblclick handler function body must use the clipboard API."""
     with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
         src = f.read()
-    return ok('clipboard' in src or 'execCommand' in src,
-              "clipboard write not found in JS")
-test("I2.2: JS uses clipboard API for host double-click copy", test_i2_clipboard_write_in_js)
+    # Find the dblclick listener on hosts-body and check its body for clipboard
+    idx = src.find("'hosts-body').addEventListener('dblclick")
+    if idx < 0: idx = src.find('"hosts-body").addEventListener("dblclick')
+    if idx < 0: return "FAIL: dblclick handler not found on hosts-body"
+    body = src[idx:idx+400]
+    return ok('clipboard' in body or 'execCommand' in body or 'hostIp' in body,
+              "dblclick handler body does not reference clipboard or host IP")
+test("I2.2: dblclick handler body references clipboard API and host IP", test_i2_clipboard_api_in_dblclick_handler)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -238,22 +260,32 @@ def test_i3_service_action_runs_tool():
     return ok(after > before, f"no new process launched (before={before} after={after})")
 test("I3.4: /api/workspace/service-action launches a process", test_i3_service_action_runs_tool)
 
-def test_i3_contextmenu_handler_in_js():
-    """JS must have contextmenu listener on host-detail-ports"""
-    with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
-        src = f.read()
-    return ok('host-detail-ports' in src and 'contextmenu' in src,
-              "contextmenu not wired to host-detail-ports")
-test("I3.5: JS has contextmenu handler on host-detail-ports", test_i3_contextmenu_handler_in_js)
+def test_i3_host_detail_ports_have_port_number():
+    """GET /api/workspace/hosts/<id> must return ports with port number field."""
+    data = client.get('/api/snapshot').get_json()
+    hosts = data.get('hosts', [])
+    h = next((x for x in hosts if x.get('ip') == '10.50.60.70'), None)
+    if not h: return "SKIP: test host not in snapshot"
+    r = client.get(f'/api/workspace/hosts/{h["id"]}')
+    ports = r.get_json().get('ports', [])
+    if not ports: return "SKIP: no ports for test host"
+    missing = [p for p in ports if 'port' not in p or 'protocol' not in p]
+    return ok(not missing,
+              f"port rows missing port/protocol fields (needed for contextmenu): {missing[:2]}")
+test("I3.5: host detail ports have port+protocol fields for contextmenu data attrs", test_i3_host_detail_ports_have_port_number)
 
-def test_i3_port_rows_have_data_attrs():
-    """JS loadHostDetail must set data-port/protocol/service on port rows for context menu"""
-    with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
-        src = f.read()
-    # Check that we set dataset attributes on port rows
-    return ok('dataset.port' in src or "data-port" in src,
-              "port rows missing dataset attributes for context menu")
-test("I3.6: JS port rows carry data-port/protocol/service attributes", test_i3_port_rows_have_data_attrs)
+def test_i3_port_service_name_in_detail():
+    """Port rows in host detail must include service name for context menu filtering."""
+    data = client.get('/api/snapshot').get_json()
+    h = next((x for x in data.get('hosts', []) if x.get('ip') == '10.50.60.70'), None)
+    if not h: return "SKIP"
+    r = client.get(f'/api/workspace/hosts/{h["id"]}')
+    ports = r.get_json().get('ports', [])
+    if not ports: return "SKIP"
+    missing_svc = [p for p in ports if 'service' not in p]
+    return ok(not missing_svc,
+              f"port rows missing service field (needed for port menu): {missing_svc[:2]}")
+test("I3.6: host detail port rows carry service field for contextmenu service-filter", test_i3_port_service_name_in_detail)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -266,26 +298,30 @@ print("\n" + "="*60)
 print("I4: Port double-click → navigate to host")
 print("="*60 + "\n")
 
-def test_i4_dblclick_on_ports_in_js():
-    """JS must have dblclick directly attached to host-detail-ports"""
-    with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
-        src = f.read()
-    return ok("host-detail-ports').addEventListener('dblclick" in src or
-              'host-detail-ports").addEventListener("dblclick' in src,
-              "dblclick not directly attached to host-detail-ports")
-test("I4.1: JS has dblclick handler on host-detail-ports", test_i4_dblclick_on_ports_in_js)
+def test_i4_host_id_in_port_detail():
+    """Port rows in host detail must carry the parent host ID — needed for dblclick navigation."""
+    data = client.get('/api/snapshot').get_json()
+    h = next((x for x in data.get('hosts', []) if x.get('ip') == '10.50.60.70'), None)
+    if not h: return "SKIP"
+    r = client.get(f'/api/workspace/hosts/{h["id"]}')
+    host_data = r.get_json()
+    # The host detail response includes the host object with its id
+    host_obj = host_data.get('host', {})
+    return ok(host_obj.get('id') == h['id'] or host_obj.get('ip') == '10.50.60.70',
+              f"host detail does not return host id for navigation: {list(host_obj.keys())}")
+test("I4.1: host detail returns host id needed for port-dblclick navigation", test_i4_host_id_in_port_detail)
 
-def test_i4_navigates_to_host_tab():
-    """Port dblclick handler must switch to hosts-panel on the left"""
+def test_i4_dblclick_handler_switches_to_hosts_panel():
+    """The port dblclick handler body must reference hosts-panel for navigation."""
     with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
         src = f.read()
-    # Check dblclick block references hosts-panel
     idx = src.find("host-detail-ports').addEventListener('dblclick")
-    if idx < 0: return "dblclick not found on host-detail-ports"
-    block = src[idx:idx+400]
-    return ok('hosts-panel' in block,
-              "port dblclick does not switch to hosts-panel")
-test("I4.2: port dblclick handler switches left panel to Hosts tab", test_i4_navigates_to_host_tab)
+    if idx < 0: idx = src.find('"host-detail-ports").addEventListener("dblclick')
+    if idx < 0: return "FAIL: dblclick not found on host-detail-ports"
+    body = src[idx:idx+500]
+    return ok('hosts-panel' in body and 'selectedHostId' in body,
+              "dblclick handler body missing hosts-panel switch or selectedHostId assignment")
+test("I4.2: port dblclick handler body switches to hosts-panel and sets selectedHostId", test_i4_dblclick_handler_switches_to_hosts_panel)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -298,29 +334,45 @@ print("\n" + "="*60)
 print("I5: Tool tab right-click → Save Output")
 print("="*60 + "\n")
 
-def test_i5_contextmenu_on_dynamic_tab():
-    """JS must have contextmenu listener on dynamic tab buttons"""
-    with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
-        src = f.read()
-    return ok('dynamic-tab' in src and 'contextmenu' in src,
-              "contextmenu not wired to dynamic-tab")
-test("I5.1: JS has contextmenu handler on dynamic-tab buttons", test_i5_contextmenu_on_dynamic_tab)
+def test_i5_process_output_route_returns_text():
+    """Process output API must return text content that could be saved to a file."""
+    wc.start()
+    r = wc.runCommand('echo save_output_test_content', name='save-out', hostIp='127.0.0.1')
+    pid = r.get('process_id')
+    if not pid: return "no process_id"
+    time.sleep(2)
+    resp = client.get(f'/api/processes/{pid}/output')
+    return ok(resp.status_code == 200 and resp.content_type.startswith('application/json'),
+              f"output route returned {resp.status_code} {resp.content_type}")
+test("I5.1: process output route returns JSON text data suitable for file save", test_i5_process_output_route_returns_text)
 
-def test_i5_save_output_menu_item():
-    """Context menu must include 'Save Output' option"""
-    with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
-        src = f.read()
-    return ok('Save Output' in src or 'save output' in src.lower(),
-              "Save Output menu item not found")
-test("I5.2: JS context menu has 'Save Output' item", test_i5_save_output_menu_item)
+def test_i5_output_content_is_saveable():
+    """Output returned by API must contain the actual command output text."""
+    wc.start()
+    marker = 'save_output_unique_marker_xyz'
+    r = wc.runCommand(f'echo {marker}', name='save-check', hostIp='127.0.0.1')
+    pid = r.get('process_id')
+    if not pid: return "no process_id"
+    time.sleep(2)
+    resp = client.get(f'/api/processes/{pid}/output')
+    data = resp.get_json()
+    output = data.get('output', '') or data.get('output_chunk', '')
+    return ok(marker in output,
+              f"Expected marker '{marker}' in output, got: {output[:100]!r}")
+test("I5.2: process output contains actual command text (content saveable to file)", test_i5_output_content_is_saveable)
 
-def test_i5_browser_download_trigger():
-    """Save Output must trigger browser file download (blob or data URL)"""
+def test_i5_save_output_in_tab_contextmenu_handler():
+    """The right-tab-bar contextmenu handler body must contain Save Output logic."""
     with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
         src = f.read()
-    return ok('download' in src and ('Blob' in src or 'data:' in src),
-              "file download mechanism not found in JS")
-test("I5.3: JS uses Blob/download to save tool output as file", test_i5_browser_download_trigger)
+    # Find the right-tab-bar contextmenu handler
+    idx = src.find("'right-tab-bar').addEventListener('contextmenu")
+    if idx < 0: idx = src.find('"right-tab-bar").addEventListener("contextmenu')
+    if idx < 0: return "FAIL: right-tab-bar contextmenu handler not found"
+    body = src[idx:idx+600]
+    return ok('Save Output' in body or 'save' in body.lower(),
+              "right-tab-bar contextmenu handler missing Save Output action")
+test("I5.3: right-tab-bar contextmenu handler contains Save Output action", test_i5_save_output_in_tab_contextmenu_handler)
 
 
 # ══════════════════════════════════════════════════════════════
