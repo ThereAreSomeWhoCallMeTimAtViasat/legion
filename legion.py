@@ -315,7 +315,14 @@ if __name__ == "__main__":
         _signal.signal(_signal.SIGINT,  _web_shutdown)
         _signal.signal(_signal.SIGTERM, _web_shutdown)
 
-        print("LEGION v10.16-flask — web UI starting at http://127.0.0.1:5000")
+        import re as _re, os as _os
+        _idx = _os.path.join(_os.path.dirname(__file__), 'app/web/templates/index.html')
+        try:
+            _m = _re.search(r'LEGION (v[\d.]+-flask)', open(_idx).read())
+            _ver = _m.group(1) if _m else 'v??'
+        except Exception:
+            _ver = 'v??'
+        print(f"LEGION {_ver} — web UI starting at http://127.0.0.1:5000")
         app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
         sys.exit(0)
 
