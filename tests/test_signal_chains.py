@@ -353,6 +353,59 @@ def test_c7_stage_settings_loaded():
     return ok(stage1 is not None and len(str(stage1)) > 0, f"stage1 ports: {stage1}")
 test("C7.3: Stage 1 port config loaded", test_c7_stage_settings_loaded)
 
+def test_c7_nse_is_last_stage():
+    """NSE stage must be configured at a higher stage number than all PORTS stages.
+    This ensures vulners runs after all port discovery completes."""
+    nse_stage = None
+    ports_stages = []
+    for s in range(1, 7):
+        data = getattr(wc.settings, f'tools_nmap_stage{s}_ports', '')
+        if not data:
+            continue
+        op = str(data).split('|', maxsplit=1)[0].strip()
+        if op == 'NSE':
+            nse_stage = s
+        elif op == 'PORTS':
+            ports_stages.append(s)
+    if nse_stage is None:
+        return "SKIP: no NSE stage configured"
+    if not ports_stages:
+        return "SKIP: no PORTS stages configured"
+    return ok(nse_stage > max(ports_stages),
+              f"NSE at stage {nse_stage} but PORTS stages go up to {max(ports_stages)}")
+test("C7.4: NSE stage is numbered after all PORTS stages", test_c7_nse_is_last_stage)
+
+def test_c7_parallel_launch_structure():
+    """runStagedNmap must use _pending_ports_stages and _pending_stages_lock for parallel coordination."""
+    src = _staged_nmap_src()
+    return ok('_pending_ports_stages' in src and '_pending_stages_lock' in src,
+              "_pending_ports_stages or _pending_stages_lock missing — parallel coordination broken")
+test("C7.5: Parallel stage coordination uses _pending_ports_stages set", test_c7_parallel_launch_structure)
+
+def test_c7_nse_port_query_uses_subquery():
+    """_launch_nse_stage must query ports via subquery not JOIN to avoid TEXT/INTEGER type mismatch."""
+    import inspect
+    src = inspect.getsource(wc._launch_nse_stage)
+    return ok('SELECT id FROM hostObj WHERE ip' in src or 'hostId IN' in src,
+              "_launch_nse_stage must use subquery for port lookup, not raw JOIN")
+test("C7.6: NSE port query uses subquery (avoids TEXT/INTEGER JOIN mismatch)", test_c7_nse_port_query_uses_subquery)
+
+def test_c7_nse_state_filter_permissive():
+    """_launch_nse_stage state filter must use LIKE 'open%' not = 'open' to catch open|filtered."""
+    import inspect
+    src = inspect.getsource(wc._launch_nse_stage)
+    return ok("LIKE 'open%'" in src or 'LIKE "open%"' in src,
+              "NSE state filter uses = 'open' which misses open|filtered — use LIKE 'open%'")
+test("C7.7: NSE port query uses LIKE 'open%' to catch open|filtered ports", test_c7_nse_state_filter_permissive)
+
+def test_c7_nse_tab_title_uses_script_name():
+    """_launch_nse_stage tab title must show script name (e.g. 'nmap (vulners)') not stage number."""
+    import inspect
+    src = inspect.getsource(wc._launch_nse_stage)
+    return ok('nmap (stage' not in src and 'script_name' in src,
+              "NSE tab title still uses stage number — should show script name")
+test("C7.8: NSE tab title shows script name not stage number", test_c7_nse_tab_title_uses_script_name)
+
 
 # ══════════════════════════════════════════════════════════════
 # C8: Cancelled process skipped in queue

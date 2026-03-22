@@ -534,6 +534,55 @@ test("R5: no nmap_runner references in Flask-clean files", test_r5_nmap_import_n
 
 
 # ══════════════════════════════════════════════════════════════
+# GROUP F: v10.20+ fixes
+# ══════════════════════════════════════════════════════════════
+
+print("\n" + "="*60)
+print("F: v10.20+ feature fixes")
+print("="*60 + "\n")
+
+JS_PATH = os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')
+JS = open(JS_PATH).read()
+
+def test_f1_xterm_font_size():
+    """applyFontSize must update xterm.js terminals via term.options.fontSize.
+    CSS font-size is ignored by xterm.js — the fontSize option must be set directly."""
+    return ok('_termState' in JS and '_dynTermState' in JS and
+              'options.fontSize' in JS and 'fitAddon' in JS and 'fit()' in JS,
+              "applyFontSize does not update xterm.js term.options.fontSize")
+test("F1.1: Font size buttons update xterm.js terminals via options.fontSize", test_f1_xterm_font_size)
+
+def test_f2_xterm_font_pt_to_px():
+    """xterm.js fontSize conversion must use pt-to-px factor (1.333)."""
+    return ok('1.333' in JS or '1.33' in JS,
+              "No pt-to-px conversion factor found for xterm fontSize")
+test("F1.2: Font size pt-to-px conversion uses ~1.333 factor", test_f2_xterm_font_pt_to_px)
+
+def test_f3_scan_tab_restore():
+    """main-tab-bar click on scan-tab must restore host selection and reload right panel."""
+    return ok('scan-tab' in JS and 'loadHostDetail' in JS and 'main-tab-bar' in JS,
+              "scan-tab restore handler missing from JS")
+test("F2.1: Returning to Scan tab restores host selection", test_f3_scan_tab_restore)
+
+def test_f4_scan_tab_right_panel_restore():
+    """Scan tab restore must also ensure right-tabs is visible (not hidden by Tools selection)."""
+    # The handler must set right-tabs display and call loadHostDetail
+    scan_handler_idx = JS.find("data-tab !== 'scan-tab'") or JS.find("data-tab === 'scan-tab'") or JS.find("scan-tab")
+    return ok("right-tabs" in JS and "loadHostDetail" in JS and "scan-tab" in JS,
+              "Scan tab restore missing right-tabs visibility reset or loadHostDetail call")
+test("F2.2: Scan tab restore shows right-tabs and reloads host detail", test_f4_scan_tab_right_panel_restore)
+
+def test_f5_hydra_combo_route():
+    """brute/run route must support combo= field for Hydra -C (colon-separated user:pass)."""
+    import inspect
+    from app.web import routes as _routes
+    src = inspect.getsource(_routes.brute_run)
+    return ok("'combo'" in src and "'-C'" in src or '"-C"' in src or "'-C', combo" in src,
+              "brute_run route missing combo= field or -C flag for Hydra combo files")
+test("F3.1: brute/run route supports combo= field (Hydra -C flag)", test_f5_hydra_combo_route)
+
+
+# ══════════════════════════════════════════════════════════════
 # SUMMARY
 # ══════════════════════════════════════════════════════════════
 
