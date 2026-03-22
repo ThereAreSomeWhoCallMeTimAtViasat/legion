@@ -3262,6 +3262,16 @@ document.addEventListener('DOMContentLoaded', function() {
             var lbl = $('output-font-label');
             if (lbl) lbl.textContent = _pt;
             localStorage.setItem(LS_KEY, _pt);
+
+            /* xterm.js terminals ignore CSS — update fontSize option directly.
+               xterm uses px; convert from pt (96dpi: 1pt = 1.333px). */
+            var termPx = Math.max(8, Math.round(_pt * 1.333));
+            [_termState, _dynTermState].forEach(function(ts) {
+                if (ts && ts.xterm) {
+                    ts.xterm.options.fontSize = termPx;
+                    if (ts.fitAddon) { try { ts.fitAddon.fit(); } catch(e) {} }
+                }
+            });
         }
         applyFontSize();
 
