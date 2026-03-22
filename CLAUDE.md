@@ -55,7 +55,7 @@ YOUR code (controller.py + logic.py)  →  WebController wraps it Qt-free
 ## Running
 ```bash
 # Start Flask
-sudo python3 legion.py --web > /tmp/legion-web.log 2>&1 &
+sudo python3 legion.py --web &
 # http://127.0.0.1:5000
 
 # Run full test suite with colour report
