@@ -34,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.20-flask
-- **Static asset cache:** `?v=30` in `base.html`
+- **Current Flask version:** v10.21-flask
+- **Static asset cache:** `?v=31` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -136,6 +136,7 @@ sudo python3 tests/test_behavioral.py
 - **v10.18**: NSE|vulners moved to stage 6 (last); closes Issue #30
 - **v10.19**: Parallel PORTS stages (1–5 simultaneous); NSE runs against all discovered ports
 - **v10.20**: Font size buttons now resize xterm.js terminals (pt→px via ×1.333; fitAddon.fit() after)
+- **v10.21**: Scan tab restore — returning from Brute re-selects host row and reloads right panel
 
 ---
 
