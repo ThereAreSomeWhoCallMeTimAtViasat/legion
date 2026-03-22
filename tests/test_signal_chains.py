@@ -375,106 +375,276 @@ def test_c7_nse_is_last_stage():
               f"NSE at stage {nse_stage} but PORTS stages go up to {max(ports_stages)}")
 test("C7.4: NSE stage is numbered after all PORTS stages", test_c7_nse_is_last_stage)
 
-def test_c7_parallel_launch_structure():
-    """runStagedNmap must use _pending_ports_stages and _pending_stages_lock for parallel coordination."""
-    src = _staged_nmap_src()
-    return ok('_pending_ports_stages' in src and '_pending_stages_lock' in src,
-              "_pending_ports_stages or _pending_stages_lock missing — parallel coordination broken")
-test("C7.5: Parallel stage coordination uses _pending_ports_stages set", test_c7_parallel_launch_structure)
+def test_c7_stage_completed_removes_from_pending():
+    """_stage_completed removes the completed stage from _pending_ports_stages."""
+    host = '_test_host_sc_1'
+    nse = (6, 'vulners')
+    wc._pending_ports_stages[host] = {1, 2, 3}
+    nse_fired = []
+    orig = wc._launch_nse_stage
+    wc._launch_nse_stage = lambda *a, **k: nse_fired.append(True)
+    try:
+        wc._stage_completed(host, 1, nse, False, '/tmp', 'nmap')
+        remaining = wc._pending_ports_stages.get(host, set())
+        return ok(1 not in remaining and remaining == {2, 3},
+                  f"pending set after stage 1 done: {remaining}")
+    finally:
+        wc._launch_nse_stage = orig
+        wc._pending_ports_stages.pop(host, None)
+test("C7.5: _stage_completed removes completed stage from pending set", test_c7_stage_completed_removes_from_pending)
 
-def test_c7_nse_port_query_uses_subquery():
-    """_launch_nse_stage must query ports via subquery not JOIN to avoid TEXT/INTEGER type mismatch."""
-    import inspect
-    src = inspect.getsource(wc._launch_nse_stage)
-    return ok('SELECT id FROM hostObj WHERE ip' in src or 'hostId IN' in src,
-              "_launch_nse_stage must use subquery for port lookup, not raw JOIN")
-test("C7.6: NSE port query uses subquery (avoids TEXT/INTEGER JOIN mismatch)", test_c7_nse_port_query_uses_subquery)
+def test_c7_stage_completed_no_nse_until_all_done():
+    """_stage_completed must NOT fire NSE until all PORTS stages are complete."""
+    host = '_test_host_sc_2'
+    nse = (6, 'vulners')
+    wc._pending_ports_stages[host] = {1, 2}
+    nse_fired = []
+    orig = wc._launch_nse_stage
+    wc._launch_nse_stage = lambda *a, **k: nse_fired.append(True)
+    try:
+        wc._stage_completed(host, 1, nse, False, '/tmp', 'nmap')
+        if nse_fired:
+            return "FAIL: NSE fired after stage 1 of 2 — should wait for stage 2"
+        return True
+    finally:
+        wc._launch_nse_stage = orig
+        wc._pending_ports_stages.pop(host, None)
+test("C7.6: _stage_completed does NOT fire NSE while stages still pending", test_c7_stage_completed_no_nse_until_all_done)
 
-def test_c7_nse_state_filter_permissive():
-    """_launch_nse_stage state filter must use LIKE 'open%' not = 'open' to catch open|filtered."""
-    import inspect
-    src = inspect.getsource(wc._launch_nse_stage)
-    return ok("LIKE 'open%'" in src or 'LIKE "open%"' in src,
-              "NSE state filter uses = 'open' which misses open|filtered — use LIKE 'open%'")
-test("C7.7: NSE port query uses LIKE 'open%' to catch open|filtered ports", test_c7_nse_state_filter_permissive)
+def test_c7_stage_completed_fires_nse_when_empty():
+    """_stage_completed fires NSE exactly once when the last pending stage completes."""
+    host = '_test_host_sc_3'
+    nse = (6, 'vulners')
+    nse_calls = []
+    orig = wc._launch_nse_stage
+    wc._launch_nse_stage = lambda *a, **k: nse_calls.append(a)
+    try:
+        wc._pending_ports_stages[host] = {1}
+        wc._stage_completed(host, 1, nse, False, '/tmp', 'nmap')
+        return ok(len(nse_calls) == 1,
+                  f"NSE fired {len(nse_calls)} times (expected 1) after last stage completed")
+    finally:
+        wc._launch_nse_stage = orig
+        wc._pending_ports_stages.pop(host, None)
+test("C7.7: _stage_completed fires NSE exactly once when last stage completes", test_c7_stage_completed_fires_nse_when_empty)
+
+def test_c7_stage_completed_no_nse_without_nse_stage():
+    """_stage_completed must not crash or fire anything when nse_stage is None."""
+    host = '_test_host_sc_4'
+    wc._pending_ports_stages[host] = {1}
+    try:
+        wc._stage_completed(host, 1, None, False, '/tmp', 'nmap')
+        return True
+    except Exception as e:
+        return f"FAIL: _stage_completed raised {e} when nse_stage=None"
+    finally:
+        wc._pending_ports_stages.pop(host, None)
+test("C7.8: _stage_completed handles nse_stage=None without error", test_c7_stage_completed_no_nse_without_nse_stage)
+
+def test_c7_nse_port_query_finds_tcp_ports():
+    """_launch_nse_stage queries open TCP ports from DB and puts them in the nmap command."""
+    import sqlite3
+    db_path = wc.logic.activeProject.database.name
+    test_ip = '198.51.100.99'
+    # Insert test host and open TCP port
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+        conn.execute("INSERT INTO hostObj (ip, state, hostname) VALUES (?, 'up', '')", (test_ip,))
+        host_id = conn.execute("SELECT id FROM hostObj WHERE ip=?", (test_ip,)).fetchone()[0]
+        conn.execute("INSERT INTO portObj (portId, protocol, state, hostId) VALUES ('8888','tcp','open',?)", (str(host_id),))
+        conn.commit()
+    captured = []
+    orig_run = wc.runCommand
+    wc.runCommand = lambda command='', **kw: captured.append(command) or {'process_id': None}
+    try:
+        wc._launch_nse_stage(test_ip, 6, 'vulners', False,
+                             wc.logic.activeProject.properties.outputFolder, 'nmap')
+        if not captured:
+            return "FAIL: runCommand never called"
+        return ok('-p' in captured[0] and '8888' in captured[0],
+                  f"port 8888 not in NSE command: {captured[0]!r}")
+    finally:
+        wc.runCommand = orig_run
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("DELETE FROM portObj WHERE portId='8888' AND hostId=?", (str(host_id),))
+            conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+            conn.commit()
+test("C7.9: _launch_nse_stage includes discovered TCP ports in nmap -p flag", test_c7_nse_port_query_finds_tcp_ports)
+
+def test_c7_nse_port_query_finds_udp_ports():
+    """_launch_nse_stage includes UDP ports with U: prefix in the port spec."""
+    import sqlite3
+    db_path = wc.logic.activeProject.database.name
+    test_ip = '198.51.100.98'
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+        conn.execute("INSERT INTO hostObj (ip, state, hostname) VALUES (?, 'up', '')", (test_ip,))
+        host_id = conn.execute("SELECT id FROM hostObj WHERE ip=?", (test_ip,)).fetchone()[0]
+        conn.execute("INSERT INTO portObj (portId, protocol, state, hostId) VALUES ('161','udp','open',?)", (str(host_id),))
+        conn.commit()
+    captured = []
+    orig_run = wc.runCommand
+    wc.runCommand = lambda command='', **kw: captured.append(command) or {'process_id': None}
+    try:
+        wc._launch_nse_stage(test_ip, 6, 'vulners', False,
+                             wc.logic.activeProject.properties.outputFolder, 'nmap')
+        if not captured:
+            return "FAIL: runCommand never called"
+        return ok('U:' in captured[0] and '161' in captured[0],
+                  f"UDP port 161 with U: prefix not in NSE command: {captured[0]!r}")
+    finally:
+        wc.runCommand = orig_run
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("DELETE FROM portObj WHERE portId='161' AND hostId=?", (str(host_id),))
+            conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+            conn.commit()
+test("C7.10: _launch_nse_stage includes UDP ports with U: prefix", test_c7_nse_port_query_finds_udp_ports)
+
+def test_c7_nse_open_filtered_included():
+    """_launch_nse_stage must include ports with state 'open|filtered' (not just 'open')."""
+    import sqlite3
+    db_path = wc.logic.activeProject.database.name
+    test_ip = '198.51.100.97'
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+        conn.execute("INSERT INTO hostObj (ip, state, hostname) VALUES (?, 'up', '')", (test_ip,))
+        host_id = conn.execute("SELECT id FROM hostObj WHERE ip=?", (test_ip,)).fetchone()[0]
+        conn.execute("INSERT INTO portObj (portId, protocol, state, hostId) VALUES ('7777','tcp','open|filtered',?)", (str(host_id),))
+        conn.commit()
+    captured = []
+    orig_run = wc.runCommand
+    wc.runCommand = lambda command='', **kw: captured.append(command) or {'process_id': None}
+    try:
+        wc._launch_nse_stage(test_ip, 6, 'vulners', False,
+                             wc.logic.activeProject.properties.outputFolder, 'nmap')
+        if not captured:
+            return "FAIL: runCommand never called"
+        return ok('7777' in captured[0],
+                  f"open|filtered port 7777 excluded from NSE command: {captured[0]!r}")
+    finally:
+        wc.runCommand = orig_run
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("DELETE FROM portObj WHERE portId='7777' AND hostId=?", (str(host_id),))
+            conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+            conn.commit()
+test("C7.11: _launch_nse_stage includes open|filtered ports (not just 'open')", test_c7_nse_open_filtered_included)
 
 def test_c7_nse_tab_title_uses_script_name():
-    """_launch_nse_stage tab title must show script name (e.g. 'nmap (vulners)') not stage number."""
-    import inspect
-    src = inspect.getsource(wc._launch_nse_stage)
-    return ok('nmap (stage' not in src and 'script_name' in src,
-              "NSE tab title still uses stage number — should show script name")
-test("C7.8: NSE tab title shows script name not stage number", test_c7_nse_tab_title_uses_script_name)
+    """_launch_nse_stage tab title must be 'nmap (vulners)' not 'nmap (stage N)'."""
+    import sqlite3
+    db_path = wc.logic.activeProject.database.name
+    test_ip = '198.51.100.96'
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+        conn.execute("INSERT INTO hostObj (ip, state, hostname) VALUES (?, 'up', '')", (test_ip,))
+        host_id = conn.execute("SELECT id FROM hostObj WHERE ip=?", (test_ip,)).fetchone()[0]
+        conn.execute("INSERT INTO portObj (portId, protocol, state, hostId) VALUES ('80','tcp','open',?)", (str(host_id),))
+        conn.commit()
+    captured_kwargs = []
+    orig_run = wc.runCommand
+    wc.runCommand = lambda command='', **kw: captured_kwargs.append(kw) or {'process_id': None}
+    try:
+        wc._launch_nse_stage(test_ip, 6, 'vulners', False,
+                             wc.logic.activeProject.properties.outputFolder, 'nmap')
+        if not captured_kwargs:
+            return "FAIL: runCommand never called"
+        title = captured_kwargs[0].get('tabTitle', '')
+        return ok('stage' not in title and 'vulners' in title,
+                  f"tab title wrong: {title!r} (expected 'nmap (vulners)')")
+    finally:
+        wc.runCommand = orig_run
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("DELETE FROM portObj WHERE portId='80' AND hostId=?", (str(host_id),))
+            conn.execute("DELETE FROM hostObj WHERE ip=?", (test_ip,))
+            conn.commit()
+test("C7.12: _launch_nse_stage tab title is 'nmap (vulners)' not 'nmap (stage N)'", test_c7_nse_tab_title_uses_script_name)
 
-def test_c7_helper_methods_exist():
-    """_launch_ports_stage and _stage_completed must exist as methods on WebController."""
-    return ok(callable(getattr(wc, '_launch_ports_stage', None)) and
-              callable(getattr(wc, '_stage_completed', None)),
-              "_launch_ports_stage or _stage_completed missing from WebController")
-test("C7.9: _launch_ports_stage and _stage_completed exist as methods", test_c7_helper_methods_exist)
+def test_c7_nse_no_ports_scans_defaults():
+    """_launch_nse_stage with no open ports must still run (without -p) using nmap defaults."""
+    test_ip = '198.51.100.95'  # host not in DB — no ports
+    captured = []
+    orig_run = wc.runCommand
+    wc.runCommand = lambda command='', **kw: captured.append(command) or {'process_id': None}
+    try:
+        wc._launch_nse_stage(test_ip, 6, 'vulners', False,
+                             wc.logic.activeProject.properties.outputFolder, 'nmap')
+        if not captured:
+            return "FAIL: runCommand never called — NSE must still launch even with no ports"
+        # Command should run but without -p flag
+        return ok('vulners' in captured[0],
+                  f"vulners not in NSE command when no ports found: {captured[0]!r}")
+    finally:
+        wc.runCommand = orig_run
+test("C7.13: _launch_nse_stage still runs when no ports found (uses nmap defaults)", test_c7_nse_no_ports_scans_defaults)
 
-def test_c7_stage_completed_calls_nse():
-    """_stage_completed must launch NSE when pending set is empty."""
-    import inspect
-    src = inspect.getsource(wc._stage_completed)
-    return ok('_launch_nse_stage' in src and 'all_done' in src,
-              "_stage_completed must call _launch_nse_stage when all PORTS done")
-test("C7.10: _stage_completed launches NSE only when all PORTS stages done", test_c7_stage_completed_calls_nse)
+def test_c7_pending_set_populated_before_launch():
+    """runStagedNmap registers ALL stages in _pending_ports_stages before any thread starts.
+    Proves a fast-finishing stage can't trigger NSE prematurely."""
+    host = '_test_host_sc_pending'
+    launch_order = []
+    orig_launch = wc._launch_ports_stage
+    orig_nse = wc._launch_nse_stage
+    def mock_launch(h, stage, *a, **k):
+        # Capture state of pending set at the moment each stage launches
+        launch_order.append((stage, frozenset(wc._pending_ports_stages.get(h, set()))))
+    wc._launch_ports_stage = mock_launch
+    wc._launch_nse_stage = lambda *a, **k: None
+    try:
+        wc.runStagedNmap(host, discovery=False)
+        if not launch_order:
+            return "SKIP: no PORTS stages configured or runStagedNmap did not launch"
+        # At the moment the first stage launches, the full pending set must already be populated
+        _, pending_at_first_launch = launch_order[0]
+        total_ports_stages = len(launch_order)
+        return ok(len(pending_at_first_launch) == total_ports_stages,
+                  f"At first launch, pending set had {len(pending_at_first_launch)} entries "
+                  f"but {total_ports_stages} stages will launch — premature NSE possible")
+    finally:
+        wc._launch_ports_stage = orig_launch
+        wc._launch_nse_stage = orig_nse
+        wc._pending_ports_stages.pop(host, None)
+test("C7.14: Full pending set registered before any stage launches (no premature NSE)", test_c7_pending_set_populated_before_launch)
 
-def test_c7_stage_completed_resilient():
-    """_launch_ports_stage must call _stage_completed even when launch fails."""
-    import inspect
-    src = inspect.getsource(wc._launch_ports_stage)
-    # Must call _stage_completed in the early-exit (failed launch) path
-    return ok(src.count('_stage_completed') >= 2,
-              "_stage_completed not called on failed launch — stages would hang forever")
-test("C7.11: _launch_ports_stage calls _stage_completed on failed launch", test_c7_stage_completed_resilient)
+def test_c7_nse_stage_classified_separately():
+    """runStagedNmap must put NSE stages in nse_stage and PORTS in ports_stages — not mixed."""
+    # Use real settings to verify classification at runtime
+    nse_stages = []
+    ports_stages = []
+    for s in range(1, 7):
+        data = getattr(wc.settings, f'tools_nmap_stage{s}_ports', '')
+        if not data:
+            continue
+        op = str(data).split('|', maxsplit=1)[0].strip()
+        if op == 'NSE':
+            nse_stages.append(s)
+        elif op == 'PORTS':
+            ports_stages.append(s)
+    if not nse_stages:
+        return "SKIP: no NSE stage in settings"
+    return ok(len(nse_stages) >= 1 and len(ports_stages) >= 1 and
+              not (set(nse_stages) & set(ports_stages)),
+              f"NSE stages {nse_stages} overlap with PORTS stages {ports_stages}")
+test("C7.15: Settings classify NSE and PORTS stages without overlap", test_c7_nse_stage_classified_separately)
 
-def test_c7_nse_session_remove():
-    """_launch_nse_stage must call session.remove() before raw sqlite3 query."""
-    import inspect
-    src = inspect.getsource(wc._launch_nse_stage)
-    return ok('session.remove()' in src,
-              "_launch_nse_stage must flush ORM session before raw sqlite3 port query")
-test("C7.12: NSE port query flushes ORM session before reading DB", test_c7_nse_session_remove)
-
-def test_c7_nse_includes_udp_ports():
-    """_launch_nse_stage must query UDP ports as well as TCP."""
-    import inspect
-    src = inspect.getsource(wc._launch_nse_stage)
-    return ok("'udp'" in src or '"udp"' in src,
-              "_launch_nse_stage ignores UDP ports — vulners misses UDP services")
-test("C7.13: NSE port query includes UDP ports", test_c7_nse_includes_udp_ports)
-
-def test_c7_nse_port_spec_format():
-    """_launch_nse_stage must produce T:<tcp>,U:<udp> port spec format for mixed protocols."""
-    import inspect
-    src = inspect.getsource(wc._launch_nse_stage)
-    # T: appears in the f-string that builds the port spec; U: for UDP prefix
-    return ok('T:' in src and 'U:' in src,
-              "_launch_nse_stage missing T:/U: prefixes for mixed TCP/UDP port spec")
-test("C7.14: NSE port spec uses T:<tcp>,U:<udp> format for mixed protocols", test_c7_nse_port_spec_format)
-
-def test_c7_ports_stages_classified_not_nse():
-    """runStagedNmap must not include NSE stage in ports_stages list."""
-    import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    return ok("op == 'NSE'" in src or "op == \"NSE\"" in src,
-              "runStagedNmap must explicitly classify NSE stages separately from PORTS")
-test("C7.15: runStagedNmap classifies NSE stages separately from PORTS stages", test_c7_ports_stages_classified_not_nse)
-
-def test_c7_pending_set_registered_before_launch():
-    """_pending_ports_stages must be populated BEFORE any stage thread starts.
-    If a fast stage completes before all stages are registered, the set must
-    not appear empty prematurely, or NSE would fire too early."""
-    import inspect
-    src = inspect.getsource(wc.runStagedNmap)
-    # The set must be written before the loop that calls _launch_ports_stage
-    set_idx = src.find('_pending_ports_stages[host_arg]')
-    launch_idx = src.find('_launch_ports_stage')
-    return ok(set_idx != -1 and launch_idx != -1 and set_idx < launch_idx,
-              "_pending_ports_stages must be populated before _launch_ports_stage is called")
-test("C7.16: pending set registered before any stage launched (no premature NSE)", test_c7_pending_set_registered_before_launch)
+def test_c7_launch_ports_stage_calls_stage_completed_on_fail():
+    """_launch_ports_stage calls _stage_completed even when runCommand returns None (failed launch)."""
+    host = '_test_host_sc_fail'
+    nse = (6, 'vulners')
+    wc._pending_ports_stages[host] = {99}
+    completed = []
+    orig_run = wc.runCommand
+    orig_sc = wc._stage_completed
+    wc.runCommand = lambda **kw: None  # simulate failed launch
+    wc._stage_completed = lambda *a, **k: completed.append(True)
+    try:
+        wc._launch_ports_stage(host, 99, 'T:80', False, False, '/tmp', 'nmap', nse)
+        return ok(len(completed) == 1,
+                  "_stage_completed not called after runCommand returned None — stage would hang")
+    finally:
+        wc.runCommand = orig_run
+        wc._stage_completed = orig_sc
+        wc._pending_ports_stages.pop(host, None)
+test("C7.16: _launch_ports_stage calls _stage_completed even when launch fails", test_c7_launch_ports_stage_calls_stage_completed_on_fail)
 
 
 # ══════════════════════════════════════════════════════════════
