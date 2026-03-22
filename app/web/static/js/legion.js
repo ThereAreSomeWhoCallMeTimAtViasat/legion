@@ -1410,6 +1410,31 @@ function initInteractions() {
         }
     });
 
+    /* ── Main tab switch → restore Scan tab state when returning to it ── */
+    $('main-tab-bar').addEventListener('click', function(e) {
+        var btn = e.target.closest('.tab-btn');
+        if (!btn || btn.dataset.tab !== 'scan-tab') return;
+        /* Ensure right panel is in correct state (not hidden by a previous Tools selection) */
+        $('right-tabs').style.display = '';
+        $('tools-display').style.display = 'none';
+        if (L.selectedHostId) {
+            /* Re-highlight selected row (in case table was re-rendered while scan-tab was hidden) */
+            var row = $('hosts-body').querySelector('tr[data-host-id="' + L.selectedHostId + '"]');
+            if (row) {
+                $('hosts-body').querySelectorAll('tr').forEach(function(r) { r.classList.remove('selected'); });
+                row.classList.add('selected');
+            }
+            /* Reload right panel content so it reflects current DB state */
+            loadHostDetail(L.selectedHostId);
+        } else if (L.hosts.length > 0) {
+            /* No host was selected — auto-select first */
+            setTimeout(function() {
+                var firstHost = $('hosts-body').querySelector('tr[data-host-id]');
+                if (firstHost) firstHost.click();
+            }, 0);
+        }
+    });
+
     /* ── Process row click → show output inline (plain or xterm.js terminal) ── */
     $('processes-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
