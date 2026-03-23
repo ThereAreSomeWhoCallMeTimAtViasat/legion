@@ -196,10 +196,27 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 - **Model**: `claude-sonnet-4-6` (1M context window)
 - **API key**: Session-only. Check `ANTHROPIC_API_KEY` env var first; else `window.prompt()`; store in `L.anthropicKey`
 - **UI placement**: New "AI" tab in right-panel tab bar
-- **Route**: `POST /api/ai/analyze-host/<id>` — queries all host data, calls Anthropic, returns text
-- **System prompt**: Senior pentester framing — vulns, tools, attack vectors, misconfigs
+- **Route**: `POST /api/ai/analyze-host/<id>` — assembles all host context, calls Anthropic, returns analysis text
+- **System prompt**: Senior pentester framing — vulnerabilities, recommended tools, attack vectors, misconfigurations
 - **Dependencies**: `pip install anthropic`
 - **No streaming**: one-shot response
+
+#### Data included in the prompt (in order)
+| Data | Source | Notes |
+|------|---------|-------|
+| Host (IP, hostname, OS, status) | `hostObj` | Always included |
+| Open ports + services | `getPortsAndServicesByHostIP` | Core findings |
+| CVEs | `getCVEsByHostIP` | Known vulnerabilities from vulners NSE |
+| NSE scripts + output | `getScriptsByHostIP` | Detailed per-port script results |
+| Notes | `getNoteByHostId` | Analyst observations |
+| **Tool process output** | `getProcesses(hostIp=ip)` with output join | Nikto, dirbuster, hydra, custom commands |
+
+#### Tool output prioritization
+- **Matched processes first**: processes where `has_match=True` or `match_text` is non-empty are included at the top — these had positive findings per the match patterns (global-positive in legion.conf)
+- **Then remaining processes**: ordered by most recent (highest id) first
+- **Truncate each**: max 2000 chars per tool output — prevents context overflow; prepend with tool name and status
+- **Skip empty outputs**: omit processes with no output or only the tool banner/header
+- **Include tabTitle and name**: so the LLM knows what tool produced each result
 
 ### Pending Feature Backlog
 | # | Feature | Difficulty | Status | Notes |
