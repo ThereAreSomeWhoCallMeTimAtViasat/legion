@@ -1109,7 +1109,11 @@ class TestLiveScan:
     # Known ports checked in test_07 (port 80 always expected on this VM)
 
     # Timeouts (seconds)
-    T_HOST_APPEARS  = 20
+    # T_HOST_APPEARS raised from 20→45: parallel stages (v10.19) launch 5 nmap
+    # processes simultaneously, increasing server load and delaying the first
+    # snapshot delivery to the browser. Host is in the DB within ~1s but the
+    # browser may not render it for longer under parallel load.
+    T_HOST_APPEARS  = 45
     T_SCAN_STARTS   = 45
     T_STAGE1_DONE   = 120
     T_ALL_DONE      = 900   # full 6-stage chain inc. NSE/vulners
@@ -1181,14 +1185,23 @@ class TestLiveScan:
             pytest.skip("Process output not yet available — process may have started very recently")
 
     def test_05_stage1_completes(self, driver):
-        """Wait for at least one process to reach Finished status."""
-        W(driver, self.T_STAGE1_DONE).until(
-            lambda d: any(
-                row.find_elements(By.TAG_NAME, 'td') and
-                len(row.find_elements(By.TAG_NAME, 'td')) >= 5 and
-                row.find_elements(By.TAG_NAME, 'td')[4].text.strip() == 'Finished'
-                for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr')
-            ))
+        """Wait for at least one process to reach Finished status.
+
+        Uses execute_script with querySelectorAll + textContent (atomic JS
+        execution) instead of Selenium element references. With 5 parallel
+        nmap stages running simultaneously (v10.19), the process table is
+        re-rendered every 1.5s — holding element references across renders
+        causes StaleElementReferenceException in Python-side iteration.
+        """
+        W(driver, self.T_STAGE1_DONE).until(lambda d: d.execute_script("""
+            var rows = document.querySelectorAll('#processes-body tr');
+            for (var r of rows) {
+                var cells = r.querySelectorAll('td');
+                if (cells.length >= 5 && cells[4].textContent.trim() === 'Finished')
+                    return true;
+            }
+            return false;
+        """))
 
     def test_06_ports_discovered(self, driver, live_target):
         """After stage 1, the target host must have open ports."""

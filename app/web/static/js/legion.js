@@ -1053,9 +1053,15 @@ function loadHostDetail(hostId) {
         /* Notes — show styled display div (=== headers highlighted) */
         _showNotesDisplay(data.note || '');
 
-        /* Window title */
-        var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-        setText('window-title', _VERSION + ' – ' + title);
+        /* Window title — don't override project name during post-open auto-select.
+           L._suppressTitleUpdate is set by the openProject handler so the title
+           shows the project filename until the user explicitly clicks a host. */
+        if (L._suppressTitleUpdate) {
+            L._suppressTitleUpdate = false;
+        } else {
+            var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
+            setText('window-title', _VERSION + ' – ' + title);
+        }
 
         /* Dynamic tool output tabs for this host */
         renderDynamicToolTabs(host.ip);
@@ -2443,6 +2449,11 @@ document.addEventListener('DOMContentLoaded', function() {
             postJson('/api/project/open', { path: path })
             .then(function() {
                 setText('window-title', _VERSION + ' – ' + path.split('/').pop());
+                /* Suppress the first auto-selected host from overwriting the
+                   project name in the title. Cleared by loadHostDetail after
+                   the first auto-select fires, so subsequent user clicks work. */
+                L._suppressTitleUpdate = true;
+                L.selectedHostId = null;
                 pollSnapshot();
             })
             .catch(function(err) { alert('Open failed: ' + err.message); });
