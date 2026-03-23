@@ -192,31 +192,43 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 
 ## Pending Features — Approved Design Decisions
 
-### LLM Host Analysis (Anthropic Claude)
-- **Model**: `claude-sonnet-4-6` (1M context window)
+### LLM Host Analysis (Anthropic Claude) — Two-Phase Pipeline
+- **Model**: `claude-sonnet-4-6` (1M context window) for both phases
 - **API key**: Session-only. Check `ANTHROPIC_API_KEY` env var first; else `window.prompt()`; store in `L.anthropicKey`
 - **UI placement**: New "AI" tab in right-panel tab bar
-- **Route**: `POST /api/ai/analyze-host/<id>` — assembles all host context, calls Anthropic, returns analysis text
-- **System prompt**: Senior pentester framing — vulnerabilities, recommended tools, attack vectors, misconfigurations
+- **Route**: `POST /api/ai/analyze-host/<id>` — runs both phases, returns final analysis text
 - **Dependencies**: `pip install anthropic`
-- **No streaming**: one-shot response
+- **No streaming**: two sequential `messages.create()` calls, result returned when both complete
 
-#### Data included in the prompt (in order)
+#### Why two phases
+Raw tool output (nikto, dirbuster, hydra) is noisy — verbose headers, informational items, and real findings are mixed together. Feeding raw output directly to the attack planner wastes its attention on parsing text instead of reasoning about exploitation. A synthesizer pass normalizes findings across tools, enabling cross-tool correlation before the planner reasons about attack paths.
+
+#### Phase 1 — Synthesizer
+**Input**: All raw DB data assembled in order:
 | Data | Source | Notes |
 |------|---------|-------|
 | Host (IP, hostname, OS, status) | `hostObj` | Always included |
 | Open ports + services | `getPortsAndServicesByHostIP` | Core findings |
 | CVEs | `getCVEsByHostIP` | Known vulnerabilities from vulners NSE |
 | NSE scripts + output | `getScriptsByHostIP` | Detailed per-port script results |
-| Notes | `getNoteByHostId` | Analyst observations |
-| **Tool process output** | `getProcesses(hostIp=ip)` with output join | Nikto, dirbuster, hydra, custom commands |
+| Analyst notes | `getNoteByHostId` | Human observations |
+| Tool process output | `getProcesses(hostIp=ip)` with output join | Nikto, dirbuster, hydra, custom commands |
 
-#### Tool output prioritization
-- **Matched processes first**: processes where `has_match=True` or `match_text` is non-empty are included at the top — these had positive findings per the match patterns (global-positive in legion.conf)
-- **Then remaining processes**: ordered by most recent (highest id) first
-- **Truncate each**: max 2000 chars per tool output — prevents context overflow; prepend with tool name and status
-- **Skip empty outputs**: omit processes with no output or only the tool banner/header
-- **Include tabTitle and name**: so the LLM knows what tool produced each result
+**Tool output ordering** (within the assembled data):
+- Matched processes first (`has_match=True` or `match_text` non-empty) — confirmed positive findings per legion.conf global-positive patterns
+- Then remaining by most recent (highest id) first
+- Truncate each to 2000 chars; skip empty/banner-only outputs; prepend tool name and status
+
+**System prompt**: "You are a data extraction assistant. Extract all significant security findings from this raw penetration test data. Output structured JSON only: an array of findings, each with fields: source (tool name), port (if applicable), severity (critical/high/medium/low/info), finding (one sentence), evidence (brief quote from output). Deduplicate. Omit informational noise."
+
+**Output**: Structured JSON array of normalized findings
+
+#### Phase 2 — Attack Planner
+**Input**: The JSON findings summary from Phase 1 (compact, no raw output noise)
+
+**System prompt**: "You are a senior penetration tester. Given these confirmed findings from a target host, identify: 1) exploitable vulnerabilities with specific CVEs or techniques, 2) recommended next tools and exact commands, 3) likely attack paths ranked by probability of success, 4) misconfigurations to investigate. Be specific and actionable."
+
+**Output**: Markdown analysis returned to the UI and rendered in the AI tab
 
 ### Pending Feature Backlog
 | # | Feature | Difficulty | Status | Notes |
