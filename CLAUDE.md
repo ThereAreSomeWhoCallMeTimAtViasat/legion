@@ -230,6 +230,40 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 | 7 | LLM host analysis (AI tab) | Med | ❌ Not started | Design approved above |
 | 8 | Save-on-exit prompt | Low | ✅ Done v10.3 | |
 | 9 | Auto per-service NSE scripts after discovery | Med | ❌ Not started | Flask only; after #7 |
+| 10 | Tool manager GUI — add/remove tools from legion.conf | Med | ❌ Not started | Form-based; no direct conf editing |
+| 11 | Settings GUI — change GeneralSettings/BruteSettings/etc in a form | Med | ❌ Not started | Replaces direct legion.conf editing for settings |
+
+### Backlog #10 — Tool Manager GUI
+Allows adding and removing tool entries (HostActions, PortActions, PortTerminalActions, SchedulerSettings) via a form instead of raw conf editing.
+
+**Scope:**
+- Add a new tool: label, command template (with [IP]/[PORT]/[OUTPUT] placeholders), service filter, target section
+- Remove an existing tool: select from list, confirm, delete
+- Edit an existing tool: load into form, modify, save
+- Validate command format (`validateCommandFormat`) and service filter before saving
+- Writes changes to `legion.conf` via the existing `/api/settings/legion-conf` save route
+- Does NOT replace the Config Manager raw editor — both coexist
+
+**UI placement:** New tab or modal accessible from the Config Manager (F2) — e.g. "Tools" tab alongside the raw editor
+
+**Sections managed:** `[HostActions]`, `[PortActions]`, `[PortTerminalActions]`, `[SchedulerSettings]`
+
+---
+
+### Backlog #11 — Settings GUI
+Allows changing `[GeneralSettings]`, `[BruteSettings]`, `[ToolSettings]`, and `[StagedNmapSettings]` via labeled form controls instead of raw legion.conf editing.
+
+**Scope:**
+- Each known setting gets a typed control: text input, checkbox, number input, or dropdown
+- GeneralSettings: max-fast-processes, max-slow-processes, screenshooter-timeout, tool-duplication (dropdown: skip/newTab/append/askMe), web-services, enable-scheduler, etc.
+- BruteSettings: default-username, default-password, wordlist paths, no-username/password-services, store-cleartext-passwords-on-exit
+- ToolSettings: nmap-path, hydra-path, pyshodan-api-key
+- StagedNmapSettings: stage1-6 port specs (text inputs, validated with the PORTS|/NSE| format check)
+- Live validation before save (reuse `_validate_legion_conf`)
+- Saves via `/api/settings/legion-conf` and triggers `applySettings()`
+- Does NOT replace the raw Config Manager editor — both coexist
+
+**UI placement:** New "Settings" tab in the Config Manager (F2) alongside the raw editor tab
 
 ### legion.conf Settings
 #### Already wired
