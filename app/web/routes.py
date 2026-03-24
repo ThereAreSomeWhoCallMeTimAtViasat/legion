@@ -798,13 +798,15 @@ def scheduler_provider_logs():
 
 @web_bp.post("/api/shutdown")
 def shutdown():
-    """Cleanup on tab-close (beforeunload beacon).  Flushes output and kills
-    subprocesses but does NOT exit the server — the user may have cancelled the
-    navigation (browser 'Leave page?' → Cancel)."""
+    """Flush live output on browser unload (beforeunload beacon).
+    Does NOT kill processes — the server is still running and the browser may
+    just be refreshing (Ctrl+Shift+R, F5, navigation).  Killing here would
+    destroy in-progress nmap scans on every page refresh.
+    Actual process termination only happens on explicit File→Exit (/api/exit)
+    or double Ctrl+C (SIGINT handler in legion.py)."""
     wc = _wc()
     wc.saveRunningProcessOutputs()
-    wc.killRunningProcesses()
-    return jsonify({"status": "ok", "message": "Shutdown complete"})
+    return jsonify({"status": "ok", "message": "Output flushed"})
 
 @web_bp.post("/api/cancel-exit")
 def cancel_exit():

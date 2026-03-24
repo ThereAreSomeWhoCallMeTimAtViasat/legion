@@ -71,6 +71,7 @@ class WebController:
         self.slowProcessesRunning = 0
         self._pending_ports_stages = {}    # hostIp -> set of stage nums still running
         self._pending_stages_lock = threading.Lock()
+        self._scan_generation = {}         # hostIp -> int; bumped each new scan so stale threads self-cancel
         self._state_changed = False
         self._matches = {}
         self._deleted_hosts = set()   # Qt6: screenshooter blacklist for deleted hosts
@@ -116,6 +117,7 @@ class WebController:
         self.fastProcessesRunning = 0
         self.slowProcessesRunning = 0
         self._pending_ports_stages = {}
+        self._scan_generation = {}
         self._state_changed = True
         log.info(f"[WebController] start('{title}')")
         # Qt6: controller.py:213 — apply store-cleartext setting on project init
@@ -464,7 +466,14 @@ class WebController:
             log.info(f"[WebController] Flushed output for {saved} running processes")
 
     def killRunningProcesses(self):
-        """controller.py:1700 — kill all active subprocesses."""
+        """controller.py:1700 — kill all active subprocesses.
+        Also marks each process as Killed in DB (so _wait_and_import threads
+        know not to import their XML) and drains fastProcessQueue (so queued-but-
+        not-yet-started processes don't auto-restart via checkProcessQueue)."""
+        import queue as _queue
+        processRepo = self.logic.activeProject.repositoryContainer.processRepository
+
+        # Kill all active (running) processes and mark them Killed in DB
         for proc_id, proc in list(self._active_processes.items()):
             try:
                 if proc._popen and proc._popen.poll() is None:
@@ -477,9 +486,35 @@ class WebController:
                 pass
             except Exception as e:
                 log.error(f"[WebController] killRunningProcesses error: {e}")
+            # Mark Killed in DB so _wait_and_import threads see isKilledProcess()=True
+            # and skip importing incomplete/partial XML.
+            try:
+                processRepo.storeProcessKillStatus(str(proc_id))
+            except Exception as e:
+                log.error(f"[WebController] killRunningProcesses: failed to store kill status for {proc_id}: {e}")
+
         self._active_processes.clear()
         self.processes.clear()
         self.fastProcessesRunning = 0
+
+        # Drain the queue: queued-but-not-yet-started processes must not auto-restart.
+        # Without this, _capture_output threads from just-killed processes call
+        # checkProcessQueue() on finish, which starts the queued processes — ghost scans.
+        drained = 0
+        while True:
+            try:
+                proc = self.fastProcessQueue.get_nowait()
+                proc_id = getattr(proc, 'id', None)
+                if proc_id:
+                    try:
+                        processRepo.storeProcessKillStatus(str(proc_id))
+                    except Exception:
+                        pass
+                drained += 1
+            except _queue.Empty:
+                break
+        if drained:
+            log.info(f"[WebController] Drained {drained} queued process(es) from fastProcessQueue")
 
     def handleMatch(self, hostIp, tabTitle, matchStr):
         """controller.py:2651 — store match data without Qt view calls."""
@@ -1612,22 +1647,30 @@ class WebController:
             return
 
         if ports_stages:
-            # Register all PORTS stages as pending before launching any, so the
-            # completion handler never sees an empty set prematurely.
+            # Bump generation BEFORE registering pending stages so any still-running
+            # _wait_and_import threads from a previous scan on the same host see a
+            # mismatched generation and bail out without touching the new scan's state.
             with self._pending_stages_lock:
+                gen = self._scan_generation.get(host_arg, 0) + 1
+                self._scan_generation[host_arg] = gen
                 self._pending_ports_stages[host_arg] = {s for s, _ in ports_stages}
             for (s, values) in ports_stages:
                 self._launch_ports_stage(host_arg, s, values, discovery, enable_ipv6,
-                                         tool_output_dir, nmap_bin, nse_stage)
+                                         tool_output_dir, nmap_bin, nse_stage, gen)
         elif nse_stage:
             # No PORTS stages configured — run NSE immediately
+            with self._pending_stages_lock:
+                gen = self._scan_generation.get(host_arg, 0) + 1
+                self._scan_generation[host_arg] = gen
             self._launch_nse_stage(host_arg, nse_stage[0], nse_stage[1],
-                                   enable_ipv6, tool_output_dir, nmap_bin)
+                                   enable_ipv6, tool_output_dir, nmap_bin, gen)
 
     def _launch_ports_stage(self, host_arg, stage, stageOpValues, discovery, enable_ipv6,
-                             tool_output_dir, nmap_bin, nse_stage):
+                             tool_output_dir, nmap_bin, nse_stage, generation=0):
         """Launch one PORTS stage and monitor it in a background thread.
-        Calls _stage_completed when done (whether success, empty XML, or error)."""
+        Calls _stage_completed when done (whether success, empty XML, or error).
+        generation: snapshot of _scan_generation[host_arg] at launch time; if the
+        generation has been bumped by a newer scan, the thread silently exits."""
         from app.timing import getTimestamp
         outputfile = os.path.join(tool_output_dir, f"{getTimestamp()}-nmapstage{stage}")
 
@@ -1651,7 +1694,7 @@ class WebController:
 
         if not result or not result.get('process_id'):
             log.warning(f"[WebController] Stage {stage} failed to launch for {host_arg}")
-            self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
+            self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin, generation)
             return
 
         proc_id = result['process_id']
@@ -1666,19 +1709,34 @@ class WebController:
                     break
                 time.sleep(0.5)
 
+            # Generation check: if a newer scan for this host has started, this
+            # thread is stale — do NOT touch _pending_ports_stages or launch NSE.
+            with self._pending_stages_lock:
+                current_gen = self._scan_generation.get(host_arg, 0)
+            if current_gen != generation:
+                log.info(f"[Chain{stage}] Stale generation ({generation} vs {current_gen}) for {host_arg} — exiting")
+                return
+
             if not proc or proc._popen is None:
                 log.warning(f"[Chain{stage}] Stage {stage} never started for {host_arg}")
-                self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
+                self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin, generation)
                 return
 
             log.info(f"[Chain{stage}] Process {proc_id} started (pid={proc.pid}), waiting...")
             proc._popen.wait()
             log.info(f"[Chain{stage}] Process {proc_id} finished (exit={proc._popen.returncode})")
 
+            # Generation check again after wait — a kill + new scan may have started
+            with self._pending_stages_lock:
+                current_gen = self._scan_generation.get(host_arg, 0)
+            if current_gen != generation:
+                log.info(f"[Chain{stage}] Stale generation ({generation} vs {current_gen}) after wait for {host_arg} — exiting")
+                return
+
             processRepo = self.logic.activeProject.repositoryContainer.processRepository
             if processRepo.isKilledProcess(str(proc_id)):
                 log.info(f"[Chain{stage}] Stage {stage} was killed")
-                self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
+                self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin, generation)
                 return
 
             xml_path = outputfile + '.xml'
@@ -1708,16 +1766,22 @@ class WebController:
             else:
                 log.warning(f"[WebController] Stage {stage} XML not found: {xml_path}")
 
-            self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin)
+            self._stage_completed(host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin, generation)
 
         t = threading.Thread(target=_wait_and_import, daemon=True,
                              name=f"stage-chain-{stage}-{host_arg}")
         t.start()
 
-    def _stage_completed(self, host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin):
+    def _stage_completed(self, host_arg, stage, nse_stage, enable_ipv6, tool_output_dir, nmap_bin, generation=0):
         """Remove a finished PORTS stage from the pending set.
-        When the set empties, launch the NSE stage."""
+        When the set empties, launch the NSE stage.
+        generation: guards against stale threads from a killed scan modifying the
+        pending set of a new scan that started for the same host."""
         with self._pending_stages_lock:
+            current_gen = self._scan_generation.get(host_arg, 0)
+            if current_gen != generation:
+                log.info(f"[WebController] _stage_completed: stale gen {generation} vs {current_gen} for {host_arg} — ignoring")
+                return
             pending = self._pending_ports_stages.get(host_arg, set())
             pending.discard(stage)
             self._pending_ports_stages[host_arg] = pending
@@ -1726,11 +1790,12 @@ class WebController:
         if all_done and nse_stage:
             nse_stage_num, nse_values = nse_stage
             self._launch_nse_stage(host_arg, nse_stage_num, nse_values,
-                                   enable_ipv6, tool_output_dir, nmap_bin)
+                                   enable_ipv6, tool_output_dir, nmap_bin, generation)
 
-    def _launch_nse_stage(self, host_arg, stage, nse_values, enable_ipv6, tool_output_dir, nmap_bin):
+    def _launch_nse_stage(self, host_arg, stage, nse_values, enable_ipv6, tool_output_dir, nmap_bin, generation=0):
         """Query all discovered open ports for host, then run NSE against them.
-        Runs after all PORTS stages complete so vulners sees every discovered port."""
+        Runs after all PORTS stages complete so vulners sees every discovered port.
+        generation: if a new scan supersedes this one, _wait_nse exits without importing."""
         from app.timing import getTimestamp
         import sqlite3 as _sq3
 
@@ -1821,6 +1886,13 @@ class WebController:
                     break
                 time.sleep(0.5)
 
+            # Generation check: bail out if a new scan superseded this NSE run
+            with self._pending_stages_lock:
+                current_gen = self._scan_generation.get(host_arg, 0)
+            if current_gen != generation:
+                log.info(f"[NSE] Stale generation ({generation} vs {current_gen}) for {host_arg} — exiting")
+                return
+
             if not proc or proc._popen is None:
                 log.warning(f"[NSE] NSE stage never started for {host_arg}")
                 with self._pending_stages_lock:
@@ -1829,6 +1901,13 @@ class WebController:
 
             proc._popen.wait()
             log.info(f"[NSE] NSE finished (exit={proc._popen.returncode})")
+
+            # Generation check again after wait
+            with self._pending_stages_lock:
+                current_gen = self._scan_generation.get(host_arg, 0)
+            if current_gen != generation:
+                log.info(f"[NSE] Stale generation ({generation} vs {current_gen}) after wait for {host_arg} — exiting")
+                return
 
             processRepo = self.logic.activeProject.repositoryContainer.processRepository
             if processRepo.isKilledProcess(str(proc_id)):
