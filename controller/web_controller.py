@@ -122,6 +122,63 @@ class WebController:
         log.info(f"[WebController] start('{title}')")
         # Qt6: controller.py:213 — apply store-cleartext setting on project init
         self._apply_store_wordlists_setting()
+        # Defensive startup: clean up any state left by an unclean previous shutdown
+        self._startup_check()
+
+    def _startup_check(self):
+        """Clean up state left by an unclean previous shutdown (SIGKILL, power loss, etc.).
+
+        Two things can be wrong at startup:
+        1. Processes with status='Running' or 'Waiting' in the DB — they were active
+           when the server died and were never marked Killed/Crashed.  If left as-is
+           they appear Running forever in the UI and block process-queue slot counting.
+        2. Stale .live_output temp files in the output/running folders — the process
+           output API serves these as live data; leftover files from the previous session
+           would serve old output for new process IDs or cause the API to return wrong data.
+        """
+        from app.timing import getTimestamp
+        # Mark orphan Running/Waiting processes as Crashed
+        try:
+            from sqlalchemy import text as _t
+            session = self.logic.activeProject.database.session()
+            try:
+                result = session.execute(_t(
+                    "UPDATE process SET status='Crashed', endTime=:ts "
+                    "WHERE status IN ('Running', 'Waiting')"
+                ), {"ts": getTimestamp(True)})
+                count = result.rowcount
+                session.commit()
+                if count:
+                    log.warning(
+                        f"[WebController] Startup: marked {count} orphan process(es) as Crashed "
+                        f"(server was killed before previous session could clean up)"
+                    )
+                else:
+                    log.info("[WebController] Startup check: no orphan processes found")
+            finally:
+                session.close()
+        except Exception as e:
+            log.error(f"[WebController] _startup_check: orphan process cleanup failed: {e}")
+
+        # Clean up stale .live_output temp files
+        try:
+            cleaned = 0
+            for folder in [
+                self.logic.activeProject.properties.runningFolder,
+                self.logic.activeProject.properties.outputFolder,
+            ]:
+                if os.path.isdir(folder):
+                    for fname in os.listdir(folder):
+                        if fname.endswith('.live_output'):
+                            try:
+                                os.unlink(os.path.join(folder, fname))
+                                cleaned += 1
+                            except Exception:
+                                pass
+            if cleaned:
+                log.info(f"[WebController] Startup: removed {cleaned} stale .live_output file(s)")
+        except Exception as e:
+            log.error(f"[WebController] _startup_check: live_output cleanup failed: {e}")
 
     def createNewProject(self):
         """controller.py:303"""
@@ -148,6 +205,19 @@ class WebController:
     def closeProject(self):
         """controller.py:417 — cleanup without Qt threads."""
         self.killRunningProcesses()
+        # WAL checkpoint: flush all WAL writes into the main DB file before closing.
+        # Skipping this on unclean exit is safe (WAL is replayed on next open), but
+        # doing it explicitly on a clean shutdown speeds up the next open and prevents
+        # the main DB file from being stale relative to the WAL.
+        try:
+            from sqlalchemy import text as _t
+            db = self.logic.activeProject.database
+            db.session.remove()   # release scoped session before raw checkpoint
+            with db.engine.connect() as _conn:
+                _conn.execute(_t("PRAGMA wal_checkpoint(TRUNCATE)"))
+            log.info("[WebController] WAL checkpoint completed")
+        except Exception as e:
+            log.error(f"[WebController] WAL checkpoint failed: {e}")
         self.logic.projectManager.closeProject(self.logic.activeProject)
         log.info("[WebController] closeProject done")
 

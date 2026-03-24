@@ -289,6 +289,8 @@ if __name__ == "__main__":
                     wc.closeProject()
                 except Exception:
                     pass
+                import time as _time
+                _time.sleep(0.5)   # let daemon threads notice kill status before _exit
                 _os._exit(0)
 
             wc._exit_requested = True
@@ -305,6 +307,9 @@ if __name__ == "__main__":
                         wc.closeProject()
                     except Exception:
                         pass
+                    # Brief pause: lets daemon threads notice kill status written by
+                    # closeProject/killRunningProcesses before _exit tears them down.
+                    time.sleep(0.5)
                     _os._exit(0)
             _threading.Thread(target=_force_exit_timeout, daemon=True).start()
 
