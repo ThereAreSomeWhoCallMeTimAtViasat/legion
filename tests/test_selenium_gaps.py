@@ -387,16 +387,34 @@ class TestProcessActions:
     # ── Clear ──────────────────────────────────────────────────────────────────
 
     def test_clear_removes_process_from_table(self, gap_driver, gap_server):
-        """Clear a finished process — its row must disappear."""
+        """Clear a finished process — its row must disappear.
+
+        The snapshot rebuilds #processes-body every 1.5 s.  Grabbing fin_row
+        and then calling context_click later can race with that rebuild, making
+        the element stale.  We retry the grab+right-click+clear sequence so the
+        element is always fresh when .perform() fires.
+        """
+        from selenium.common.exceptions import StaleElementReferenceException
         wc = gap_server['wc']
         result = wc.runCommand('echo clear-target', name='clear-test', hostIp=IP_A)
         pid = result.get('process_id')
         wait_process_status(gap_driver, 'clear-test', 'Finished', timeout=15)
 
-        fin_row = gap_driver.find_element(
-            By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{pid}"]')
-        ActionChains(gap_driver).context_click(fin_row).perform()
-        ctx_menu_click(gap_driver, 'Clear')
+        # Re-find the row and right-click in one tight window; retry if the
+        # snapshot DOM rebuild makes the element stale before .perform() fires.
+        cleared = False
+        for _ in range(8):
+            try:
+                fin_row = gap_driver.find_element(
+                    By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{pid}"]')
+                ActionChains(gap_driver).context_click(fin_row).perform()
+                ctx_menu_click(gap_driver, 'Clear')
+                cleared = True
+                break
+            except (StaleElementReferenceException, AssertionError):
+                time.sleep(0.3)
+
+        assert cleared, f"Could not right-click and Clear process {pid} (stale-element race)"
 
         # The specific row must be gone
         W(gap_driver, 5).until(lambda d: len(
