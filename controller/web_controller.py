@@ -123,6 +123,17 @@ class WebController:
         log.info(f"[WebController] start('{title}')")
         # Qt6: controller.py:213 — apply store-cleartext setting on project init
         self._apply_store_wordlists_setting()
+        # Write a PID sentinel so _cleanup_orphaned_temp_files() can determine
+        # whether this running folder belongs to a live server instance.
+        # The DB and running/output folders are independently named (separate
+        # mkdtemp calls), so PID-based liveness is the only reliable signal.
+        try:
+            pid_file = os.path.join(
+                self.logic.activeProject.properties.runningFolder, '.legion_session_pid')
+            with open(pid_file, 'w') as _pf:
+                _pf.write(str(os.getpid()))
+        except Exception as _pe:
+            log.debug(f"[WebController] Could not write session PID file: {_pe}")
         # Defensive startup: clean up any state left by an unclean previous shutdown
         self._startup_check()
 
@@ -191,21 +202,58 @@ class WebController:
         # .legion DB is gone (meaning the session that owned them is dead).
         self._cleanup_orphaned_temp_files()
 
+    @staticmethod
+    def _file_is_open_by_any_process(filepath):
+        """Return True if any running process currently has filepath open.
+
+        Uses /proc/PID/fd symlinks (Linux) — accurate regardless of lock type.
+        SQLite uses POSIX fcntl advisory locks (not BSD flock), so flock-based
+        liveness tests give false negatives against SQLAlchemy pool connections.
+        /proc scanning checks actual open file descriptors, which is definitive:
+        a live server keeps its .legion file open in the SQLAlchemy connection pool;
+        a dead session's file has zero open FDs from any process.
+        """
+        try:
+            realpath = os.path.realpath(filepath)
+            proc_dir = '/proc'
+            if not os.path.isdir(proc_dir):
+                return False   # non-Linux fallback: assume in-use (safe default)
+            for pid_entry in os.listdir(proc_dir):
+                if not pid_entry.isdigit():
+                    continue
+                fd_dir = os.path.join(proc_dir, pid_entry, 'fd')
+                try:
+                    for fd_name in os.listdir(fd_dir):
+                        try:
+                            link = os.readlink(os.path.join(fd_dir, fd_name))
+                            if link == realpath:
+                                return True
+                        except OSError:
+                            pass
+                except (PermissionError, FileNotFoundError):
+                    pass
+        except Exception:
+            pass
+        return False
+
     def _cleanup_orphaned_temp_files(self):
         """Remove /tmp/legion/ leftovers from dead server instances.
-        Uses flock to test liveness — skips files owned by another running process."""
-        import fcntl
+
+        Liveness test: scan /proc/PID/fd for open file descriptors pointing at
+        each candidate .legion file.  A live server keeps its DB open via the
+        SQLAlchemy connection pool, so an orphaned file (dead session) is the
+        only one with zero open FDs across all running processes.
+        """
         import glob as _glob
         import shutil as _sh
 
-        tmp_base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                '../..', '/tmp/legion')
-        # Always use the real system temp path regardless of __file__ location
         tmp_base = '/tmp/legion'
         if not os.path.isdir(tmp_base):
             return
 
-        current_db = self.logic.activeProject.properties.projectName
+        current_db      = self.logic.activeProject.properties.projectName
+        current_running = self.logic.activeProject.properties.runningFolder
+        current_output  = self.logic.activeProject.properties.outputFolder
 
         removed_files = 0
         removed_dirs = 0
@@ -216,45 +264,50 @@ class WebController:
             if db_path == current_db:
                 live_db_paths.add(db_path)
                 continue
+            if self._file_is_open_by_any_process(db_path):
+                # Another live server instance owns this file — leave it alone
+                live_db_paths.add(db_path)
+                continue
             try:
-                fd = os.open(db_path, os.O_RDONLY)
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    # Exclusive lock acquired — no other process owns this file
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                    os.close(fd)
-                    os.unlink(db_path)
-                    # Remove companion WAL and SHM files if present
-                    for suffix in ('-wal', '-shm'):
-                        companion = db_path + suffix
-                        if os.path.isfile(companion):
-                            os.unlink(companion)
-                    removed_files += 1
-                except (OSError, IOError):
-                    # Lock failed — another live process owns this file; leave it alone
-                    os.close(fd)
-                    live_db_paths.add(db_path)
-            except Exception:
-                pass  # Can't open — skip
+                os.unlink(db_path)
+                # Remove companion WAL and SHM files if present
+                for suffix in ('-wal', '-shm'):
+                    companion = db_path + suffix
+                    if os.path.isfile(companion):
+                        os.unlink(companion)
+                removed_files += 1
+            except Exception as e:
+                log.debug(f"[WebController] cleanup: could not remove {db_path}: {e}")
+                live_db_paths.add(db_path)
 
-        # Pass 2: remove -running and -tool-output dirs whose DB no longer exists
-        # (meaning the owning session is truly dead, not just a concurrent instance)
+        # Pass 2: remove -running and -tool-output dirs whose owner process is dead.
+        #
+        # We cannot derive which .legion DB owns which folder from the filename —
+        # each is created by an independent mkdtemp/NamedTemporaryFile call with a
+        # different random suffix.  Instead we rely on a .legion_session_pid sentinel
+        # file written by start().  If the PID in that file is no longer running,
+        # the session is dead.  Folders without a PID file are skipped (conservative).
         for pattern in ('legion-*-running', 'legion-*-tool-output'):
             for folder in _glob.glob(os.path.join(tmp_base, pattern)):
-                if folder in (self.logic.activeProject.properties.runningFolder,
-                               self.logic.activeProject.properties.outputFolder):
+                if folder in (current_running, current_output):
                     continue
-                # Derive the expected DB name from the folder name:
-                # legion-XXXXXXXX-running  →  legion-XXXXXXXX.legion
-                base = os.path.basename(folder)
-                uid = base.replace('-running', '').replace('-tool-output', '')
-                expected_db = os.path.join(tmp_base, uid + '.legion')
-                if expected_db not in live_db_paths and not os.path.isfile(expected_db):
-                    try:
-                        _sh.rmtree(folder, ignore_errors=True)
-                        removed_dirs += 1
-                    except Exception:
-                        pass
+                pid_file = os.path.join(folder, '.legion_session_pid')
+                if not os.path.isfile(pid_file):
+                    # No sentinel — older installation or folder not yet started.
+                    # Skip conservatively to avoid deleting live session folders.
+                    continue
+                try:
+                    pid = int(open(pid_file).read().strip())
+                    os.kill(pid, 0)    # signal 0: raises OSError if process is dead
+                    # Process is alive — this folder belongs to a live server; skip
+                    continue
+                except (ValueError, OSError):
+                    pass   # PID file corrupt, or process dead → orphaned
+                try:
+                    _sh.rmtree(folder, ignore_errors=True)
+                    removed_dirs += 1
+                except Exception:
+                    pass
 
         if removed_files or removed_dirs:
             log.info(
