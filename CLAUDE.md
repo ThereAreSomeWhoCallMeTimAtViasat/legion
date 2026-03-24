@@ -34,7 +34,7 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.23-flask
+- **Current Flask version:** v10.27-flask
 - **Static asset cache:** `?v=32` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
@@ -79,8 +79,9 @@ sudo python3 tests/test_behavioral.py
 | `db/SqliteDbAdapter.py` | SQLAlchemy adapter — WAL mode enabled |
 | `app/importers/nmap_import.py` | Qt-free NmapImporter wrapper |
 | `app/importers/NmapImporter.py` | Original Qt6 importer — DO NOT modify |
-| `app/logging/legionLog.py` | Logger setup — _InMemoryLogHandler for log tab |
+| `app/logging/legionLog.py` | Logger setup — _InMemoryLogHandler for log tab; RotatingFileHandler (10MB/3 backups) |
 | `tests/conftest.py` | Selenium fixtures (ports 5094–5099) |
+| `tests/test_session_isolation.py` | 25 behavioral tests: shutdown safety, scan generation, startup checks, file isolation |
 | `run_tests.sh` | Full suite runner with spinner/timer/options |
 
 ---
@@ -101,6 +102,38 @@ sudo python3 tests/test_behavioral.py
 - Completion tracked: `_pending_ports_stages[hostIp]` set + `_pending_stages_lock`
 - Each PORTS stage: polls `_active_processes` until `_popen` not None → `wait()` → import XML → `scheduler(isNmapImport=False)`
 - Scheduler calls `session.remove()` before `getHosts` to bypass cached session state
+
+### Scan Generation Counter (v10.24)
+- `_scan_generation[hostIp]` (int dict) — bumped atomically inside `_pending_stages_lock` at the top of `runStagedNmap()` BEFORE stages launch
+- Every `_wait_and_import` and `_wait_nse` closure captures `generation` at launch time
+- On wakeup (after `proc._popen.wait()`): compare captured gen to `_scan_generation[hostIp]`; if mismatch, exit silently — stale thread from a killed scan cannot corrupt the new scan's `_pending_ports_stages`
+- `_stage_completed()` also checks generation before modifying state
+- Reset in `start()` so project switches start clean
+
+### Shutdown Safety (v10.24–v10.25)
+- **`/api/shutdown`** (triggered by `beforeunload` on EVERY browser refresh) must only call `saveRunningProcessOutputs()` — NEVER `killRunningProcesses()`. Killing here destroys active nmap scans on Ctrl+Shift+R.
+- **`killRunningProcesses()`** must: (1) call `storeProcessKillStatus()` per process so `_wait_and_import` threads see `isKilledProcess()=True` and skip importing partial XML; (2) drain `fastProcessQueue` and mark queued procs Killed — without this, capture threads call `checkProcessQueue()` on finish and ghost scans restart.
+- **`closeProject()`** runs `PRAGMA wal_checkpoint(TRUNCATE)` then `database.dispose()` before handing off to `ProjectManager.closeProject()` which deletes the files.
+- SIGINT handler (`_web_shutdown` in `legion.py`): 0.5s sleep before `_os._exit()` so daemon threads notice kill status.
+
+### Startup Check (_startup_check — v10.25)
+Called automatically from `start()` on every project open/create:
+1. Mark any Running/Waiting processes as Crashed (orphans from SIGKILL'd previous session)
+2. Delete stale `.live_output` files in running and output folders
+3. Call `_cleanup_orphaned_temp_files()` (see below)
+
+### Orphaned Temp File Cleanup (_cleanup_orphaned_temp_files — v10.26–v10.27)
+- **DB files**: scan `/tmp/legion/legion-*.legion`; skip current session's DB; for each candidate, scan `/proc/PID/fd` symlinks across ALL running processes — if any FD points at the file, it's live (skip); otherwise delete + companion `-wal`/`-shm`.
+  - **Why /proc not flock**: SQLite uses POSIX `fcntl` advisory locks (not BSD `flock`). `flock(LOCK_EX|LOCK_NB)` returns success even on an active SQLAlchemy DB — false positive. `/proc/PID/fd` checks actual open file descriptors, which is definitive.
+- **Folder cleanup**: scan `legion-*-running` and `legion-*-tool-output` dirs; skip current session's folders; read `.legion_session_pid` sentinel (written by `start()`); use `os.kill(pid, 0)` to test liveness; delete if process is dead.
+  - **Why PID sentinel not name matching**: DB and running/output folders are independently named by separate `mkdtemp`/`NamedTemporaryFile` calls — their random suffixes don't match, so name-based DB↔folder correlation is impossible.
+
+### File Isolation Between Instances (v10.26)
+- **DB, output folder, running folder**: unique per instance via `NamedTemporaryFile`/`mkdtemp` — no sharing
+- **Log files** (`legion.log`, `legion-db.log`, `legion-startup.log`): shared path but now use `RotatingFileHandler(maxBytes=10MB, backupCount=3)`; session-start separator (`===SESSION START===`) written to file on logger init
+- **`_screenshots_taken`**: reset to `set()` in `start()` — was lazily init'd via `hasattr`, leaked across project switches
+- **PID sentinel**: `{running_folder}/.legion_session_pid` — written in `start()`, read by folder cleanup
+- **Intentionally shared**: `~/.local/share/legion/legion.conf`, profiles, `active_profile.txt` — config, not data
 
 ### Scheduler / Process Queue
 - `checkProcessQueue()` respects `general_max_fast_processes` (all tools) and `general_max_slow_processes` (nmap only)
@@ -137,6 +170,10 @@ sudo python3 tests/test_behavioral.py
 - **v10.19**: Parallel PORTS stages (1–5 simultaneous); NSE runs against all discovered ports
 - **v10.20**: Font size buttons now resize xterm.js terminals (pt→px via ×1.333; fitAddon.fit() after)
 - **v10.21**: Scan tab restore — returning from Brute re-selects host row and reloads right panel
+- **v10.24**: 4 shutdown/scan-restart bugs: (1) /api/shutdown no longer kills processes on browser refresh; (2) killRunningProcesses stores kill status in DB; (3) drains fastProcessQueue on kill; (4) scan generation counter prevents stale _wait_and_import threads from corrupting new scans
+- **v10.25**: Startup/shutdown defensive checks: _startup_check() marks orphan Running/Waiting→Crashed + cleans .live_output files; closeProject() WAL checkpoint + database.dispose(); SIGINT settle sleep
+- **v10.26**: File isolation: RotatingFileHandler (10MB/3 backups) + session separator; _cleanup_orphaned_temp_files() with /proc FD scanning + PID sentinel; _screenshots_taken reset in start(); database.dispose() before file deletion
+- **v10.27**: 25-test session isolation suite (tests/test_session_isolation.py); fixed flock→/proc FD scanning; fixed name-based folder cleanup→PID sentinel approach
 
 ---
 
@@ -391,6 +428,24 @@ Allows changing `[GeneralSettings]`, `[BruteSettings]`, `[ToolSettings]`, and `[
 **Symptom**: In Selenium tests, `_ensure_process()` calls `wc.start()` which resets `fastProcessQueue = queue.Queue()`. Processes queued before the call are lost.
 **Root cause**: `wc.start()` is designed for project initialization, not mid-session use. Calling it resets the queue, process counters, and process list — but NOT `_active_processes`.
 **Prevention**: Do not call `wc.start()` in test helpers unless you intend to reset queue state. Use `wc.runCommand()` directly.
+
+### T16 — Browser refresh kills active nmap scans (v10.24)
+**Symptom**: Ctrl+Shift+R while a staged scan is running → on reload, hosts missing, wrong OS, no vulners.
+**Root cause**: `beforeunload` fires on EVERY page navigation including refresh. `/api/shutdown` was calling `killRunningProcesses()`. Killed stages left partial XML; `_wait_and_import` threads (not marked killed) imported garbage; `_pending_ports_stages` corrupted by stale threads.
+**Fix**: Remove `killRunningProcesses()` from `/api/shutdown` (only flush output). Add scan generation counter. Add kill status + queue drain to `killRunningProcesses()`.
+**Commits**: `d2def44` (v10.24), `2d61891` (v10.25)
+
+### T17 — flock gives false positive on SQLite DB files (v10.27)
+**Symptom**: `_cleanup_orphaned_temp_files()` deleted the current session's DB and running folder.
+**Root cause**: Used `flock(LOCK_EX|LOCK_NB)` to test if a .legion file was in use. SQLite uses POSIX `fcntl` advisory locks (not BSD flock) — flock acquired successfully even on an active database.
+**Fix**: Replaced with `/proc/PID/fd` symlink scanning — reads actual open FDs across all running processes.
+**Commit**: `1f6e942` (v10.27)
+
+### T18 — Folder cleanup used wrong name-derivation (v10.27)
+**Symptom**: Same as T17 — running folder deleted because cleanup assumed DB and folder share a random suffix.
+**Root cause**: DB (`legion-k_ne1jmx.legion`) and running folder (`legion-kbb34rnt-running`) are independently named by separate `mkdtemp`/`NamedTemporaryFile` calls. Name-based correlation always fails.
+**Fix**: Write `.legion_session_pid` sentinel in running/output folders on `start()`; use `os.kill(pid, 0)` for liveness.
+**Commit**: `1f6e942` (v10.27)
 
 ---
 
