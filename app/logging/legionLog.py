@@ -137,13 +137,24 @@ def getOrCreateCachedLogger(logName: str, logPath: str, console: bool, cachedLog
         log.addHandler(console_handler)
         log.debug(f"Added console handler for {logName}")
     
-    # Add file handler to write to log file (DEBUG level)
+    # Add rotating file handler (10 MB per file, keep 3 backups = 30 MB max per log).
+    # Previously used FileHandler(mode='a') which accumulated ALL sessions into one
+    # unbounded file — legion.log grew to 310 MB with no way to tell sessions apart.
     try:
-        file_handler = logging.FileHandler(logPath, mode='a', encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)  # File captures DEBUG and above
+        from logging.handlers import RotatingFileHandler
+        file_handler = RotatingFileHandler(
+            logPath, mode='a', maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8'
+        )
+        file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
         log.addHandler(file_handler)
-        log.debug(f"Successfully created file handler for {logName} at {logPath}")
+        # Write a session-start separator so individual server runs are distinguishable
+        # in the rotated log file even when multiple sessions share the same file.
+        import datetime as _dt
+        sep = f"\n{'='*80}\nSESSION START  {_dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  logger={logName}\n{'='*80}"
+        file_handler.stream.write(sep + '\n')
+        file_handler.stream.flush()
+        log.debug(f"Successfully created rotating file handler for {logName} at {logPath}")
     except Exception as e:
         log.error(f"Error creating file handler for {logName} at {logPath}: {e}")
 

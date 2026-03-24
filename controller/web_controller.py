@@ -118,6 +118,7 @@ class WebController:
         self.slowProcessesRunning = 0
         self._pending_ports_stages = {}
         self._scan_generation = {}
+        self._screenshots_taken = set()   # reset per project — was lazily init'd, leaked across project switches
         self._state_changed = True
         log.info(f"[WebController] start('{title}')")
         # Qt6: controller.py:213 — apply store-cleartext setting on project init
@@ -180,6 +181,87 @@ class WebController:
         except Exception as e:
             log.error(f"[WebController] _startup_check: live_output cleanup failed: {e}")
 
+        # Clean up orphaned temp files from previous server instances killed without
+        # running closeProject() (e.g. SIGKILL, power loss).  Each new instance gets
+        # unique paths so there is no data reuse, but the leftovers accumulate.
+        #
+        # Strategy for DB files: try flock(LOCK_EX|LOCK_NB) — if we can grab an
+        # exclusive lock, no other process holds the file open and it is safe to delete.
+        # For companion -running/-tool-output folders we delete those whose matching
+        # .legion DB is gone (meaning the session that owned them is dead).
+        self._cleanup_orphaned_temp_files()
+
+    def _cleanup_orphaned_temp_files(self):
+        """Remove /tmp/legion/ leftovers from dead server instances.
+        Uses flock to test liveness — skips files owned by another running process."""
+        import fcntl
+        import glob as _glob
+        import shutil as _sh
+
+        tmp_base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                '../..', '/tmp/legion')
+        # Always use the real system temp path regardless of __file__ location
+        tmp_base = '/tmp/legion'
+        if not os.path.isdir(tmp_base):
+            return
+
+        current_db = self.logic.activeProject.properties.projectName
+
+        removed_files = 0
+        removed_dirs = 0
+        live_db_paths = set()
+
+        # Pass 1: identify and delete orphaned .legion DB files
+        for db_path in _glob.glob(os.path.join(tmp_base, 'legion-*.legion')):
+            if db_path == current_db:
+                live_db_paths.add(db_path)
+                continue
+            try:
+                fd = os.open(db_path, os.O_RDONLY)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # Exclusive lock acquired — no other process owns this file
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+                    os.unlink(db_path)
+                    # Remove companion WAL and SHM files if present
+                    for suffix in ('-wal', '-shm'):
+                        companion = db_path + suffix
+                        if os.path.isfile(companion):
+                            os.unlink(companion)
+                    removed_files += 1
+                except (OSError, IOError):
+                    # Lock failed — another live process owns this file; leave it alone
+                    os.close(fd)
+                    live_db_paths.add(db_path)
+            except Exception:
+                pass  # Can't open — skip
+
+        # Pass 2: remove -running and -tool-output dirs whose DB no longer exists
+        # (meaning the owning session is truly dead, not just a concurrent instance)
+        for pattern in ('legion-*-running', 'legion-*-tool-output'):
+            for folder in _glob.glob(os.path.join(tmp_base, pattern)):
+                if folder in (self.logic.activeProject.properties.runningFolder,
+                               self.logic.activeProject.properties.outputFolder):
+                    continue
+                # Derive the expected DB name from the folder name:
+                # legion-XXXXXXXX-running  →  legion-XXXXXXXX.legion
+                base = os.path.basename(folder)
+                uid = base.replace('-running', '').replace('-tool-output', '')
+                expected_db = os.path.join(tmp_base, uid + '.legion')
+                if expected_db not in live_db_paths and not os.path.isfile(expected_db):
+                    try:
+                        _sh.rmtree(folder, ignore_errors=True)
+                        removed_dirs += 1
+                    except Exception:
+                        pass
+
+        if removed_files or removed_dirs:
+            log.info(
+                f"[WebController] Startup: cleaned {removed_files} orphaned DB file(s) "
+                f"and {removed_dirs} orphaned folder(s) from /tmp/legion/"
+            )
+
     def createNewProject(self):
         """controller.py:303"""
         self.logic.createNewTemporaryProject()
@@ -218,6 +300,16 @@ class WebController:
             log.info("[WebController] WAL checkpoint completed")
         except Exception as e:
             log.error(f"[WebController] WAL checkpoint failed: {e}")
+        # Dispose the SQLAlchemy engine so all connection pool connections are
+        # closed before ProjectManager deletes the underlying DB file.
+        # Without this the engine pool holds open FDs to a file that is about
+        # to be unlinked — harmless on Linux (inode stays until FD closes) but
+        # leaves WAL/SHM companion files behind if SQLite flushes after unlink.
+        try:
+            self.logic.activeProject.database.dispose()
+            log.info("[WebController] Database engine disposed")
+        except Exception as e:
+            log.error(f"[WebController] database.dispose() failed: {e}")
         self.logic.projectManager.closeProject(self.logic.activeProject)
         log.info("[WebController] closeProject done")
 
