@@ -8,6 +8,8 @@ import json
 import os
 import shutil
 import stat
+import threading
+import time
 
 from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 from app.settings import AppSettings, Settings
@@ -27,6 +29,17 @@ def _err(msg, code=400):
 
 def _filters():
     return Filters()
+
+# ── Heartbeat / browser-close watchdog ────────────────────────────────────────
+# JS pings /api/heartbeat every 5 s.  If pings stop for _HB_TIMEOUT seconds
+# (browser window closed, File→Exit in Firefox, crash) the watchdog calls
+# os._exit(0) so this Legion instance terminates automatically.
+# Timeout is long enough that a page refresh (F5 / Ctrl+Shift+R, ~2–5 s gap)
+# does NOT trigger a shutdown.
+_HB_TIMEOUT  = 20        # seconds without a ping → browser is gone
+_hb_lock     = threading.Lock()
+_hb_last     = None      # float timestamp; None = no heartbeat yet received
+_hb_started  = False     # True once the watchdog thread is running
 
 
 # ═══════════════════════════════════════════
@@ -795,6 +808,34 @@ def scheduler_provider_test():
 @web_bp.get("/api/scheduler/provider/logs")
 def scheduler_provider_logs():
     return jsonify({"logs": "No provider logs yet"})
+
+@web_bp.post("/api/heartbeat")
+def heartbeat():
+    """Browser keepalive ping sent every 5 s by legion.js.
+    Starts the browser-close watchdog on the very first call (wc captured
+    from the request context so the watchdog thread needs no app context).
+    When pings stop for _HB_TIMEOUT seconds the watchdog exits the process."""
+    global _hb_last, _hb_started
+    with _hb_lock:
+        _hb_last = time.time()
+        if not _hb_started:
+            _hb_started = True
+            wc_ref = _wc()
+            def _watchdog(wc=wc_ref):
+                while True:
+                    time.sleep(5)
+                    with _hb_lock:
+                        last = _hb_last
+                    if last is not None and (time.time() - last) > _HB_TIMEOUT:
+                        try:
+                            wc.saveRunningProcessOutputs()
+                            wc.killRunningProcesses()
+                        except Exception:
+                            pass
+                        os._exit(0)
+            threading.Thread(target=_watchdog, name='hb-watchdog',
+                             daemon=True).start()
+    return jsonify({"ok": True})
 
 @web_bp.post("/api/shutdown")
 def shutdown():

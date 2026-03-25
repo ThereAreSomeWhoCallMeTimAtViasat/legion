@@ -39,12 +39,12 @@ def cb_server():
         f.write(_SEED_XML); p = f.name
     import_nmap_xml(project=logic.activeProject, xml_path=p, output='')
     os.unlink(p)
-    t = threading.Thread(target=app.run,
-        kwargs={'host': '127.0.0.1', 'port': PORT,
-                'use_reloader': False, 'threaded': True}, daemon=True)
-    t.start()
-    time.sleep(2)
+    from werkzeug.serving import make_server
+    httpd = make_server('127.0.0.1', PORT, app, threaded=True)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start(); time.sleep(2)
     yield {'app': app, 'logic': logic, 'wc': wc, 'url': f'http://127.0.0.1:{PORT}'}
+    httpd.shutdown()
 
 
 @pytest.fixture(scope="module")

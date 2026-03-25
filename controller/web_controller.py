@@ -20,6 +20,78 @@ import time
 log = logging.getLogger('legion')
 
 
+def _kill_all_descendants():
+    """Kill every descendant process of the current Legion instance.
+
+    Why this is needed:
+      subprocess.Popen(cmd, shell=True) creates a /bin/sh shell whose pid is
+      stored in proc._popen.pid.  The actual tool (nmap, gobuster, etc.) is a
+      CHILD of that shell, not a direct child of Legion.  Sending SIGKILL to
+      the shell pid re-parents its children to PID 1 — they keep running as
+      orphans.  os.killpg() is unsafe here because shell=True inherits Legion's
+      own process group, so killpg would kill the server itself.
+
+    This function:
+      1. Reads /proc/*/stat to build a parent→[children] map.
+         The comm field (field 2) may contain spaces, so we find the last ')'
+         and parse PPID from the fields that follow.
+      2. BFS from os.getpid() to collect every descendant PID.
+      3. Sends SIGKILL to each descendant (skipping our own PID).
+
+    Called by killRunningProcesses() so it runs on every controlled shutdown
+    (File→Exit, heartbeat timeout, SIGINT) in addition to the per-process
+    SIGTERM/SIGKILL loop that marks processes Killed in the DB.
+    """
+    my_pid = os.getpid()
+    try:
+        # Build ppid → [child_pids] map
+        parent_map: dict = {}
+        for entry in os.listdir('/proc'):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f'/proc/{entry}/stat', 'r') as f:
+                    data = f.read()
+                # The comm field is enclosed in () and may contain spaces.
+                # Everything after the last ')' is: state ppid pgrp ...
+                comm_end = data.rfind(')')
+                if comm_end < 0:
+                    continue
+                rest = data[comm_end + 2:].split()
+                # rest[0] = state, rest[1] = ppid
+                child_pid = int(entry)
+                ppid = int(rest[1])
+                parent_map.setdefault(ppid, []).append(child_pid)
+            except Exception:
+                pass
+
+        # BFS to collect all descendants
+        descendants = []
+        queue = [my_pid]
+        seen = {my_pid}
+        while queue:
+            p = queue.pop(0)
+            for child in parent_map.get(p, []):
+                if child not in seen:
+                    seen.add(child)
+                    descendants.append(child)
+                    queue.append(child)
+
+        killed = 0
+        for pid in descendants:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+            except (ProcessLookupError, OSError):
+                pass  # already gone
+
+        if killed:
+            log.info(f"[WebController] _kill_all_descendants: sent SIGKILL to "
+                     f"{killed} descendant process(es)")
+    except Exception as e:
+        log.error(f"[WebController] _kill_all_descendants error: {e}")
+
+
 class WebProcessStub:
     """
     Qt-free stand-in for MyQProcess.
@@ -733,6 +805,10 @@ class WebController:
                 processRepo.storeProcessKillStatus(str(proc_id))
             except Exception as e:
                 log.error(f"[WebController] killRunningProcesses: failed to store kill status for {proc_id}: {e}")
+
+        # Sweep ALL descendants — catches grandchildren (real nmap/gobuster binary
+        # behind shell=True) that escaped the per-process SIGTERM loop above.
+        _kill_all_descendants()
 
         self._active_processes.clear()
         self.processes.clear()

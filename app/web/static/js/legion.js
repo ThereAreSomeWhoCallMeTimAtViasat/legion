@@ -1138,6 +1138,11 @@ var _dynSelLocked = false;
    element-level keydown handler fires and clears the internal selection. */
 var _savedXtermSel = '';
 
+/* Tracks which output panel the user last made a mousedown in.
+   Used by sendSelectionToNotes to correctly identify the flash target
+   and title even when both upper and lower panels contain selections. */
+var _lastNonXtermSelSource = null;
+
 function renderDynamicToolTabs(hostIp) {
     /* Check lock BEFORE any DOM change.  If the user is selecting (or has
        selected) text in the upper output area, skip this rebuild entirely.
@@ -1918,6 +1923,59 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch(e) { _dynSelLocked = false; }
     });
 
+    /* Confine text selection to the output panel where the drag started.
+       Prevents the selection escaping to tab buttons, the host list, etc.
+       On mousedown: set user-select:none on <html> (blocks everything) and
+         user-select:text on only the target panel (re-enables it there).
+       On mouseup: restore both so normal page interaction resumes.
+       _confineEl guards against re-entrant calls (e.g. rapid double-click). */
+    var _confineEl = null;
+    function _confineTo(el) {
+        if (!el || _confineEl) return;
+        _confineEl = el;
+        document.documentElement.style.userSelect = 'none';
+        el.style.userSelect = 'text';
+        function _restore() {
+            document.documentElement.style.userSelect = '';
+            if (_confineEl) { _confineEl.style.userSelect = ''; _confineEl = null; }
+            document.removeEventListener('mouseup', _restore);
+        }
+        document.addEventListener('mouseup', _restore);
+    }
+
+    /* Track which output panel the user last clicked in (capture phase so it
+       fires before any focus-change handler can obscure the source).
+       Also confines the drag selection to that panel so it cannot escape to
+       surrounding chrome (tab bar, host list, menu bar, etc.). */
+    document.addEventListener('mousedown', function(e) {
+        var t = e.target;
+        while (t && t !== document.body) {
+            if (t.id === 'plain-output' || t.id === 'process-output-inline') {
+                _lastNonXtermSelSource = 'plain-output';
+                _confineTo($('plain-output'));
+                return;
+            }
+            if (t.id === 'script-output-inline') {
+                _lastNonXtermSelSource = 'script-output-inline';
+                _confineTo($('script-output-inline'));
+                return;
+            }
+            if (t.id === 'tool-output-text') {
+                _lastNonXtermSelSource = 'tool-output-text';
+                _confineTo($('tool-output-text'));
+                return;
+            }
+            if (t.classList && t.classList.contains('tool-output-area')) {
+                _lastNonXtermSelSource = 'dyn-output';
+                _confineTo(t);   /* t is the specific dyn-output-{pid} element */
+                return;
+            }
+            t = t.parentElement;
+        }
+        /* Click outside output panels — clear source so stale value doesn't mislead */
+        _lastNonXtermSelSource = null;
+    }, true /* capture */);
+
     /* Initial render from embedded snapshot */
     try {
         var snap = JSON.parse($('initial-snapshot').textContent);
@@ -1933,6 +1991,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /* Start polling every 1.5 seconds */
     L.pollTimer = setInterval(pollSnapshot, 1500);
+
+    /* Heartbeat — tells the server this browser window is still alive.
+       The server watchdog shuts down this Legion instance automatically when
+       pings stop for 20 s (browser closed, File→Exit in Firefox, crash).
+       5 s interval: short enough to detect close quickly, long enough that a
+       normal page refresh (2–5 s gap) does NOT trigger a shutdown. */
+    function _sendHeartbeat() {
+        postJson('/api/heartbeat', {}).catch(function() {});
+    }
+    _sendHeartbeat();
+    setInterval(_sendHeartbeat, 5000);
 
     /* ════════════════════════════════════════════════
        MODAL WIRING — connect menu buttons to dialogs
@@ -2818,8 +2887,9 @@ document.addEventListener('DOMContentLoaded', function() {
             'ansi-fg-bright-yellow':93,'ansi-fg-bright-blue':94,'ansi-fg-bright-magenta':95,
             'ansi-fg-bright-cyan':96,'ansi-fg-bright-white':97,
             /* match-positive: CSS color:#ff0 (bright yellow) + font-weight:700 (bold)
-               → ANSI bold (1) + bright-yellow foreground (93) */
-            'match-positive':'1;93'
+               + background:rgba(255,255,0,0.25) → ANSI bold (1) + bright-yellow fg (93)
+               + yellow bg (43 → ansi-bg-yellow) */
+            'match-positive':'1;93;43'
         };
 
         var range  = sel.getRangeAt(0);
@@ -2928,46 +2998,65 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* ── 3. Fall back to browser text selection (non-terminal areas) ── */
         if (!text) {
-            /* domSelectionToAnsi walks the cloned selection fragment and
-               reconstructs ANSI codes from ansi-fg-* span class names, so
-               colour is preserved for selections in plain-output / dyn-output-*
-               areas that are rendered with ansiToHtml().  Falls back to
-               plain toString() for uncoloured text. */
-            var _brSel = window.getSelection();
+            /* domSelectionToAnsi walks the live DOM and reconstructs ANSI codes
+               from ansi-fg-* / match-positive span class names so colour is
+               preserved.  Falls back to plain toString() for uncoloured text. */
             text = domSelectionToAnsi();
             if (text) {
+                /* Use _lastNonXtermSelSource (set by mousedown capture listener)
+                   to identify the flash target.  Anchor-node walking is unreliable
+                   when the user has selections in multiple panels because the
+                   anchor reflects where the drag STARTED, not where focus currently
+                   is.  The mousedown timestamp is always correct. */
                 try {
-                    var node = _brSel && _brSel.anchorNode;
-                    while (node && node !== document.body) {
-                        if (node.id === 'script-output-inline') {
-                            var scriptRow = $('host-detail-scripts').querySelector('tr.selected');
-                            var scriptName = scriptRow ? (scriptRow.cells[0]||{}).textContent : '';
-                            var scriptPort = scriptRow ? (scriptRow.cells[1]||{}).textContent : '';
-                            title = 'Scripts - ' + (scriptName || 'Script') + (scriptPort ? ' (Port ' + scriptPort + ')' : '');
-                            sourceEl = $('script-output-inline');
-                            break;
-                        }
-                        if (node.id === 'process-output-inline' || node.id === 'plain-output') {
-                            var procRow2 = $('processes-body').querySelector('tr.selected');
-                            var procName2 = procRow2 ? (procRow2.cells[1]||{}).textContent : '';
-                            title = 'Process ' + (procName2 || String(L.selectedProcessId || ''));
+                    switch (_lastNonXtermSelSource) {
+                        case 'plain-output': {
+                            var _pRow = $('processes-body').querySelector('tr.selected');
+                            var _pName = _pRow ? (_pRow.cells[1]||{}).textContent : '';
+                            title = 'Process ' + (_pName || String(L.selectedProcessId || ''));
                             sourceEl = $('plain-output');
                             break;
                         }
-                        if (node.id === 'tool-output-text') {
-                            var toolHostRow = $('tool-hosts-body').querySelector('tr.selected');
-                            var toolHost = toolHostRow ? (toolHostRow.cells[0]||{}).textContent : '';
-                            title = (L.selectedTool || 'Tool') + (toolHost ? ' - ' + toolHost : '');
+                        case 'script-output-inline': {
+                            var _sRow = $('host-detail-scripts').querySelector('tr.selected');
+                            var _sName = _sRow ? (_sRow.cells[0]||{}).textContent : '';
+                            var _sPort = _sRow ? (_sRow.cells[1]||{}).textContent : '';
+                            title = 'Scripts - ' + (_sName || 'Script') + (_sPort ? ' (Port ' + _sPort + ')' : '');
+                            sourceEl = $('script-output-inline');
+                            break;
+                        }
+                        case 'tool-output-text': {
+                            var _tRow = $('tool-hosts-body').querySelector('tr.selected');
+                            var _tHost = _tRow ? (_tRow.cells[0]||{}).textContent : '';
+                            title = (L.selectedTool || 'Tool') + (_tHost ? ' - ' + _tHost : '');
                             sourceEl = $('tool-output-text');
                             break;
                         }
-                        if (node.classList && node.classList.contains('tool-output-area')) {
-                            var activeTabBtn = $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
-                            title = activeTabBtn ? activeTabBtn.textContent.trim() : 'Tool Output';
-                            sourceEl = node;
+                        case 'dyn-output': {
+                            var _activeTabBtn = $('right-tab-bar') &&
+                                $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
+                            title = _activeTabBtn ? _activeTabBtn.textContent.trim() : 'Tool Output';
+                            /* Find the visible dyn-output-* element in the active tab panel */
+                            var _dynCont = $('dynamic-tabs-container');
+                            var _activePanel = _dynCont &&
+                                _dynCont.querySelector('.tab-content:not([style*="display:none"]) .tool-output-area, .tab-content.active .tool-output-area');
+                            sourceEl = _activePanel || null;
                             break;
                         }
-                        node = node.parentElement;
+                        default: {
+                            /* Fallback: walk anchor node (handles edge cases where
+                               mousedown fired outside a tracked panel) */
+                            var _brSel = window.getSelection();
+                            var _node = _brSel && _brSel.anchorNode;
+                            while (_node && _node !== document.body) {
+                                if (_node.id === 'script-output-inline') { sourceEl = $('script-output-inline'); break; }
+                                if (_node.id === 'process-output-inline' || _node.id === 'plain-output') { sourceEl = $('plain-output'); break; }
+                                if (_node.id === 'tool-output-text') { sourceEl = $('tool-output-text'); break; }
+                                if (_node.classList && _node.classList.contains('tool-output-area')) { sourceEl = _node; break; }
+                                _node = _node.parentElement;
+                            }
+                            break;
+                        }
                     }
                 } catch(e) {}
             }

@@ -34,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.30-flask
-- **Static asset cache:** `?v=34` in `base.html`
+- **Current Flask version:** v10.53-flask
+- **Static asset cache:** `?v=58` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -177,6 +177,11 @@ Called automatically from `start()` on every project open/create:
 - **v10.28**: settings.py stage defaults fixed (PORTS| prefix, stage3 was wrong "Vulners,CVE", stage6 now NSE|vulners); scroll preservation in loadProcessOutput + loadLog; split font size controls (upper/lower panels independent, `legion_upper_font_pt` key, `upper-font-dec`/`upper-font-inc` buttons)
 - **v10.29**: `legion.py --web` opens Firefox automatically (`--no-remote --profile ~/.mozilla/firefox/legion-profile`, runs as SUDO_USER via `sudo -u`, 1.5s Timer delay)
 - **v10.30**: upper-panel scroll position survives tab rebuilds (`_procScrollPos` map, saved before `container.innerHTML=''`, restored in `loadProcessOutput` on fresh elements)
+- **v10.50**: Ctrl+B source tracking — `_lastNonXtermSelSource` (mousedown capture listener) fixes wrong-panel flash when both panels have selections; `match-positive` in `domSelectionToAnsi()` am map → `'1;93;43'` adds yellow background (was foreground-only)
+- **v10.51**: Selection confinement — `_confineTo(el)` sets `user-select:none` on `<html>` + `user-select:text` on target panel during drag; restored on mouseup. Prevents dragging outside output panel boundaries into tab bar / host list / chrome.
+- **v10.52**: Heartbeat watchdog — `/api/heartbeat` (POST, every 5 s from JS); `hb-watchdog` daemon thread fires `killRunningProcesses()` + `os._exit(0)` when gap > `_HB_TIMEOUT` (20 s). Multi-instance safe: each Legion process has its own watchdog. Handles Firefox File→Exit and window close.
+- **v10.53**: `_kill_all_descendants()` in `web_controller.py` — scans `/proc/*/stat` BFS from `os.getpid()` to find every descendant; SIGKILL all of them. Called from `killRunningProcesses()`. Fixes shell=True grandchild orphan problem (nmap, gobuster survive shell death without this).
+- **Test additions**: test_goal2_lower_selection (port 5086), test_goal3_ansi_ctrlb (port 5087), test_goal_selection_confinement (port 5085), test_shutdown_subprocess (ports 5083/5084 — subprocess server for os._exit tests). All goal tests converted from `app.run()` daemon threads to `make_server()` + `httpd.shutdown()`.
 - **Test fixes**: test_08 notes (storeNotes in _ensure_seeded_host); test_09 project name (check snapshot API not DOM title); test_clear retry loop (safe — Clear uses postJson, no window.confirm); NEVER add retry loops to actions that trigger window.confirm() — pending dialog blocks Selenium with UnexpectedAlertPresentException
 
 ---
@@ -284,6 +289,25 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 **Scope:** Move the `#output-font-dec` / `#output-font-inc` buttons in `index.html` to after the Brute tab button in the tab bar. Verify JS references still work (they use IDs, not position).
 
 **Key files:** `app/web/templates/index.html`, `app/web/static/css/legion.css` (button styling may need adjustment)
+
+---
+
+### Backlog #19 — Kill Nmap Subprocesses on Exit
+
+**Problem:** When Legion exits (SIGINT, SIGTERM, or browser close), nmap processes launched during staged scans keep running as orphaned OS processes. They consume CPU/bandwidth, write to temp files nobody is reading, and may interfere with the next Legion session (startup check marks them Crashed but the OS processes are still live).
+
+**Scope:** On shutdown, kill every nmap (and other tool) subprocess that was spawned by this Legion instance. Must not kill nmap processes from other Legion instances running on a different port.
+
+**Implementation:**
+- `WebController` already has `_active_processes` dict (key = processId, value = `Process` object with `._popen`). On shutdown, iterate it and call `proc._popen.kill()` (SIGKILL) or `proc._popen.terminate()` (SIGTERM) for any process whose `._popen` is not None and `.poll()` is None (still running).
+- `killRunningProcesses()` already does per-process kill + `storeProcessKillStatus()` — extend it to also `os.killpg(os.getpgid(proc._popen.pid), signal.SIGTERM)` so child processes of nmap (e.g. NSE scripts) are also killed.
+- Call `killRunningProcesses()` from `_web_shutdown` (SIGINT/SIGTERM handler in `legion.py`) — **but NOT from `/api/shutdown`** (that fires on every browser refresh; see T16/v10.24).
+- Also drain `fastProcessQueue` (already done in `killRunningProcesses()` per v10.24).
+- Use process groups (`os.killpg`) not just the direct PID — nmap spawned with `shell=True` creates a shell child, so `proc._popen.pid` is the shell; the actual nmap binary is a grandchild. `os.killpg` kills the whole group.
+
+**Key constraint:** Only kill processes belonging to THIS instance. Each Legion instance has its own `WebController` with its own `_active_processes` — there is no cross-instance leakage risk as long as we iterate our own dict.
+
+**Key files:** `controller/web_controller.py` (`killRunningProcesses`, `_web_shutdown` signal handler), `legion.py` (`_web_shutdown`).
 
 ---
 
@@ -505,8 +529,10 @@ Raw tool output (nikto, dirbuster, hydra) is noisy — verbose headers, informat
 | 13 | Update legion.conf tool list — retire deprecated tools, add modern equivalents | Med | ✅ Done v10.28 | install_tools.sh + update script; both confs updated |
 | 14 | Taller tabs — increase height of the right-panel tab bar tabs | Low | ❌ Not started | CSS only |
 | 15 | Move font size controls — relocate A+/A- buttons to after the Brute tab | Low | ❌ Not started | index.html + JS |
-| 16 | ANSI colour in Ctrl+B notes — render terminal colour codes in the notes panel | Med | ❌ Not started | xterm.js or CSS ANSI parser in the notes view |
+| 16 | ANSI colour in Ctrl+B notes — render terminal colour codes in the notes panel | Med | ✅ Done v10.50 | domSelectionToAnsi() reconstructs ANSI from span CSS classes; xterm path via xtermSelectionToAnsi() |
 | 17 | ANSI colour in log window — render colour codes in the Log tab output | Med | ❌ Not started | Same ANSI parser approach as #16 |
+| 18 | Sticky processes table header — keep column headers visible during scroll | Low | ❌ Not started | CSS `position: sticky; top: 0` on the `<thead>` or header row |
+| 19 | Kill nmap subprocesses on exit — orphaned nmap scans survive Legion shutdown | Med | ✅ Done v10.53 | _kill_all_descendants() via /proc BFS scan; called from killRunningProcesses() |
 
 ### Backlog #10 — Tool Manager GUI
 Allows adding and removing tool entries (HostActions, PortActions, PortTerminalActions, SchedulerSettings) via a form instead of raw conf editing.
