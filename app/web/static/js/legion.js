@@ -2717,39 +2717,70 @@ document.addEventListener('DOMContentLoaded', function() {
        ANSI codes by walking the cloned selection fragment and reading class names.
        Returns plain text (no escapes) for uncoloured spans. */
     var _ansiClassMap = {
-        'ansi-fg-black':13, 'ansi-fg-red':31, 'ansi-fg-green':32, 'ansi-fg-yellow':33,
+        'ansi-fg-black':30, 'ansi-fg-red':31, 'ansi-fg-green':32, 'ansi-fg-yellow':33,
         'ansi-fg-blue':34, 'ansi-fg-magenta':35, 'ansi-fg-cyan':36, 'ansi-fg-white':37,
         'ansi-fg-bright-black':90, 'ansi-fg-bright-red':91, 'ansi-fg-bright-green':92,
         'ansi-fg-bright-yellow':93, 'ansi-fg-bright-blue':94, 'ansi-fg-bright-magenta':95,
         'ansi-fg-bright-cyan':96, 'ansi-fg-bright-white':97
     };
-    function _walkFragment(node, out) {
-        if (node.nodeType === 3) { /* TEXT_NODE */
-            out.push(node.textContent);
-            return;
-        }
-        if (node.nodeType !== 1) return; /* skip non-element */
-        var cls = node.className || '';
-        var open = '';
-        var classes = cls.split(' ');
-        for (var i = 0; i < classes.length; i++) {
-            var code = _ansiClassMap[classes[i]];
-            if (code) { open = '\x1b[' + code + 'm'; break; }
-        }
-        if (cls.indexOf('ansi-bold') >= 0) open = '\x1b[1m' + open;
-        if (open) out.push(open);
-        node.childNodes.forEach(function(c) { _walkFragment(c, out); });
-        if (open) out.push('\x1b[0m');
-    }
+
+    /* ── DOM selection → ANSI string ──────────────────────────────────────────
+       cloneContents() alone does NOT work: a text node selected WITHIN a coloured
+       span (e.g. <span class="ansi-fg-green">open</span>) appears as a plain
+       orphan text node in the clone — its parent span (which holds the colour
+       class) is not cloned.  Instead we use a TreeWalker to visit every text
+       node that overlaps the selection range, then climb its parent chain to
+       find the nearest ansi-fg-* class and reconstruct the ANSI escape. */
     function domSelectionToAnsi() {
         var sel = window.getSelection();
         if (!sel || !sel.rangeCount || !sel.toString()) return '';
+
+        var range = sel.getRangeAt(0);
         var parts = [];
+
         try {
-            var frag = sel.getRangeAt(0).cloneContents();
-            frag.childNodes.forEach(function(n) { _walkFragment(n, parts); });
+            /* TreeWalker root: the common ancestor element */
+            var root = range.commonAncestorContainer;
+            if (root.nodeType === 3) root = root.parentElement;
+
+            var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+            var node;
+
+            while ((node = walker.nextNode())) {
+                /* Range intersection check using boundary-point comparison.
+                   END_TO_START: compare this node's end to selection's start.
+                   <= 0  →  node ends before or at selection start → skip.
+                   START_TO_END: compare this node's start to selection's end.
+                   >= 0  →  node starts at or after selection end → done.   */
+                var nr = document.createRange();
+                nr.selectNodeContents(node);
+                if (nr.compareBoundaryPoints(Range.END_TO_START, range) <= 0) continue;
+                if (nr.compareBoundaryPoints(Range.START_TO_END, range) >= 0) break;
+
+                var startOff = (node === range.startContainer) ? range.startOffset : 0;
+                var endOff   = (node === range.endContainer)   ? range.endOffset   : node.length;
+                var text     = node.textContent.substring(startOff, endOff);
+
+                if (text) {
+                    /* Climb parent chain looking for the nearest ansi colour class */
+                    var esc = '', bold = false, p = node.parentElement;
+                    while (p && p !== root) {
+                        var classes = (p.className || '').split(' ');
+                        for (var i = 0; i < classes.length; i++) {
+                            var code = _ansiClassMap[classes[i]];
+                            if (code) { esc = '\x1b[' + code + 'm'; break; }
+                            if (classes[i] === 'ansi-bold') bold = true;
+                        }
+                        if (esc) break;
+                        p = p.parentElement;
+                    }
+                    if (bold) esc = '\x1b[1m' + esc;
+                    parts.push(esc ? esc + text + '\x1b[0m' : text);
+                }
+            }
         } catch(e) { return sel.toString(); }
-        return parts.join('');
+
+        return parts.join('') || sel.toString();
     }
 
     /* ── Ctrl+B / Send selection to notes (Qt6: view.py:sendSelectionToNotes) ──
