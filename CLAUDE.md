@@ -229,6 +229,158 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 
 ## Pending Features — Approved Design Decisions
 
+### Backlog #13 — Update legion.conf Tool List
+
+**Goal:** Retire unmaintained tools, fix broken command syntax for tools with new CLI APIs, and add modern tools that leading automated frameworks (AutoRecon, sn1per, reconFTW) use by default. The existing structure (HostActions, PortActions, PortTerminalActions, SchedulerSettings) stays intact — this is purely a conf update.
+
+---
+
+#### Tools to REMOVE (deprecated / unmaintained)
+
+| Key | Reason |
+|-----|--------|
+| `dirbuster` | Last release 2012; Java GUI; replaced by feroxbuster/gobuster/ffuf. Remove from PortActions + SchedulerSettings |
+| `enum4linux` | Replaced by `enum4linux-ng` (Python3 rewrite, actively maintained, better output) |
+| `unicornscan-full-udp` | Barely maintained; nmap `-sU` with `--min-rate` covers this adequately |
+| `cloudfail` | Unmaintained; depends on dead APIs; remove from PortActions |
+| `dnsmap` | Replaced by `dnsrecon` and `amass`; confusingly named for IP targets |
+| `cutycapt-path` in ToolSettings | eyewitness is already used for screenshooter; cutycapt is X11-only and unmaintained |
+| `rdp-sec-check` (Perl `./scripts/rdp-sec-check.pl`) | Replace with `rdp-sec-check` Kali package (`/usr/bin/rdp-sec-check`) |
+| `http-wapiti` / `https-wapiti` | Wapiti v3+ CLI changed completely; old command format breaks silently |
+| `theharvester` | Command syntax changed significantly in v4+; `-n/-c/-t/-h` flags removed |
+
+---
+
+#### Tools to UPDATE (still valid, command syntax changed)
+
+| Key | Old command issue | New command |
+|-----|------------------|-------------|
+| `wpscan` | Missing `--no-update` (network call on every run, slow/fails offline) | `wpscan --url http://[IP]:[PORT] --no-update --enumerate p,u,t` |
+| `sslyze` | `--regular` flag removed in v5+ | `sslyze [IP]:[PORT]` (auto-scans all protocols) |
+| `sslscan` | `--no-failed` still valid; add `--show-certificate` | `sslscan --show-certificate [IP]:[PORT]` |
+| `whatweb` | Still valid; add aggression flag | `whatweb -a 3 [IP]:[PORT] --color=never --log-brief=[OUTPUT].txt` |
+| `theharvester` (if kept) | Old flags `-n -c -t -h` removed | `theHarvester -d [IP] -b all -f [OUTPUT]` |
+| `smtp-user-enum` (EXPN/RCPT/VRFY) | Still valid; add `-v` for output | add `-v` flag |
+| StagedNmapSettings | stage2/stage6 numbering swapped from NSE to vulners (already fixed in v10.18/v10.19) | verify ordering in conf matches CLAUDE.md |
+
+---
+
+#### Tools to ADD (HostActions)
+
+| Key | Command | Service filter | Why |
+|-----|---------|---------------|-----|
+| `masscan-fast` | `masscan [IP] -p1-65535 --rate=1000 --open-only -oG [OUTPUT].txt` | `""` | Top-speed TCP port sweep; pairs with nmap for confirmation |
+| `dnsrecon` | `dnsrecon -d [IP] -a -s -g -b -k -w -z --xml [OUTPUT].xml` | `""` | Replaces dnsmap; covers zone transfer, SRV, bruteforce, Google |
+| `amass-passive` | `amass enum -passive -d [IP] -o [OUTPUT].txt` | `""` | Passive subdomain discovery (OSINT sources only, no active probing) |
+
+---
+
+#### Tools to ADD (PortActions)
+
+**Web / HTTP:**
+| Key | Command | Service filter |
+|-----|---------|---------------|
+| `feroxbuster` | `feroxbuster -u http://[IP]:[PORT] -w /usr/share/wordlists/dirb/big.txt -o [OUTPUT].txt --no-state` | `"http,https,ssl,soap,http-proxy,http-alt,https-alt"` |
+| `feroxbuster-https` | `feroxbuster -u https://[IP]:[PORT] -w /usr/share/wordlists/dirb/big.txt -k -o [OUTPUT].txt --no-state` | `"https,ssl,https-alt"` |
+| `gobuster-dir` | `gobuster dir -u http://[IP]:[PORT] -w /usr/share/wordlists/dirb/common.txt -o [OUTPUT].txt` | `"http,https,ssl,soap,http-proxy,http-alt,https-alt"` |
+| `ffuf-vhosts` | `ffuf -u http://[IP]:[PORT] -H "Host: FUZZ.[IP]" -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt -o [OUTPUT].txt` | `"http,https,ssl"` |
+| `nuclei` | `nuclei -u http://[IP]:[PORT] -o [OUTPUT].txt -silent` | `"http,https,ssl,soap,http-proxy,http-alt,https-alt"` |
+| `nuclei-https` | `nuclei -u https://[IP]:[PORT] -o [OUTPUT].txt -silent` | `"https,ssl,https-alt"` |
+| `testssl` | `testssl --quiet --color 0 [IP]:[PORT] > [OUTPUT].txt 2>&1` | `"https,ssl,https-alt"` |
+
+**SMB / Windows:**
+| Key | Command | Service filter |
+|-----|---------|---------------|
+| `netexec-smb` | `netexec smb [IP] -u '' -p '' --shares 2>&1 \| tee [OUTPUT].txt` | `"netbios-ssn,microsoft-ds"` |
+| `smbmap` | `smbmap -H [IP] -P [PORT] 2>&1 \| tee [OUTPUT].txt` | `"netbios-ssn,microsoft-ds"` |
+| `enum4linux-ng` | `enum4linux-ng -A [IP] 2>&1 \| tee [OUTPUT].txt` | `"netbios-ssn,microsoft-ds"` |
+| `ldapdomaindump` | `ldapdomaindump -u '' -p '' ldap://[IP]:[PORT] -o [OUTPUT]-ldapdump 2>&1` | `"ldap,ldaps"` |
+| `kerbrute-users` | `kerbrute userenum -d DOMAIN --dc [IP] /usr/share/seclists/Usernames/xato-net-10-million-usernames-dup.txt -o [OUTPUT].txt` | `"kerberos,kerberos-sec"` |
+
+**SSH:**
+| Key | Command | Service filter |
+|-----|---------|---------------|
+| `ssh-audit` | `ssh-audit [IP] -p [PORT] > [OUTPUT].txt 2>&1` | `"ssh"` |
+
+**DNS:**
+| Key | Command | Service filter |
+|-----|---------|---------------|
+| `dnsrecon-port` | `dnsrecon -d [IP] -a -z --xml [OUTPUT].xml` | `"domain"` |
+| `dnsenum` | `dnsenum --noreverse -o [OUTPUT].xml [IP]` | `"domain"` |
+
+**Databases (new services):**
+| Key | Command | Service filter |
+|-----|---------|---------------|
+| `redis-info` | `redis-cli -h [IP] -p [PORT] info > [OUTPUT].txt 2>&1` | `"redis"` |
+| `redis-unauth` | `redis-cli -h [IP] -p [PORT] CONFIG GET maxmemory > [OUTPUT].txt 2>&1` | `"redis"` |
+| `mongodump-list` | `mongo [IP]:[PORT] --eval "db.adminCommand({listDatabases:1})" --quiet > [OUTPUT].txt 2>&1` | `"mongod"` |
+
+**WinRM:**
+| Key | Command | Service filter |
+|-----|---------|---------------|
+| `winrm-check` | `netexec winrm [IP] -u administrator -p '' 2>&1 \| tee [OUTPUT].txt` | `"wsman,ms-wbt-server"` |
+
+---
+
+#### PortTerminalActions to ADD
+
+| Key | Command | Service filter |
+|-----|---------|---------------|
+| `evil-winrm` | `[term] evil-winrm -i [IP] -P [PORT]` | `"wsman"` |
+| `netexec-shell` | `[term] netexec smb [IP] -u administrator -p ''` | `"netbios-ssn,microsoft-ds"` |
+| `redis-cli` | `[term] redis-cli -h [IP] -p [PORT]` | `"redis"` |
+| `mongo-shell` | `[term] mongo [IP]:[PORT]` | `"mongod"` |
+
+---
+
+#### SchedulerSettings to ADD (auto-run on service discovery)
+
+| Key | Service | Protocol |
+|-----|---------|----------|
+| `feroxbuster` | `"http,https,ssl"` | tcp |
+| `nuclei` | `"http,https,ssl"` | tcp |
+| `enum4linux-ng` | `microsoft-ds` | tcp |
+| `ssh-audit` | `ssh` | tcp |
+| `netexec-smb` | `microsoft-ds` | tcp |
+
+---
+
+#### Implementation Notes
+
+- **SecLists dependency**: several new commands reference `/usr/share/seclists/` — add install check or use `dirb` wordlists as fallback. On Kali: `apt install seclists`.
+- **netexec vs crackmapexec**: `crackmapexec` was renamed to `netexec` in Kali 2024.1+. Add both keys, detect which is present (`which netexec || which crackmapexec`), or just use `netexec` (Kali default).
+- **nuclei templates**: first run downloads templates to `~/.local/nuclei-templates`; add `--no-update-templates` flag after initial download to avoid network calls during scans.
+- **kerbrute**: requires a domain name, not just an IP — the `DOMAIN` placeholder needs either a legion.conf setting or a prompt; skip adding to SchedulerSettings until domain discovery is wired.
+- **RDP**: existing `rdp-sec-check` Perl script → replace with `rdp-sec-check [IP]:[PORT]` (Kali package at `/usr/bin/rdp-sec-check`).
+- **conf file vs runtime**: changes go to `/root/.local/share/legion/legion.conf` AND to the repo's default conf (if one exists). Use the Backlog #10 Tool Manager GUI when that's built.
+- **Order of implementation**: (1) removals + syntax fixes first (no new deps), (2) web tools (feroxbuster/gobuster/nuclei), (3) SMB tools (netexec/smbmap/enum4linux-ng), (4) SSH audit + SSL (testssl), (5) databases (redis/mongo), (6) SchedulerSettings wiring.
+
+---
+
+### Backlog #12 — Fix Hydra SSH Against Legacy Targets (libssh2 MAC Incompatibility)
+
+**Problem:** Hydra's bundled libssh2 only offers modern MACs (`hmac-sha2-256-etm`, etc.). Targets running OpenSSH ≤ 5.x (e.g. Metasploitable's OpenSSH 4.7) only accept legacy MACs (`hmac-md5`, `hmac-sha1`). Hydra has no flag to configure this — it's compiled into libssh2. Result: Hydra SSH silently fails with `kex error: no match for method mac algo`.
+
+**Scope:**
+- Rebuild Hydra's libssh2 with legacy MAC support enabled, OR
+- Add a fallback SSH brute-force path using `medusa -M ssh` (supports legacy targets) when Hydra SSH fails with a MAC error, OR
+- Allow the brute tab to select between Hydra and Medusa per-service
+
+**Recommended approach (option B — medusa fallback):**
+- Detect `kex error` / MAC negotiation failure in `_capture_output` for SSH Hydra runs
+- Re-queue the same brute job using `medusa -h [IP] -u [user] -P [wordlist] -M ssh` (medusa uses OpenSSH libs, respects system SSH config)
+- Add `medusa-path` to `[ToolSettings]` in legion.conf (default: `/usr/bin/medusa`)
+- Fallback is transparent — same result parsing, same DB storage
+
+**Test coverage needed:**
+- H1.1/H1.2: currently `skipIf(kex error)` — after fix they should pass against Metasploitable SSH
+- Verify medusa is installed: `which medusa` (kali: `apt install medusa`)
+
+**Notes:**
+- OpenSSH CLIENT flags (`-oHostKeyAlgorithms=+ssh-rsa`) do NOT help — Hydra does not use the OpenSSH binary for SSH brute forcing
+- Medusa SSH module uses the system's OpenSSH libraries, which support `+ssh-rsa` and legacy MACs via config
+- FTP (H3) and MySQL (H2) remain reliable Hydra targets and are unaffected
+
 ### LLM Host Analysis (Anthropic Claude) — Two-Phase Pipeline
 - **Model**: `claude-sonnet-4-6` (1M context window) for both phases
 - **API key**: Session-only. Check `ANTHROPIC_API_KEY` env var first; else `window.prompt()`; store in `L.anthropicKey`
@@ -281,6 +433,8 @@ Raw tool output (nikto, dirbuster, hydra) is noisy — verbose headers, informat
 | 9 | Auto per-service NSE scripts after discovery | Med | ❌ Not started | Flask only; after #7 |
 | 10 | Tool manager GUI — add/remove tools from legion.conf | Med | ❌ Not started | Form-based; no direct conf editing |
 | 11 | Settings GUI — change GeneralSettings/BruteSettings/etc in a form | Med | ❌ Not started | Replaces direct legion.conf editing for settings |
+| 12 | Fix Hydra SSH against legacy targets (libssh2 MAC incompatibility) | Med | ❌ Not started | See design below |
+| 13 | Update legion.conf tool list — retire deprecated tools, add modern equivalents | Med | ✅ Done v10.28 | install_tools.sh + update script; both confs updated |
 
 ### Backlog #10 — Tool Manager GUI
 Allows adding and removing tool entries (HostActions, PortActions, PortTerminalActions, SchedulerSettings) via a form instead of raw conf editing.
