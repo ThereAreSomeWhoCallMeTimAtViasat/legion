@@ -2980,10 +2980,16 @@ document.addEventListener('DOMContentLoaded', function() {
     var noteSelBtn = $('action-note-selection');
     if (noteSelBtn) noteSelBtn.addEventListener('click', sendSelectionToNotes);
 
-    /* Capture-phase Ctrl+B: fires BEFORE xterm's element-level keydown handler.
-       xterm clears its internal selection when it processes the key, so by the
-       time the bubble-phase handler runs, getSelection() returns ''.
-       We save it here while it is still set. */
+    /* Capture-phase Ctrl+B.
+       Problem: xterm calls stopPropagation() in its target handler, so the
+       event never reaches our bubble-phase listener and sendSelectionToNotes()
+       is never called when focus is inside the terminal.
+       Solution: handle the xterm case entirely in the capture phase:
+         1. Read the selection before xterm clears it.
+         2. Call sendSelectionToNotes() right here.
+         3. stopPropagation() so xterm never sees the key at all (no \x02 to PTY).
+       When there is no xterm selection the event is left alone and the
+       bubble-phase listener handles it for DOM selections. */
     document.addEventListener('keydown', function(e) {
         if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
             _savedXtermSel = '';
@@ -2996,10 +3002,20 @@ document.addEventListener('DOMContentLoaded', function() {
                     _savedXtermSel = _dynTermState.xterm.getSelection() || '';
                 }
             } catch(e2) {}
-        }
-    }, true /* useCapture — fires before xterm's handler */);
 
-    /* Bubble-phase Ctrl+B: xterm has already processed the key by now. */
+            if (_savedXtermSel) {
+                /* xterm has a selection: handle here, before xterm sees the key */
+                e.preventDefault();
+                e.stopPropagation();
+                sendSelectionToNotes();
+            }
+            /* No xterm selection: fall through to bubble-phase for DOM selections */
+        }
+    }, true /* useCapture */);
+
+    /* Bubble-phase Ctrl+B: handles DOM text selections (plain-output, dyn-output-*).
+       Only reached when the capture phase did NOT stopPropagation()
+       (i.e. no xterm selection was active). */
     document.addEventListener('keydown', function(e) {
         if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
             e.preventDefault();

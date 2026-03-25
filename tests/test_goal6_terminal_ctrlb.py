@@ -2,19 +2,12 @@
 """
 Goal 6: Ctrl+B from interactive terminal copies text to Notes tab.
 
-Key insight from test run: ActionChains.click(xterm_input) before key dispatch
-clears the xterm selection. Fix: dispatch the keydown directly on the xterm
-element (no preceding click) so selection is intact when our capture-phase
-listener saves it.
+Uses ActionChains for Ctrl+B — generates real browser keyboard events
+(isTrusted=true) that go through xterm's actual event handling path,
+the same as a physical keypress.
 
-Steps:
-  1. Open interactive terminal, run coloured command
-  2. xterm.selectAll() — select all terminal content  [CALL A]
-  3. Dispatch Ctrl+B on xterm element (no click) so capture-phase fires first
-  4. notes-text must be non-empty                     [CALL B]
-  5. Notes tab visible — check notes-display
-  6. Click CVE tab
-  7. Click Notes tab back — note must persist         [CALL C]
+Critical detail: focus the xterm input via JS .focus() NOT ActionChains.click().
+A click clears the xterm selection; .focus() does not.
 """
 import os, sys, time, threading, tempfile
 import pytest
@@ -25,6 +18,8 @@ sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -78,7 +73,17 @@ def W(d, t=10):   return WebDriverWait(d, t)
 
 
 def test_goal6_ctrlb_from_interactive_terminal(drv, srv):
-    # ── Select host ──────────────────────────────────────────────────────────
+    """
+    Real keyboard event path:
+      1. xterm.selectAll()            [CALL A — separate JS call]
+      2. .focus() on xterm textarea   [JS, no click, preserves selection]
+      3. ActionChains Ctrl+B          [isTrusted=true, goes through xterm handlers]
+      4. Check _savedXtermSel set     [capture-phase listener must have fired]
+      5. Check notes-text populated   [CALL B — separate JS call, real browser time]
+      6. CVE tab → Notes tab
+      7. Note persists                [CALL C]
+    """
+    # ── Setup ────────────────────────────────────────────────────────────────
     host_row = W(drv).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP}"]')))
     js(drv, 'arguments[0].click()', host_row)
@@ -95,7 +100,7 @@ def test_goal6_ctrlb_from_interactive_terminal(drv, srv):
         data=_j.dumps({'note': ''}).encode(),
         headers={'Content-Type': 'application/json'}, method='POST'))
 
-    # ── Start interactive terminal ────────────────────────────────────────────
+    # ── Start terminal ────────────────────────────────────────────────────────
     resp = _j.loads(urllib.request.urlopen(urllib.request.Request(
         f'{BASE}/api/terminal/start',
         data=_j.dumps({'label': 'goal6-term', 'host_ip': IP,
@@ -106,7 +111,6 @@ def test_goal6_ctrlb_from_interactive_terminal(drv, srv):
 
     time.sleep(1.5)
 
-    # Write coloured command
     urllib.request.urlopen(urllib.request.Request(
         f'{BASE}/api/terminal/{session_id}/input',
         data=_j.dumps({'data': 'echo -e "\\033[32mGREEN_TERM_TEXT\\033[0m"\n'}).encode(),
@@ -115,24 +119,19 @@ def test_goal6_ctrlb_from_interactive_terminal(drv, srv):
 
     buf = _j.loads(urllib.request.urlopen(
         f'{BASE}/api/terminal/{session_id}/output').read()).get('data', '')
-    assert 'GREEN_TERM_TEXT' in buf, f'GREEN_TERM_TEXT not in terminal: {buf[:200]}'
+    assert 'GREEN_TERM_TEXT' in buf, f'Not in terminal: {buf[:200]}'
 
-    # ── Click Interactive process row → xterm renders in page ─────────────────
     def _find_interactive(d):
         for r in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             cells = r.find_elements(By.TAG_NAME, 'td')
             if len(cells) >= 5 and cells[4].text.strip() == 'Interactive':
                 return r
         return False
-    proc_row = W(drv, 10).until(_find_interactive)
-    js(drv, 'arguments[0].click()', proc_row)
+    js(drv, 'arguments[0].click()', W(drv, 10).until(_find_interactive))
     time.sleep(1.5)
 
-    xterm_ready = js(drv, """
-        return typeof _termState !== 'undefined' &&
-               _termState.xterm !== null;
-    """)
-    assert xterm_ready, 'xterm not initialised'
+    assert js(drv, "return typeof _termState!=='undefined' && _termState.xterm!==null"), \
+        'xterm not initialised'
 
     # ── CALL A: select all terminal content ───────────────────────────────────
     sel_text = js(drv, """
@@ -140,62 +139,68 @@ def test_goal6_ctrlb_from_interactive_terminal(drv, srv):
         return _termState.xterm.getSelection() || '';
     """)
     assert sel_text.strip(), 'xterm.selectAll() produced empty selection'
-    print(f'\nxterm selection: {sel_text[:80]!r}')
+    print(f'\nxterm selection ({len(sel_text)} chars): {sel_text[:60]!r}')
 
-    # ── Dispatch Ctrl+B on xterm ELEMENT (no click before it) ─────────────────
-    # Dispatching on the xterm element — not document — ensures the event
-    # travels capture→target→bubble exactly as a physical keypress does.
-    # Our capture-phase listener (useCapture:true on document) fires BEFORE
-    # xterm's target handler and saves the selection in _savedXtermSel.
-    # No preceding click means the selection set by selectAll() is intact.
-    dispatch_result = js(drv, """
-        var xEl = document.querySelector('#terminal-output .xterm-screen')
-                  || document.querySelector('#terminal-output .xterm');
-        if (!xEl) return 'NO_XTERM_EL';
-        xEl.dispatchEvent(new KeyboardEvent('keydown',
-            {key:'b', ctrlKey:true, bubbles:true, cancelable:true}));
-        return 'OK';
-    """)
-    print(f'dispatch: {dispatch_result!r}')
+    # ── Focus xterm via JS (NOT click — click clears the selection) ───────────
+    xterm_textarea = None
+    for sel in ['#terminal-output .xterm-helper-textarea',
+                '#terminal-output textarea']:
+        try:
+            xterm_textarea = drv.find_element(By.CSS_SELECTOR, sel)
+            break
+        except Exception:
+            pass
+    assert xterm_textarea, 'xterm-helper-textarea not found'
+
+    # JS .focus() does not send mouse events — selection stays intact
+    js(drv, 'arguments[0].focus()', xterm_textarea)
+    time.sleep(0.1)
+
+    # Confirm selection still present after focus (not cleared by click)
+    sel_after_focus = js(drv, "return _termState.xterm.getSelection() || ''")
+    assert sel_after_focus.strip(), \
+        f'Selection cleared by .focus() — got: {sel_after_focus!r}'
+    print(f'Selection after .focus(): still set ✓')
+
+    # ── ActionChains Ctrl+B — isTrusted=true, real browser keyboard events ────
+    # Goes through: document capture (our listener) → xterm handler → document bubble
+    ActionChains(drv).key_down(Keys.CONTROL).send_keys('b') \
+                     .key_up(Keys.CONTROL).perform()
     time.sleep(1.0)
 
-    saved = js(drv, "return typeof _savedXtermSel !== 'undefined' ? (_savedXtermSel || 'EMPTY_STR') : 'UNDEFINED'")
-    print(f'_savedXtermSel: {saved!r}')
+    saved = js(drv, "return typeof _savedXtermSel!=='undefined' ? (_savedXtermSel||'EMPTY') : 'UNDEFINED'")
+    print(f'_savedXtermSel: {saved[:60]!r}')
 
-    # ── CALL B: notes-text must be non-empty ──────────────────────────────────
+    # ── CALL B ────────────────────────────────────────────────────────────────
     notes_raw = js(drv, "return document.getElementById('notes-text').value") or ''
-    print(f'notes-text: {notes_raw[:120]!r}')
+    print(f'notes-text ({len(notes_raw)} chars): {notes_raw[:80]!r}')
 
     assert notes_raw.strip(), (
-        f'GOAL 6 FAILED: notes-text empty after Ctrl+B.\n'
-        f'  xterm sel was: {sel_text[:80]!r}\n'
-        f'  _savedXtermSel: {saved!r}\n'
-        f'  dispatch: {dispatch_result!r}')
+        f'GOAL 6 FAILED: notes empty after real Ctrl+B.\n'
+        f'  xterm sel:       {sel_text[:60]!r}\n'
+        f'  after .focus():  {sel_after_focus[:60]!r}\n'
+        f'  _savedXtermSel:  {saved[:60]!r}')
 
-    # ── Show Notes tab and verify content ─────────────────────────────────────
+    # ── Notes tab → check display ─────────────────────────────────────────────
     notes_btn = W(drv).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, '#right-tab-bar [data-tab="notes-right"]')))
     js(drv, 'arguments[0].click()', notes_btn)
     time.sleep(0.5)
     html1 = js(drv, "return document.getElementById('notes-display').innerHTML") or ''
     assert html1.strip() not in ('', '\u200b'), f'notes-display empty: {html1[:200]}'
-    print('Notes present after Ctrl+B.')
+    print('Note visible in Notes tab ✓')
 
-    # ── Click CVE tab ──────────────────────────────────────────────────────────
+    # ── CVE tab → Notes tab (persistence) ─────────────────────────────────────
     cve_btn = W(drv).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, '#right-tab-bar [data-tab="cves-right"]')))
     js(drv, 'arguments[0].click()', cve_btn)
     time.sleep(2)
-
-    # ── CALL C: click Notes tab back — note must persist ──────────────────────
     js(drv, 'arguments[0].click()', notes_btn)
     time.sleep(0.5)
+
     html2 = js(drv, "return document.getElementById('notes-display').innerHTML") or ''
-    print(f'notes-display after CVE->Notes: {html2[:120]!r}')
-
     assert html2.strip() not in ('', '\u200b'), (
-        f'GOAL 6 FAILED: note lost after CVE->Notes navigation.\n'
-        f'  Before nav: {html1[:200]}\n'
-        f'  After nav:  {html2[:200]}')
+        f'GOAL 6 FAILED: note lost after CVE→Notes.\n'
+        f'  Before: {html1[:200]}\n  After: {html2[:200]}')
 
-    print('\nGOAL 6 PASS: note present and persistent.')
+    print(f'\nGOAL 6 PASS: note present and persistent.')
