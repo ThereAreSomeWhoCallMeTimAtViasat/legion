@@ -1105,6 +1105,11 @@ function loadHostDetail(hostId) {
 }
 
 /* ── Dynamic tool output tabs (view.py:restoreToolTabsForHost) ── */
+/* Per-process scroll position memory: 'bottom' | integer scrollTop.
+   Survives the container.innerHTML='' wipe in renderDynamicToolTabs so the
+   user's scroll position is honoured on every 1.5 s poll cycle. */
+var _procScrollPos = {};
+
 function renderDynamicToolTabs(hostIp) {
     var bar = $('right-tab-bar');
     var container = $('dynamic-tabs-container');
@@ -1112,6 +1117,14 @@ function renderDynamicToolTabs(hostIp) {
     /* Remember which dynamic tab was active before we wipe everything */
     var activeBtn = bar.querySelector('.dynamic-tab.active');
     var prevActiveTabId = activeBtn ? activeBtn.dataset.tab : null;
+
+    /* Save scroll positions of all output elements BEFORE wiping.
+       container.innerHTML='' destroys the DOM nodes and their scrollTop. */
+    container.querySelectorAll('[id^="dyn-output-"]').forEach(function(el) {
+        var pid = el.id.replace('dyn-output-', '');
+        var gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+        _procScrollPos[pid] = (gap < 40) ? 'bottom' : el.scrollTop;
+    });
 
     /* Remove old dynamic tabs */
     bar.querySelectorAll('.dynamic-tab').forEach(function(b) { b.remove(); });
@@ -1154,12 +1167,25 @@ function renderDynamicToolTabs(hostIp) {
 /* ── Load process output inline (view.py tool output display) ── */
 /* Qt6: updateTabHighlight → QLabel 'Matches: ...' yellow banner above output */
 function loadProcessOutput(processId, targetEl) {
-    /* Capture scroll position BEFORE the fetch so we know if the user had
-       scrolled up. A fresh/empty element (scrollHeight ≈ clientHeight, scrollTop=0)
-       evaluates as atBottom=true, preserving auto-follow on first load and after
-       tab rebuilds. Checking after innerHTML would see scrollTop=0 on a newly-
-       populated element and incorrectly conclude the user is at the top. */
-    var atBottom = targetEl.scrollHeight - targetEl.scrollTop - targetEl.clientHeight < 40;
+    /* Determine scroll intent before the async fetch.
+       Two cases:
+       A) Element has real content (scrollHeight > clientHeight): read and save
+          the actual scroll position into _procScrollPos.
+       B) Element is empty/fresh (just rebuilt by renderDynamicToolTabs):
+          _procScrollPos[processId] holds the position from before the wipe.
+          Use that instead of trusting scrollTop=0 on a brand-new empty node,
+          which would incorrectly read as atBottom=true every time.       */
+    var _hasContent = targetEl.scrollHeight > targetEl.clientHeight;
+    var _saved = _procScrollPos[processId];
+    var atBottom;
+    if (_hasContent) {
+        atBottom = targetEl.scrollHeight - targetEl.scrollTop - targetEl.clientHeight < 40;
+        _procScrollPos[processId] = atBottom ? 'bottom' : targetEl.scrollTop;
+    } else if (_saved !== undefined) {
+        atBottom = (_saved === 'bottom');
+    } else {
+        atBottom = true;   /* first load — default to follow */
+    }
     fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
         var text = data.output_chunk || data.output || '';
         /* Prepend match banner when process has match hits (Qt6: yellow QLabel at top) */
@@ -1184,9 +1210,12 @@ function loadProcessOutput(processId, targetEl) {
             }
             targetEl.innerHTML = html;
         }
-        /* Only auto-scroll if the user was already at (or near) the bottom. */
+        /* Restore scroll position after the innerHTML reflow. */
         if (atBottom) {
             setTimeout(function() { targetEl.scrollTop = targetEl.scrollHeight; }, 0);
+        } else if (typeof _saved === 'number') {
+            /* Restore the exact pixel offset the user was at before the tab rebuild. */
+            setTimeout(function() { targetEl.scrollTop = _saved; }, 0);
         }
     }).catch(function() {
         targetEl.textContent = 'Error loading output';
