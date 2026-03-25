@@ -1123,6 +1123,10 @@ var _procScrollPos = {};
    before any DOM mutation so selections survive refreshes and live output. */
 var _dynSelLocked = false;
 
+/* Xterm selection saved in the capture phase of Ctrl+B, before xterm's
+   element-level keydown handler fires and clears the internal selection. */
+var _savedXtermSel = '';
+
 function renderDynamicToolTabs(hostIp) {
     /* Check lock BEFORE any DOM change.  If the user is selecting (or has
        selected) text in the upper output area, skip this rebuild entirely.
@@ -2862,25 +2866,43 @@ document.addEventListener('DOMContentLoaded', function() {
         var title = 'Output';
         var sourceEl = null;
 
-        /* ── 1. Check lower-panel xterm (Interactive processes) ── */
-        if (!text && _termState.xterm && typeof _termState.xterm.getSelection === 'function') {
-            var xtSel = _termState.xterm.getSelection();
-            if (xtSel) {
-                text = xtSel;
+        /* ── 1 & 2. Xterm selection (lower or upper panel) ──────────────────
+           _savedXtermSel was captured in the capture-phase listener BEFORE
+           xterm's element-level keydown handler cleared the selection.
+           We use it here (bubble phase) when it is available. */
+        if (!text && _savedXtermSel) {
+            text = _savedXtermSel;
+            /* Determine which terminal it came from for the title */
+            if (_termState.xterm) {
                 var procRow = $('processes-body').querySelector('tr.selected');
                 var procLabel = procRow ? (procRow.cells[1]||{}).textContent.trim() : '';
                 title = 'Terminal' + (procLabel ? ' - ' + procLabel : '');
                 sourceEl = $('terminal-output');
+            } else {
+                var dynTabBtn = $('right-tab-bar') && $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
+                title = 'Terminal - ' + (dynTabBtn ? dynTabBtn.textContent.trim() : 'Tab');
+                sourceEl = _dynTermState.containerId ? $(_dynTermState.containerId) : null;
             }
         }
 
-        /* ── 2. Check upper-panel dynamic xterm (dynamic tool tabs) ── */
+        /* Fallback: re-read getSelection() in case capture phase didn't save
+           (e.g. button click rather than keyboard shortcut). */
+        if (!text && _termState.xterm && typeof _termState.xterm.getSelection === 'function') {
+            var xtSel = _termState.xterm.getSelection();
+            if (xtSel) {
+                text = xtSel;
+                var procRow2 = $('processes-body').querySelector('tr.selected');
+                var procLabel2 = procRow2 ? (procRow2.cells[1]||{}).textContent.trim() : '';
+                title = 'Terminal' + (procLabel2 ? ' - ' + procLabel2 : '');
+                sourceEl = $('terminal-output');
+            }
+        }
         if (!text && _dynTermState.xterm && typeof _dynTermState.xterm.getSelection === 'function') {
             var dynSel = _dynTermState.xterm.getSelection();
             if (dynSel) {
                 text = dynSel;
-                var dynTabBtn = $('right-tab-bar') && $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
-                title = 'Terminal - ' + (dynTabBtn ? dynTabBtn.textContent.trim() : 'Tab');
+                var dynTabBtn2 = $('right-tab-bar') && $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
+                title = 'Terminal - ' + (dynTabBtn2 ? dynTabBtn2.textContent.trim() : 'Tab');
                 sourceEl = _dynTermState.containerId ? $(_dynTermState.containerId) : null;
             }
         }
@@ -2957,6 +2979,27 @@ document.addEventListener('DOMContentLoaded', function() {
 
     var noteSelBtn = $('action-note-selection');
     if (noteSelBtn) noteSelBtn.addEventListener('click', sendSelectionToNotes);
+
+    /* Capture-phase Ctrl+B: fires BEFORE xterm's element-level keydown handler.
+       xterm clears its internal selection when it processes the key, so by the
+       time the bubble-phase handler runs, getSelection() returns ''.
+       We save it here while it is still set. */
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+            _savedXtermSel = '';
+            try {
+                if (_termState.xterm && typeof _termState.xterm.getSelection === 'function') {
+                    _savedXtermSel = _termState.xterm.getSelection() || '';
+                }
+                if (!_savedXtermSel && _dynTermState.xterm &&
+                        typeof _dynTermState.xterm.getSelection === 'function') {
+                    _savedXtermSel = _dynTermState.xterm.getSelection() || '';
+                }
+            } catch(e2) {}
+        }
+    }, true /* useCapture — fires before xterm's handler */);
+
+    /* Bubble-phase Ctrl+B: xterm has already processed the key by now. */
     document.addEventListener('keydown', function(e) {
         if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
             e.preventDefault();
