@@ -358,6 +358,27 @@ if __name__ == "__main__":
                     except Exception:
                         pass
 
+            # Write user.js on every launch — Firefox reads it at startup and
+            # it overrides prefs.js, so session-restore is always suppressed
+            # even if Firefox previously crashed and wrote recovery state.
+            _userjs = _os.path.join(_profile, 'user.js')
+            _userjs_content = (
+                '// Legion profile — managed automatically, do not edit\n'
+                'user_pref("browser.sessionstore.resume_from_crash", false);\n'
+                'user_pref("browser.sessionstore.resume_session_once", false);\n'
+                'user_pref("browser.startup.page", 0);\n'  # blank page, not "restore"
+                'user_pref("browser.shell.checkDefaultBrowser", false);\n'
+            )
+            try:
+                with open(_userjs, 'w') as _f:
+                    _f.write(_userjs_content)
+                if _sudo_user:
+                    import pwd as _pwd2
+                    _pi2 = _pwd2.getpwnam(_sudo_user)
+                    _os.chown(_userjs, _pi2.pw_uid, _pi2.pw_gid)
+            except Exception:
+                pass
+
             try:
                 _cmd = ['firefox', '--no-remote',
                         '--profile', _profile,
