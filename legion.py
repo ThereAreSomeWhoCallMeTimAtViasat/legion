@@ -335,8 +335,19 @@ if __name__ == "__main__":
         def _open_browser():
             try:
                 import subprocess as _sp
-                _sp.Popen(['firefox', '--new-window', 'http://127.0.0.1:5000'],
-                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                _url = 'http://127.0.0.1:5000'
+                _env = _os.environ.copy()
+                # sudo strips XAUTHORITY; restore it from the invoking user's home
+                # so Firefox can authenticate to the X server.
+                _sudo_user = _env.get('SUDO_USER', '')
+                if _sudo_user:
+                    _xauth = f'/home/{_sudo_user}/.Xauthority'
+                    if _os.path.isfile(_xauth):
+                        _env['XAUTHORITY'] = _xauth
+                if not _env.get('DISPLAY'):
+                    _env['DISPLAY'] = ':0'
+                _sp.Popen(['firefox', '--new-window', _url],
+                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, env=_env)
             except Exception as _be:
                 print(f"[Legion] Could not open Firefox automatically: {_be}")
         import threading as _threading
