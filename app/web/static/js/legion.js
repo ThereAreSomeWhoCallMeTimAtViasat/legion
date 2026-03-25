@@ -2425,10 +2425,11 @@ document.addEventListener('DOMContentLoaded', function() {
     var notesDisp = $('notes-display');
     var notesTa   = $('notes-text');
     /* Click display div → switch to textarea for editing */
-    if (notesDisp) notesDisp.addEventListener('click', function() {
-        /* Use the textarea's existing value (which holds raw ANSI codes),
-           NOT notesDisp.innerText which strips all HTML tags and loses colour.
-           The textarea value is always kept in sync with the raw note text. */
+    /* Double-click to edit: single click just navigates/reads the notes.
+       Previously single-click switched to the textarea which showed raw
+       ANSI escape codes (\x1b[32m...) — a jarring visual transition.
+       Double-click is the intentional "I want to edit" gesture. */
+    if (notesDisp) notesDisp.addEventListener('dblclick', function() {
         _showNotesEdit(notesTa ? notesTa.value : notesDisp.innerText);
     });
     /* Textarea blur → save to the host that was being edited (_noteHostId),
@@ -2959,8 +2960,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (!text) return;
 
-        /* Flash source area orange (Qt6: viewport orange 200ms) */
-        if (sourceEl) {
+        /* Flash the Notes tab button orange — always visible regardless of
+           what the source element is.  Flashing sourceEl directly fails for
+           xterm terminals because xterm renders with an opaque background on
+           top of its container div, hiding the colour change. */
+        var _notesTabBtn = $('right-tab-bar') &&
+            $('right-tab-bar').querySelector('[data-tab="notes-right"]');
+        if (_notesTabBtn) {
+            var _origBtnBg = _notesTabBtn.style.background;
+            _notesTabBtn.style.background = 'rgba(255,165,0,0.6)';
+            setTimeout(function() { _notesTabBtn.style.background = _origBtnBg; }, 400);
+        }
+        /* Also flash the source element when it is a plain DOM area
+           (not an xterm terminal where the flash would be invisible). */
+        if (sourceEl && sourceEl.id !== 'terminal-output') {
             var origBg = sourceEl.style.background;
             sourceEl.style.background = 'rgba(255,165,0,0.35)';
             setTimeout(function() { sourceEl.style.background = origBg; }, 200);
