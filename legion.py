@@ -337,15 +337,27 @@ if __name__ == "__main__":
             _url = 'http://127.0.0.1:5000'
             _env = _os.environ.copy()
             _sudo_user = _env.get('SUDO_USER', '')
-            _display    = _env.get('DISPLAY', '')
-            _xauth      = _env.get('XAUTHORITY', '')
-            print(f"[Legion] Browser: SUDO_USER={_sudo_user!r} DISPLAY={_display!r} XAUTHORITY={_xauth!r}")
+            _display   = _env.get('DISPLAY', ':0')
+            _xauth     = _env.get('XAUTHORITY',
+                                  f'/home/{_sudo_user}/.Xauthority' if _sudo_user else '')
             try:
-                _sp.Popen(['firefox', '--new-window', _url],
-                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, env=_env)
-                print("[Legion] Browser: firefox launched")
+                if _sudo_user:
+                    # Running under sudo: launch Firefox as the original user so
+                    # it can authenticate to their X session (root cannot use the
+                    # kali user's Xauthority cookie directly).
+                    _sp.Popen(
+                        ['sudo', '-u', _sudo_user,
+                         'env',
+                         f'DISPLAY={_display}',
+                         f'XAUTHORITY={_xauth}',
+                         'firefox', '--new-window', _url],
+                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL
+                    )
+                else:
+                    _sp.Popen(['firefox', '--new-window', _url],
+                              stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, env=_env)
             except Exception as _be:
-                print(f"[Legion] Browser: launch failed — {_be}")
+                print(f"[Legion] Could not open Firefox automatically: {_be}")
         import threading as _threading
         _threading.Timer(1.5, _open_browser).start()
 
