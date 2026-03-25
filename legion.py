@@ -336,7 +336,7 @@ if __name__ == "__main__":
             try:
                 import subprocess as _sp
                 _sp.Popen(['firefox', '--new-window', 'http://127.0.0.1:5000'],
-                          stdout=_os.devnull, stderr=_os.devnull)
+                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
             except Exception as _be:
                 print(f"[Legion] Could not open Firefox automatically: {_be}")
         import threading as _threading
