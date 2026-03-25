@@ -2656,6 +2656,10 @@ document.addEventListener('DOMContentLoaded', function() {
                      : (pos.end      !== undefined ? pos.end.x : undefined);
         if (startRow === undefined) return xterm.getSelection() || '';
 
+        /* Wrap buffer access in try/catch — an unhandled exception here would
+           propagate through sendSelectionToNotes (no outer try/catch) and abort
+           before the DOM-selection branch, so nothing would be copied at all. */
+        try {
         var buf = xterm.buffer.active;
         var result = '';
         var prevEsc = '';   /* last escape written — skip if unchanged */
@@ -2703,6 +2707,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (prevEsc) result += '\x1b[0m';
         return result || (xterm.getSelection() || '');
+        } catch(e) { return xterm.getSelection() || ''; }
     }
 
     /* ── DOM selection → ANSI string ────────────────────────────────────────────
@@ -2789,10 +2794,11 @@ document.addEventListener('DOMContentLoaded', function() {
                colour is preserved for selections in plain-output / dyn-output-*
                areas that are rendered with ansiToHtml().  Falls back to
                plain toString() for uncoloured text. */
+            var _brSel = window.getSelection();
             text = domSelectionToAnsi();
             if (text) {
                 try {
-                    var node = sel.anchorNode;
+                    var node = _brSel && _brSel.anchorNode;
                     while (node && node !== document.body) {
                         if (node.id === 'script-output-inline') {
                             var scriptRow = $('host-detail-scripts').querySelector('tr.selected');
