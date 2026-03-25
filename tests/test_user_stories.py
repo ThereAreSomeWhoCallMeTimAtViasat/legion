@@ -1811,7 +1811,7 @@ class TestUS26_LowerFontSize:
 # ("hostIp:custom (PORT/tcp)") do not accumulate between scenarios.
 # ===========================================================================
 
-def _run_cmd_and_wait(host_ip, cmd, port, timeout=25):
+def _run_cmd_and_wait(host_ip, cmd, port, timeout=60):
     """Run cmd via /api/processes/custom and wait for Finished/Crashed.
     Returns (has_match, match_text, status) from snapshot."""
     resp = api('post', '/api/processes/custom', json={

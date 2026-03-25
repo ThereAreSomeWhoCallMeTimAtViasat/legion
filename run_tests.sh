@@ -4,12 +4,14 @@
 # Usage:
 #   sudo bash run_tests.sh [OPTIONS] [VM_IP]
 #
-#   (no args)                  offline: unit + selenium offline
+#   (no args)                  offline: unit + selenium + user-stories
 #   --unit                     unit / API tests only
 #   --selenium                 selenium offline suites only
-#   --offline                  unit + selenium offline (same as no args)
-#   --live   192.168.85.11     live terminal + live selenium only
+#   --stories                  user-story tests only (ports 5085/5086)
+#   --offline                  unit + selenium + user-stories (same as no args)
+#   --live   192.168.85.11     live terminal + live selenium + live user-stories
 #   --all    192.168.85.11     everything
+#   --no-report                skip HTML report generation (default: generate)
 #   192.168.85.11              offline + live (bare IP)
 
 set -uo pipefail
@@ -19,37 +21,40 @@ GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[1;33m'
 CYAN=$'\033[0;36m';  BOLD=$'\033[1m';  DIM=$'\033[2m'; NC=$'\033[0m'
 
 # ── Parse arguments ────────────────────────────────────────────────────────────
-RUN_UNIT=false; RUN_SELENIUM=false; RUN_LIVE=false; LIVE_TARGET=""
+RUN_UNIT=false; RUN_SELENIUM=false; RUN_LIVE=false; RUN_STORIES=false
+LIVE_TARGET=""; GEN_REPORTS=true
 
 if [[ $# -eq 0 ]]; then
-    RUN_UNIT=true; RUN_SELENIUM=true
+    RUN_UNIT=true; RUN_SELENIUM=true; RUN_STORIES=true
 else
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --unit)     RUN_UNIT=true ;;
-            --selenium) RUN_SELENIUM=true ;;
-            --offline)  RUN_UNIT=true; RUN_SELENIUM=true ;;
+            --unit)      RUN_UNIT=true ;;
+            --selenium)  RUN_SELENIUM=true ;;
+            --stories)   RUN_STORIES=true ;;
+            --no-report) GEN_REPORTS=false ;;
+            --offline)   RUN_UNIT=true; RUN_SELENIUM=true; RUN_STORIES=true ;;
             --live)
                 RUN_LIVE=true; shift
                 LIVE_TARGET="${1:-${LEGION_TEST_TARGET:-}}"
                 [[ -z "$LIVE_TARGET" ]] && { echo "ERROR: --live requires a VM IP" >&2; exit 1; }
                 ;;
             --all)
-                RUN_UNIT=true; RUN_SELENIUM=true; RUN_LIVE=true; shift
+                RUN_UNIT=true; RUN_SELENIUM=true; RUN_STORIES=true; RUN_LIVE=true; shift
                 LIVE_TARGET="${1:-${LEGION_TEST_TARGET:-}}"
                 [[ -z "$LIVE_TARGET" ]] && { echo "ERROR: --all requires a VM IP" >&2; exit 1; }
                 ;;
             -*)
                 echo "Unknown option: $1" >&2
-                echo "Usage: sudo bash run_tests.sh [--unit|--selenium|--offline|--live IP|--all IP] [IP]" >&2
+                echo "Usage: sudo bash run_tests.sh [--unit|--selenium|--stories|--offline|--live IP|--all IP] [--no-report] [IP]" >&2
                 exit 1 ;;
             *)  # bare IP
-                LIVE_TARGET="$1"; RUN_UNIT=true; RUN_SELENIUM=true; RUN_LIVE=true ;;
+                LIVE_TARGET="$1"; RUN_UNIT=true; RUN_SELENIUM=true; RUN_STORIES=true; RUN_LIVE=true ;;
         esac
         shift
     done
 fi
-$RUN_UNIT || $RUN_SELENIUM || $RUN_LIVE || { RUN_UNIT=true; RUN_SELENIUM=true; }
+$RUN_UNIT || $RUN_SELENIUM || $RUN_LIVE || $RUN_STORIES || { RUN_UNIT=true; RUN_SELENIUM=true; RUN_STORIES=true; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -81,6 +86,10 @@ _count_suites() {
     $RUN_LIVE     && n=$(( n + 1 ))   # Hydra live (SSH + MySQL)
     $RUN_SELENIUM && n=$(( n + 5 ))
     $RUN_LIVE     && n=$(( n + 1 ))   # live scan
+    if $RUN_STORIES; then
+        n=$(( n + 2 ))                # user_stories: match-first + everything-else
+        $RUN_LIVE && n=$(( n + 1 ))   # user_stories live (US-09/39)
+    fi
     echo $n
 }
 SUITE_TOTAL=$(_count_suites)
@@ -119,6 +128,7 @@ spinner_stop() {
 cleanup() {
     spinner_stop
     echo -e "\n${CYAN}  Cleaning up...${NC}"
+    _us_stop_servers
     pkill -f "legion.py --web" 2>/dev/null || true
     pkill -f "nmap"            2>/dev/null || true
     pkill -f "eyewitness"      2>/dev/null || true
@@ -153,6 +163,148 @@ free_port() {
     sleep 0.3
 }
 
+# ── User-story server management ───────────────────────────────────────────────
+US_PORT_A=5085   # primary user-story server
+US_PORT_B=5086   # second instance (US-55 two-instance isolation)
+US_PID_A=""
+US_PID_B=""
+US_HB_PID=""     # heartbeat keeper PID
+
+_us_start_servers() {
+    echo -e "  Starting user-story servers on :${US_PORT_A} and :${US_PORT_B}..."
+    free_port "$US_PORT_A"
+    free_port "$US_PORT_B"
+
+    python3 legion.py --web --port "$US_PORT_A" > /tmp/legion-us-a.log 2>&1 &
+    US_PID_A=$!
+    python3 legion.py --web --port "$US_PORT_B" > /tmp/legion-us-b.log 2>&1 &
+    US_PID_B=$!
+
+    # Wait for both to bind (up to 15 s)
+    local waited=0 ok_a="" ok_b=""
+    while [[ $waited -lt 15 ]]; do
+        sleep 1; waited=$(( waited + 1 ))
+        ok_a=$(curl -s --max-time 2 "http://127.0.0.1:${US_PORT_A}/api/snapshot" \
+               | python3 -c "import sys,json; json.load(sys.stdin); print('ok')" 2>/dev/null || true)
+        ok_b=$(curl -s --max-time 2 "http://127.0.0.1:${US_PORT_B}/api/snapshot" \
+               | python3 -c "import sys,json; json.load(sys.stdin); print('ok')" 2>/dev/null || true)
+        [[ "$ok_a" == "ok" && "$ok_b" == "ok" ]] && break
+    done
+    [[ "$ok_a" != "ok" ]] && echo "  ${YELLOW}WARNING: :${US_PORT_A} did not start in time${NC}" >&2
+    [[ "$ok_b" != "ok" ]] && echo "  ${YELLOW}WARNING: :${US_PORT_B} did not start in time${NC}" >&2
+
+    # Seed 5085 with a test host
+    python3 - <<'PYEOF' 2>/dev/null
+import requests, tempfile, os
+xml = '''<?xml version="1.0"?>
+<nmaprun>
+  <host><status state="up"/>
+    <address addr="10.10.10.1" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="22"><state state="open"/><service name="ssh"/></port>
+      <port protocol="tcp" portid="80"><state state="open"/><service name="http"/></port>
+    </ports>
+  </host>
+</nmaprun>'''
+with tempfile.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as f:
+    f.write(xml); path = f.name
+try:
+    requests.post('http://127.0.0.1:5085/api/nmap/import-xml',
+                  json={'path': path}, timeout=15)
+finally:
+    os.unlink(path)
+PYEOF
+
+    # Heartbeat keeper — pings both servers every 15 s so the 20 s watchdog
+    # never fires between consecutive pytest runs
+    ( while true; do
+        curl -s -X POST "http://127.0.0.1:${US_PORT_A}/api/heartbeat" \
+             -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+        curl -s -X POST "http://127.0.0.1:${US_PORT_B}/api/heartbeat" \
+             -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+        sleep 15
+    done ) &
+    US_HB_PID=$!
+    echo -e "  ${GREEN}✓${NC} :${US_PORT_A} and :${US_PORT_B} ready (heartbeat PID $US_HB_PID)"
+}
+
+_us_stop_servers() {
+    [[ -n "$US_HB_PID" ]] && kill "$US_HB_PID" 2>/dev/null || true
+    [[ -n "$US_PID_A"  ]] && kill "$US_PID_A"  2>/dev/null || true
+    [[ -n "$US_PID_B"  ]] && kill "$US_PID_B"  2>/dev/null || true
+    US_PID_A=""; US_PID_B=""; US_HB_PID=""
+}
+
+# ── HTML report generation ──────────────────────────────────────────────────────
+_gen_reports() {
+    local live_target="${1:-}"
+    local report_dir="testreport"
+    mkdir -p "$report_dir"
+    echo -e "\n  ${CYAN}Generating HTML test reports → ${report_dir}/${NC}"
+    echo -e "  ${DIM}(screenshots captured for every step)${NC}"
+
+    # Offline reports — no live target needed
+    local offline_scripts=(
+        tests/generate_report_US04.py
+        tests/generate_report_US03.py
+        tests/generate_report_US02.py
+        tests/generate_report_US25.py
+        tests/generate_report_US26.py
+        tests/generate_report_US40.py
+        tests/generate_report_US41.py
+        tests/generate_report_US42.py
+        tests/generate_report_US44_45_46.py
+        tests/generate_report_US31.py
+        tests/generate_report_US54.py
+        tests/generate_report_US16.py
+        tests/generate_report_US18.py
+        tests/generate_report_US55.py
+        tests/generate_report_US32.py
+    )
+
+    local failed_reports=0
+    for script in "${offline_scripts[@]}"; do
+        [[ -f "$script" ]] || continue
+        local us; us=$(basename "$script" .py | sed 's/generate_report_//')
+        printf "    %-32s " "$us"
+        local out; out=$(python3 "$script" --port "$US_PORT_A" \
+                         ${US_PORT_B:+--port-b "$US_PORT_B"} 2>&1)
+        if [[ $? -eq 0 ]]; then
+            local html; html=$(echo "$out" | grep "^Report:" | tail -1 | awk '{print $2}')
+            printf "${GREEN}✓${NC} %s\n" "${html##*/}"
+        else
+            printf "${RED}✗ FAILED${NC}\n"
+            echo "$out" | tail -3 | sed 's/^/         /'
+            failed_reports=$(( failed_reports + 1 ))
+        fi
+    done
+
+    # Live-only reports — US-09 (nmap %) and US-39 (screenshot) need a real target
+    if [[ -n "$live_target" ]]; then
+        for script in tests/generate_report_US09.py tests/generate_report_US39.py; do
+            [[ -f "$script" ]] || continue
+            local us; us=$(basename "$script" .py | sed 's/generate_report_//')
+            printf "    %-32s " "${us} (live:${live_target})"
+            local out; out=$(python3 "$script" --port "$US_PORT_A" \
+                             --target "$live_target" 2>&1)
+            if [[ $? -eq 0 ]]; then
+                local html; html=$(echo "$out" | grep "^Report:" | tail -1 | awk '{print $2}')
+                printf "${GREEN}✓${NC} %s\n" "${html##*/}"
+            else
+                printf "${RED}✗ FAILED${NC}\n"
+                echo "$out" | tail -3 | sed 's/^/         /'
+                failed_reports=$(( failed_reports + 1 ))
+            fi
+        done
+    fi
+
+    if [[ $failed_reports -eq 0 ]]; then
+        echo -e "\n  ${GREEN}✓ All HTML reports written to ${report_dir}/${NC}"
+    else
+        echo -e "\n  ${YELLOW}${failed_reports} report(s) failed${NC}"
+    fi
+}
+
 # ── Initial prep ───────────────────────────────────────────────────────────────
 echo -e "\n${CYAN}${BOLD}Preparing clean environment...${NC}"
 pkill -f "legion.py --web" 2>/dev/null && echo "  Killed existing legion server" || true
@@ -160,7 +312,7 @@ pkill -f "geckodriver"     2>/dev/null || true
 pkill -f "nmap"            2>/dev/null || true
 pkill -f "eyewitness"      2>/dev/null || true
 # Kill any stale test Flask servers on known test ports
-for _p in 5094 5096 5097 5098 5099; do free_port "$_p"; done
+for _p in 5085 5086 5094 5096 5097 5098 5099; do free_port "$_p"; done
 sleep 1
 rm -rf /tmp/legion/legion-* /tmp/legion-* 2>/dev/null || true
 echo "  Cleared /tmp/legion* artefacts"
@@ -485,6 +637,93 @@ if $RUN_LIVE; then
     fi
 fi
 
+if $RUN_STORIES; then
+    section "User Story Tests  (US-02–US-55, ports 5085/5086)"
+    _us_start_servers
+
+    # ── Offline user story tests ───────────────────────────────────────────────
+    # Match-logic tests (Group 4) run FIRST while the process queue is empty.
+    # US-02/US-03 submit 6+ nmap scans that fill the fast-process queue; the
+    # printf commands in the match tests would time out if those scans are running.
+    run_pytest "user_stories - match+CSS logic" \
+        tests/test_user_stories.py \
+        -k "US44 or US45US46 or US31"
+
+    # Brief pause so Firefox from the match-test run fully releases locks
+    sleep 2
+
+    # Everything else (scan-heavy tests run after match tests finish)
+    # Exclude live-only classes that need LEGION_TEST_TARGET (US-09, US-39).
+    run_pytest "user_stories (offline)" \
+        tests/test_user_stories.py \
+        -k "not NmapProgress and not ScreenshotTab and not US44 and not US45US46 and not US31"
+
+    # ── Live user story tests ──────────────────────────────────────────────────
+    if $RUN_LIVE; then
+        # Kill existing Firefox instances so the driver can start cleanly
+        pkill -f "firefox" 2>/dev/null || true; sleep 2
+
+        # Reseed the server (may have been reset during offline run)
+        python3 - <<'PYEOF' 2>/dev/null
+import requests, tempfile, os
+xml = '''<?xml version="1.0"?>
+<nmaprun>
+  <host><status state="up"/>
+    <address addr="10.10.10.1" addrtype="ipv4"/>
+    <ports>
+      <port protocol="tcp" portid="22"><state state="open"/><service name="ssh"/></port>
+      <port protocol="tcp" portid="80"><state state="open"/><service name="http"/></port>
+    </ports>
+  </host>
+</nmaprun>'''
+with tempfile.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as f:
+    f.write(xml); path = f.name
+try:
+    requests.post('http://127.0.0.1:5085/api/nmap/import-xml',
+                  json={'path': path}, timeout=15)
+finally:
+    os.unlink(path)
+PYEOF
+
+        local _us_live_name="user_stories (live: $LIVE_TARGET)"
+        local _us_live_t0; _us_live_t0=$(date +%s)
+        spinner_start "$_us_live_name"
+        local _us_live_out; _us_live_out=$(
+            sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
+                python3 -m pytest tests/test_user_stories.py \
+                -k "NmapProgress or ScreenshotTab" \
+                --tb=no -q 2>&1) || true
+        spinner_stop
+        local _us_live_secs=$(( $(date +%s) - _us_live_t0 ))
+        local _us_live_sl; _us_live_sl=$(echo "$_us_live_out" | grep -E "passed|failed|error" | tail -1 || true)
+        local _us_live_p _us_live_f _us_live_s
+        _us_live_p=$(_extract "$_us_live_sl" "passed")
+        _us_live_f=$(_extract "$_us_live_sl" "failed")
+        _us_live_s=$(echo "$_us_live_sl" | grep -oP '\d+(?= (skipped|deselected))' | head -1 || echo "0")
+        if [[ "$_us_live_f" -eq 0 ]]; then
+            print_result "$_us_live_name" "pass" "$_us_live_p" "$_us_live_f" "$_us_live_s" "$_us_live_secs"
+        else
+            print_result "$_us_live_name" "fail" "$_us_live_p" "$_us_live_f" "$_us_live_s" "$_us_live_secs"
+            echo "$_us_live_out" | grep "^FAILED" | sed "s/^FAILED /      ${RED}FAILED${NC} /"
+        fi
+    fi
+
+    # ── HTML reports ────────────────────────────────────────────────────────────
+    if $GEN_REPORTS; then
+        # Only generate reports when all tests passed (no point capturing failures)
+        if [[ $SECTION_FAIL -eq 0 ]]; then
+            pkill -f "firefox" 2>/dev/null || true; sleep 2
+            _gen_reports "${LIVE_TARGET:-}"
+        else
+            echo -e "  ${YELLOW}Skipping HTML reports — ${SECTION_FAIL} test(s) failed${NC}"
+            echo -e "  ${DIM}Fix failures first, then run:${NC}"
+            echo -e "  ${DIM}  sudo bash run_tests.sh --stories${NC}"
+        fi
+    fi
+
+    _us_stop_servers
+fi
+
 # Print the last section's subtotal before the final summary
 _section_subtotal
 SECTION_PASS=0; SECTION_FAIL=0; SECTION_SKIP=0
@@ -511,11 +750,16 @@ printf "  ${GREEN}%d passed${NC}   ${RED}%d failed${NC}   ${YELLOW}%d skipped${N
     "$GRAND_PASS" "$GRAND_FAIL" "$GRAND_SKIP" "$GRAND_TOTAL"
 echo ""
 echo -e "  ${CYAN}Options:${NC}"
-echo -e "    ${BOLD}sudo bash run_tests.sh${NC}                     offline"
-echo -e "    ${BOLD}sudo bash run_tests.sh --unit${NC}              unit only"
-echo -e "    ${BOLD}sudo bash run_tests.sh --selenium${NC}          selenium offline only"
-echo -e "    ${BOLD}sudo bash run_tests.sh --live 192.168.85.11${NC}  live only"
-echo -e "    ${BOLD}sudo bash run_tests.sh --all  192.168.85.11${NC}  everything"
+echo -e "    ${BOLD}sudo bash run_tests.sh${NC}                         offline (unit+selenium+stories)"
+echo -e "    ${BOLD}sudo bash run_tests.sh --unit${NC}                  unit only"
+echo -e "    ${BOLD}sudo bash run_tests.sh --selenium${NC}              selenium offline only"
+echo -e "    ${BOLD}sudo bash run_tests.sh --stories${NC}               user-story tests only"
+echo -e "    ${BOLD}sudo bash run_tests.sh --live 192.168.85.11${NC}    live only"
+echo -e "    ${BOLD}sudo bash run_tests.sh --all  192.168.85.11${NC}    everything + reports"
+echo -e "    ${BOLD}sudo bash run_tests.sh --no-report${NC}             skip HTML report generation"
+if $GEN_REPORTS && $RUN_STORIES; then
+    echo -e "\n  ${CYAN}HTML reports:${NC} testreport/US*.html"
+fi
 echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
 echo ""
 
