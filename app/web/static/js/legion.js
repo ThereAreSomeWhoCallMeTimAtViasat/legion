@@ -1154,6 +1154,12 @@ function renderDynamicToolTabs(hostIp) {
 /* ── Load process output inline (view.py tool output display) ── */
 /* Qt6: updateTabHighlight → QLabel 'Matches: ...' yellow banner above output */
 function loadProcessOutput(processId, targetEl) {
+    /* Capture scroll position BEFORE the fetch so we know if the user had
+       scrolled up. A fresh/empty element (scrollHeight ≈ clientHeight, scrollTop=0)
+       evaluates as atBottom=true, preserving auto-follow on first load and after
+       tab rebuilds. Checking after innerHTML would see scrollTop=0 on a newly-
+       populated element and incorrectly conclude the user is at the top. */
+    var atBottom = targetEl.scrollHeight - targetEl.scrollTop - targetEl.clientHeight < 40;
     fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
         var text = data.output_chunk || data.output || '';
         /* Prepend match banner when process has match hits (Qt6: yellow QLabel at top) */
@@ -1178,9 +1184,10 @@ function loadProcessOutput(processId, targetEl) {
             }
             targetEl.innerHTML = html;
         }
-        /* Defer scroll to after browser reflow — synchronous scrollTop before
-           the new innerHTML is rendered doesn't reach the true bottom. */
-        setTimeout(function() { targetEl.scrollTop = targetEl.scrollHeight; }, 0);
+        /* Only auto-scroll if the user was already at (or near) the bottom. */
+        if (atBottom) {
+            setTimeout(function() { targetEl.scrollTop = targetEl.scrollHeight; }, 0);
+        }
     }).catch(function() {
         targetEl.textContent = 'Error loading output';
     });
@@ -3252,8 +3259,9 @@ document.addEventListener('DOMContentLoaded', function() {
         fetchJson('/api/logs?level=' + encodeURIComponent(level)).then(function(d) {
             var out = $('log-output');
             if (out) {
+                var logAtBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
                 out.textContent = (d.lines || []).join('\n');
-                out.scrollTop = out.scrollHeight;
+                if (logAtBottom) out.scrollTop = out.scrollHeight;
             }
             setText('log-line-count', (d.lines||[]).length + ' lines');
         }).catch(function() {});
@@ -3274,7 +3282,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var logRefresh = $('log-refresh');
     if (logRefresh) logRefresh.addEventListener('click', loadLog);
 
-    /* ── Font size control for output and log panels ── */
+    /* ── Font size control — lower panel (process output + log) ── */
     (function() {
         var MIN_PT = 7, MAX_PT = 24;
         var LS_KEY = 'legion_output_font_pt';
@@ -3282,16 +3290,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function applyFontSize() {
             var px = _pt + 'pt';
-            /* Set font-size on stable container elements that persist across
-               tab switches and snapshot polls. Their children use font:inherit
-               so the size cascades automatically — including dynamically
-               created elements (dyn-output-*) added after this call. */
-            var containers = [
-                'process-output-inline',  /* contains plain-output */
-                'log-panel',              /* contains log-output */
-                'dynamic-tabs-container'  /* contains dyn-output-* upper tabs */
-            ];
-            containers.forEach(function(id) {
+            /* Stable container elements — children use font:inherit so cascade applies
+               automatically to dynamic elements created after this call. */
+            ['process-output-inline', 'log-panel'].forEach(function(id) {
                 var el = $(id);
                 if (el) el.style.fontSize = px;
             });
@@ -3299,15 +3300,12 @@ document.addEventListener('DOMContentLoaded', function() {
             if (lbl) lbl.textContent = _pt;
             localStorage.setItem(LS_KEY, _pt);
 
-            /* xterm.js terminals ignore CSS — update fontSize option directly.
-               xterm uses px; convert from pt (96dpi: 1pt = 1.333px). */
+            /* xterm in lower panel (Notes terminal) */
             var termPx = Math.max(8, Math.round(_pt * 1.333));
-            [_termState, _dynTermState].forEach(function(ts) {
-                if (ts && ts.xterm) {
-                    ts.xterm.options.fontSize = termPx;
-                    if (ts.fitAddon) { try { ts.fitAddon.fit(); } catch(e) {} }
-                }
-            });
+            if (_termState && _termState.xterm) {
+                _termState.xterm.options.fontSize = termPx;
+                if (_termState.fitAddon) { try { _termState.fitAddon.fit(); } catch(e) {} }
+            }
         }
         applyFontSize();
 
@@ -3316,15 +3314,47 @@ document.addEventListener('DOMContentLoaded', function() {
             applyFontSize();
         }
 
-        /* Process output panel buttons */
         var fdec = $('output-font-dec'), finc = $('output-font-inc');
         if (fdec) fdec.addEventListener('click', function() { changeFontSize(-1); });
         if (finc) finc.addEventListener('click', function() { changeFontSize(+1); });
 
-        /* Log panel buttons (share same font size) */
+        /* Log panel buttons share the lower font size */
         var lfdec = $('log-font-dec'), lfinc = $('log-font-inc');
         if (lfdec) lfdec.addEventListener('click', function() { changeFontSize(-1); });
         if (lfinc) lfinc.addEventListener('click', function() { changeFontSize(+1); });
+    })();
+
+    /* ── Font size control — upper panel (dynamic tool output tabs) ── */
+    (function() {
+        var MIN_PT = 7, MAX_PT = 24;
+        var LS_KEY = 'legion_upper_font_pt';
+        var _pt = parseInt(localStorage.getItem(LS_KEY)) || 10;
+
+        function applyFontSize() {
+            var px = _pt + 'pt';
+            var el = $('dynamic-tabs-container');
+            if (el) el.style.fontSize = px;
+            var lbl = $('upper-font-label');
+            if (lbl) lbl.textContent = _pt;
+            localStorage.setItem(LS_KEY, _pt);
+
+            /* xterm in upper panel (dynamic terminal tab) */
+            var termPx = Math.max(8, Math.round(_pt * 1.333));
+            if (_dynTermState && _dynTermState.xterm) {
+                _dynTermState.xterm.options.fontSize = termPx;
+                if (_dynTermState.fitAddon) { try { _dynTermState.fitAddon.fit(); } catch(e) {} }
+            }
+        }
+        applyFontSize();
+
+        function changeFontSize(delta) {
+            _pt = Math.max(MIN_PT, Math.min(MAX_PT, _pt + delta));
+            applyFontSize();
+        }
+
+        var udec = $('upper-font-dec'), uinc = $('upper-font-inc');
+        if (udec) udec.addEventListener('click', function() { changeFontSize(-1); });
+        if (uinc) uinc.addEventListener('click', function() { changeFontSize(+1); });
     })();
 
     /* ── Port state filter (Services right tab) ── */

@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.27-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.28-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -183,6 +183,12 @@
     <button class="tab-btn" type="button" data-tab="cves-right">CVEs</button>
     <button class="tab-btn" type="button" data-tab="notes-right">Notes</button>
     <!-- dynamic tool output tabs added here by JS -->
+    <div style="margin-left:auto;display:flex;align-items:center;gap:4px;padding:0 6px;flex-shrink:0">
+        <span style="font-size:9pt;color:var(--disabled)">Font</span>
+        <button id="upper-font-dec" type="button" title="Decrease upper panel font size" style="padding:0 5px;font-size:11pt;line-height:1">A−</button>
+        <span id="upper-font-label" style="font-size:9pt;color:var(--disabled);min-width:28px;text-align:center">10</span>
+        <button id="upper-font-inc" type="button" title="Increase upper panel font size" style="padding:0 5px;font-size:11pt;line-height:1">A+</button>
+    </div>
 </div>
 
 <!-- Services (right) — port table for selected host -->
