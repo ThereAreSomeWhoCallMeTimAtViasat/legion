@@ -1117,27 +1117,24 @@ function loadHostDetail(hostId) {
    user's scroll position is honoured on every 1.5 s poll cycle. */
 var _procScrollPos = {};
 
+/* True while the user has text selected inside #dynamic-tabs-container
+   (set on mousedown, maintained by selectionchange, cleared when selection
+   goes away).  Both renderDynamicToolTabs and loadProcessOutput check this
+   before any DOM mutation so selections survive refreshes and live output. */
+var _dynSelLocked = false;
+
 function renderDynamicToolTabs(hostIp) {
+    /* Check lock BEFORE any DOM change.  If the user is selecting (or has
+       selected) text in the upper output area, skip this rebuild entirely.
+       The next poll will run normally once the selection is released. */
+    if (_dynSelLocked) return;
+
     var bar = $('right-tab-bar');
     var container = $('dynamic-tabs-container');
 
     /* Remember which dynamic tab was active before we wipe everything */
     var activeBtn = bar.querySelector('.dynamic-tab.active');
     var prevActiveTabId = activeBtn ? activeBtn.dataset.tab : null;
-
-    /* Skip rebuild if the user has an active text selection inside the upper
-       output area — clearing innerHTML destroys the selection immediately.
-       The next poll (1.5 s) will rebuild once the selection is gone. */
-    try {
-        var _upSel = window.getSelection();
-        if (_upSel && _upSel.toString() && _upSel.rangeCount > 0) {
-            var _upRange = _upSel.getRangeAt(0);
-            if (container.contains(_upRange.startContainer) ||
-                container.contains(_upRange.endContainer)) {
-                return;
-            }
-        }
-    } catch(e) {}
 
     /* Save scroll positions of all output elements BEFORE wiping.
        container.innerHTML='' destroys the DOM nodes and their scrollTop. */
@@ -1208,20 +1205,26 @@ function loadProcessOutput(processId, targetEl) {
         atBottom = true;   /* first load — default to follow */
     }
     fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
-        /* Skip this update if the user has an active text selection inside the
-           element — setting innerHTML would wipe the selection mid-drag.
-           Only skip when the element already has content (scrollHeight > clientHeight
-           or has child nodes); skip on an empty/placeholder element would prevent
-           the first load from ever populating it. */
-        try {
-            var _ds = window.getSelection();
-            if (_ds && _ds.toString() && _ds.rangeCount > 0 && targetEl.childNodes.length > 1) {
-                var _dr = _ds.getRangeAt(0);
-                if (targetEl.contains(_dr.startContainer) || targetEl.contains(_dr.endContainer)) {
-                    return;
+        /* For dynamic-tab output (dyn-output-*): honour the container-level lock.
+           _dynSelLocked is set on mousedown in the container and maintained by
+           selectionchange, so it is already true before the first DOM rebuild
+           attempt — even during a mid-drag selection. */
+        var _isDynTab = targetEl.id && targetEl.id.indexOf('dyn-output-') === 0;
+        if (_isDynTab && _dynSelLocked) return;
+
+        /* For the lower panel (plain-output): skip if a selection is anchored
+           inside the element and it already has content. */
+        if (!_isDynTab) {
+            try {
+                var _ds = window.getSelection();
+                if (_ds && _ds.toString() && _ds.rangeCount > 0 && targetEl.childNodes.length > 1) {
+                    var _dr = _ds.getRangeAt(0);
+                    if (targetEl.contains(_dr.startContainer) || targetEl.contains(_dr.endContainer)) {
+                        return;
+                    }
                 }
-            }
-        } catch(e) {}
+            } catch(e) {}
+        }
 
         var text = data.output_chunk || data.output || '';
         /* Prepend match banner when process has match hits (Qt6: yellow QLabel at top) */
@@ -1870,6 +1873,35 @@ document.addEventListener('DOMContentLoaded', function() {
     initColResizers('processes-table');
     initColResizers('services-table');
     initInteractions();
+
+    /* ── Dynamic-tab selection lock ──────────────────────────────────────────
+       _dynSelLocked gates ALL DOM mutations in #dynamic-tabs-container.
+       mousedown: lock immediately so the very first rebuild attempt after
+         the button-press is already blocked (selectionchange is async and
+         would be too late to prevent a mid-drag corruption).
+       selectionchange: keep locked while selection exists; clear when gone.
+       This combination covers: drag in progress, completed selection while
+       tool is running, and the mid-drag page-top artefact. */
+    var _dynContainer = $('dynamic-tabs-container');
+    if (_dynContainer) {
+        _dynContainer.addEventListener('mousedown', function() {
+            _dynSelLocked = true;
+        });
+    }
+    document.addEventListener('selectionchange', function() {
+        try {
+            var _sc = $('dynamic-tabs-container');
+            if (!_sc) return;
+            var _ss = window.getSelection();
+            if (_ss && _ss.toString() && _ss.rangeCount > 0) {
+                var _sr = _ss.getRangeAt(0);
+                _dynSelLocked = _sc.contains(_sr.startContainer) ||
+                                _sc.contains(_sr.endContainer);
+            } else {
+                _dynSelLocked = false;
+            }
+        } catch(e) { _dynSelLocked = false; }
+    });
 
     /* Initial render from embedded snapshot */
     try {
