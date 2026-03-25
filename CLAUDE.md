@@ -473,43 +473,142 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 - Medusa SSH module uses the system's OpenSSH libraries, which support `+ssh-rsa` and legacy MACs via config
 - FTP (H3) and MySQL (H2) remain reliable Hydra targets and are unaffected
 
-### LLM Host Analysis (Anthropic Claude) — Two-Phase Pipeline
-- **Model**: `claude-sonnet-4-6` (1M context window) for both phases
-- **API key**: Session-only. Check `ANTHROPIC_API_KEY` env var first; else `window.prompt()`; store in `L.anthropicKey`
-- **UI placement**: New "AI" tab in right-panel tab bar
-- **Route**: `POST /api/ai/analyze-host/<id>` — runs both phases, returns final analysis text
-- **Dependencies**: `pip install anthropic`
-- **No streaming**: two sequential `messages.create()` calls, result returned when both complete
+### LLM AI Tab — Full Design Spec (Backlog #7)
 
-#### Why two phases
-Raw tool output (nikto, dirbuster, hydra) is noisy — verbose headers, informational items, and real findings are mixed together. Feeding raw output directly to the attack planner wastes its attention on parsing text instead of reasoning about exploitation. A synthesizer pass normalizes findings across tools, enabling cross-tool correlation before the planner reasons about attack paths.
+#### Authentication — Vertex AI (NOT direct Anthropic API)
+- **SDK**: `anthropic[vertex]` — `from anthropic import AnthropicVertex`
+- **Credentials**: ADC (Application Default Credentials) via `gcloud auth application-default login` — already done daily, no prompt needed
+- **Config source**: Read `~/.claude/settings.json` at analysis time
+  - `ANTHROPIC_VERTEX_PROJECT_ID` → `project_id` (e.g., `"viasat-claude-code"`)
+  - `CLOUD_ML_REGION` → `region` (e.g., `"global"`)
+  - `model` → strip `[1m]` suffix → e.g., `"claude-sonnet-4-6"`
+- **No API key storage anywhere** — ADC handles auth transparently
 
-#### Phase 1 — Synthesizer
-**Input**: All raw DB data assembled in order:
+#### UI Placement
+- New **"AI"** tab in right-panel tab bar (alongside Info, Ports, Scripts, Notes, CVEs)
+- Tab contains: blocking-conditions banner OR analyze button + cost estimate, then Phase 1 table + Phase 2 markdown side-by-side with historical match
+
+#### Routes
+- `POST /api/ai/analyze-host/<host_id>` — runs Phase 1 + Phase 2, saves results, returns JSON
+- `GET /api/ai/history/similar/<host_id>` — returns Jaccard-ranked list of similar hosts from persistent DB
+- `GET /api/ai/host/<host_id>/latest` — returns most recent saved analysis for this host from project DB
+
+#### Blocking conditions (shown in AI tab before Analyze button)
+- Button is disabled and conditions are listed when:
+  - Any process for this host has status `Running` or `Waiting`
+  - Interactive (PTY) processes are **ignored** — only Regular processes count
+- When all non-interactive processes are Finished/Crashed: show Analyze button with estimated cost
+
+#### User flow
+1. User selects host → AI tab shows blocking status OR Analyze button
+2. User clicks **"Analyze (~$X.XX)"** button
+3. Server searches persistent history DB for hosts with ≥95% Jaccard similarity
+4. If matches found: dropdown appears — `"192.168.85.11 — 2026-03-10 — 97% match — Linux, 22 ports"` — user picks one (or "None") for side-by-side
+5. Spinner shown, Phase 1 runs (Synthesizer), Phase 2 runs (Attack Planner)
+6. Results displayed + saved to both DBs
+7. If comparison selected: left panel = current analysis, right panel = historical match
+
+#### Similarity fingerprint (Jaccard)
+- **Fingerprint**: sorted list of `"port/protocol:service:version"` tuples + OS family string
+  - Example: `["22/tcp:ssh:OpenSSH 4.7p1", "80/tcp:http:Apache 2.2.8", ...]` + `"Linux"`
+- **Similarity**: `|intersection| / |union|` of the two fingerprint sets
+- **Threshold**: ≥ 0.95 to appear in dropdown
+- Stored as JSON in the persistent history DB
+
+#### Two-phase pipeline
+
+**Why two phases**: Raw tool output is noisy. Phase 1 normalizes and deduplicates findings across all tools before Phase 2 reasons about exploitation — preventing the planner from wasting context on verbose output headers.
+
+**Phase 1 — Synthesizer**
+Input assembled in order:
 | Data | Source | Notes |
 |------|---------|-------|
 | Host (IP, hostname, OS, status) | `hostObj` | Always included |
 | Open ports + services | `getPortsAndServicesByHostIP` | Core findings |
-| CVEs | `getCVEsByHostIP` | Known vulnerabilities from vulners NSE |
-| NSE scripts + output | `getScriptsByHostIP` | Detailed per-port script results |
+| CVEs | `getCVEsByHostIP` | From vulners NSE |
+| NSE scripts + output | `getScriptsByHostIP` | Per-port detail |
 | Analyst notes | `getNoteByHostId` | Human observations |
-| Tool process output | `getProcesses(hostIp=ip)` with output join | Nikto, dirbuster, hydra, custom commands |
+| Tool outputs | `getProcesses(hostIp=ip)` | Matched processes first, then by id desc; 2000 chars max each; skip empty |
 
-**Tool output ordering** (within the assembled data):
-- Matched processes first (`has_match=True` or `match_text` non-empty) — confirmed positive findings per legion.conf global-positive patterns
-- Then remaining by most recent (highest id) first
-- Truncate each to 2000 chars; skip empty/banner-only outputs; prepend tool name and status
+System prompt: *"You are a data extraction assistant. Extract all significant security findings from this raw penetration test data. Output structured JSON only: an array of findings, each with fields: source (tool name), port (if applicable), severity (critical/high/medium/low/info), finding (one sentence), evidence (brief quote from output). Deduplicate. Omit informational noise."*
 
-**System prompt**: "You are a data extraction assistant. Extract all significant security findings from this raw penetration test data. Output structured JSON only: an array of findings, each with fields: source (tool name), port (if applicable), severity (critical/high/medium/low/info), finding (one sentence), evidence (brief quote from output). Deduplicate. Omit informational noise."
+Output: `[{source, port, severity, finding, evidence}, ...]`
 
-**Output**: Structured JSON array of normalized findings
+**Phase 2 — Attack Planner**
+Input: compact Phase 1 JSON (no raw output noise)
 
-#### Phase 2 — Attack Planner
-**Input**: The JSON findings summary from Phase 1 (compact, no raw output noise)
+System prompt: *"You are a senior penetration tester. Given these confirmed findings from a target host, identify: 1) exploitable vulnerabilities with specific CVEs or techniques, 2) recommended next tools and exact commands, 3) likely attack paths ranked by probability of success, 4) misconfigurations to investigate. Be specific and actionable."*
 
-**System prompt**: "You are a senior penetration tester. Given these confirmed findings from a target host, identify: 1) exploitable vulnerabilities with specific CVEs or techniques, 2) recommended next tools and exact commands, 3) likely attack paths ranked by probability of success, 4) misconfigurations to investigate. Be specific and actionable."
+Output: Markdown attack plan
 
-**Output**: Markdown analysis returned to the UI and rendered in the AI tab
+#### Phase 1 display — sortable findings table
+Columns: **Severity** (colour-coded) | **Source** | **Port** | **Finding** | **Evidence**
+- Critical = red, High = orange, Medium = yellow, Low = blue, Info = grey
+- "View as JSON" toggle shows raw JSON in a `<pre>` block
+- Default sort: Severity desc
+
+#### Phase 2 display — rendered Markdown
+- Standard Markdown rendering (bold, bullets, code blocks)
+
+#### Side-by-side comparison layout
+```
+┌─────────────────────┬─────────────────────┐
+│  Current Host       │  Historical Match   │
+│  192.168.1.10       │  192.168.85.11      │
+│  (just analyzed)    │  97% match, 2026-03 │
+├─────────────────────┼─────────────────────┤
+│  Phase 1 table      │  Phase 1 table      │
+│  Phase 2 markdown   │  Phase 2 markdown   │
+└─────────────────────┴─────────────────────┘
+```
+Historical match selected from dropdown; "No similar hosts in history" shown greyed-out when none found.
+
+#### Cost display
+- **Before**: button label shows `"Analyze (~$X.XX)"` — estimated from assembled input size × 0.25 tokens/char × sonnet-4-6 pricing ($3/MTok input, $15/MTok output, assuming ~1k output tokens)
+- **After**: tab header shows `"Cost: $X.XX | 24k tokens"` using actual usage from API response
+- **Cached (historical)**: shows `"Previously cost $X.XX — no charge for this view"`
+
+#### Concurrent analyses
+Multiple hosts can be analyzed simultaneously — each `POST /api/ai/analyze-host/<id>` runs in its own Flask thread. No global lock.
+
+#### Databases
+
+**Persistent AI history DB** — `~/.local/share/legion/ai_history.db` (SQLite, never deleted, survives project switches)
+```sql
+CREATE TABLE ai_sessions (
+  id INTEGER PRIMARY KEY,
+  timestamp TEXT,
+  host_ip TEXT,
+  project_name TEXT,
+  fingerprint_json TEXT,   -- sorted port:service:version list + OS
+  phase1_json TEXT,        -- synthesizer output
+  phase2_markdown TEXT,    -- planner output
+  tokens_input INTEGER,
+  tokens_output INTEGER,
+  cost_usd REAL
+);
+```
+
+**Project DB** — new `ai_analysis` table in the `.legion` SQLite file (loaded when project opens)
+```sql
+CREATE TABLE ai_analysis (
+  id INTEGER PRIMARY KEY,
+  host_id INTEGER,
+  timestamp TEXT,
+  phase1_json TEXT,
+  phase2_markdown TEXT,
+  tokens_input INTEGER,
+  tokens_output INTEGER,
+  cost_usd REAL,
+  history_session_id INTEGER   -- FK into persistent DB for cross-reference
+);
+```
+Both writes happen atomically after both API calls complete successfully.
+
+#### Dependencies
+```bash
+pip install "anthropic[vertex]"
+```
 
 ### Pending Feature Backlog
 | # | Feature | Difficulty | Status | Notes |
