@@ -466,6 +466,32 @@ class WebController:
 
         return matches - patternsToRemove
 
+    @staticmethod
+    def _pattern_matches(pattern, line):
+        """Case-sensitive pattern match respecting space-based word-boundary guards.
+
+        If the stored keyword has a leading space, the character immediately before
+        the keyword text in the line must NOT be a word character (\w = [a-zA-Z0-9_]).
+        If it has a trailing space, the character immediately after must not be \w.
+        This prevents ' PUT ' from matching 'outputfile', 'INPUT', 'OUTPUT', etc.
+
+        Keywords without leading/trailing spaces use plain substring matching
+        (backward-compatible with all existing multi-word phrases like
+        'State: VULNERABLE', 'Dumping local SAM hashes', etc.).
+        """
+        import re
+        stripped = pattern.strip(' ')
+        if not stripped:
+            return False
+        if pattern == stripped:
+            # No boundary spaces — fast path, plain case-sensitive substring match
+            return stripped in line
+        # Build a regex that anchors on word boundaries where spaces were present
+        core    = re.escape(stripped)
+        prefix  = r'(?<!\w)' if pattern[0]  == ' ' else ''
+        suffix  = r'(?!\w)'  if pattern[-1] == ' ' else ''
+        return bool(re.search(prefix + core + suffix, line))
+
     def _getMatches(self, line, settings, name):
         """Port of auxiliary.py:262-282 — check one line against one settings group.
         Negative patterns checked FIRST — if any match, return empty."""
@@ -476,12 +502,12 @@ class WebController:
         # Check negative patterns FIRST
         if 'negative' in current:
             for pattern in current['negative']:
-                if pattern in line:
+                if self._pattern_matches(pattern, line):
                     return matches  # Negative hit → no matches for this line
         # Check positive patterns
         if 'positive' in current:
             for pattern in current['positive']:
-                if pattern in line:
+                if self._pattern_matches(pattern, line):
                     matches.add(pattern)
         return matches
 
