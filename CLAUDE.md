@@ -34,7 +34,7 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.53-flask
+- **Current Flask version:** v10.54-flask
 - **Static asset cache:** `?v=58` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
@@ -59,6 +59,8 @@ sudo python3 legion.py --web &
 sudo bash run_tests.sh                          # offline only
 sudo bash run_tests.sh 192.168.85.11            # + live (SSH/MySQL/msfconsole + nmap scan)
 sudo bash run_tests.sh --unit                   # unit only
+sudo bash run_tests.sh --stories               # user story tests (ports 5085/5086) + HTML reports
+sudo bash run_tests.sh --no-report             # skip HTML report generation
 sudo bash run_tests.sh --live 192.168.85.11     # live tests only
 
 # Minimum before every commit
@@ -181,7 +183,9 @@ Called automatically from `start()` on every project open/create:
 - **v10.51**: Selection confinement — `_confineTo(el)` sets `user-select:none` on `<html>` + `user-select:text` on target panel during drag; restored on mouseup. Prevents dragging outside output panel boundaries into tab bar / host list / chrome.
 - **v10.52**: Heartbeat watchdog — `/api/heartbeat` (POST, every 5 s from JS); `hb-watchdog` daemon thread fires `killRunningProcesses()` + `os._exit(0)` when gap > `_HB_TIMEOUT` (20 s). Multi-instance safe: each Legion process has its own watchdog. Handles Firefox File→Exit and window close.
 - **v10.53**: `_kill_all_descendants()` in `web_controller.py` — scans `/proc/*/stat` BFS from `os.getpid()` to find every descendant; SIGKILL all of them. Called from `killRunningProcesses()`. Fixes shell=True grandchild orphan problem (nmap, gobuster survive shell death without this).
+- **v10.54**: Sticky processes table header — `position:sticky` moved from `th` to `thead`; `border-collapse:collapse` breaks per-cell sticky.
 - **Test additions**: test_goal2_lower_selection (port 5086), test_goal3_ansi_ctrlb (port 5087), test_goal_selection_confinement (port 5085), test_shutdown_subprocess (ports 5083/5084 — subprocess server for os._exit tests). All goal tests converted from `app.run()` daemon threads to `make_server()` + `httpd.shutdown()`.
+- **User story tests**: 56 user stories written; 37 offline + 6 live pytest tests in `tests/test_user_stories.py`; 18 generate_report_USxx.py scripts producing dated HTML reports in `testreport/`; integrated into `run_tests.sh` via `--stories` flag with auto server management and heartbeat keeper.
 - **Test fixes**: test_08 notes (storeNotes in _ensure_seeded_host); test_09 project name (check snapshot API not DOM title); test_clear retry loop (safe — Clear uses postJson, no window.confirm); NEVER add retry loops to actions that trigger window.confirm() — pending dialog blocks Selenium with UnexpectedAlertPresentException
 
 ---
