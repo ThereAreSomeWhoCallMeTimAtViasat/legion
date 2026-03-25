@@ -228,12 +228,14 @@ class AppSettings():
                     
                     # Split by comma to get individual values
                     if rawValue:
-                        # lstrip(' ') only — removes the incidental leading space that appears
-                        # after each comma separator, but preserves intentional trailing spaces
-                        # used as word-boundary guards (e.g. " PUT " must not match "OUTPUT").
-                        # Qt6 QSettings returned list elements without stripping, so this
-                        # restores that behaviour.
-                        values = [v.lstrip(' ') for v in rawValue.split(',') if v.strip()]
+                        # Do NOT strip individual keyword values — spaces are semantic.
+                        # " PUT " (space-PUT-space) must match as a whole word; stripping
+                        # either space causes false positives:
+                        #   lstrip only → "PUT " matches "Reading INPUT to stream"
+                        #   strip both  → "PUT"  matches "OUTPUT", "INPUT"
+                        # Qt6 QSettings returned list elements without stripping; v.strip()
+                        # is used only to skip empty entries, not to modify keyword text.
+                        values = [v for v in rawValue.split(',') if v.strip()]
                         matchsettings[scanner_name][direction] = values
                     else:
                         matchsettings[scanner_name][direction] = []
