@@ -531,7 +531,7 @@ Raw tool output (nikto, dirbuster, hydra) is noisy — verbose headers, informat
 | 15 | Move font size controls — relocate A+/A- buttons to after the Brute tab | Low | ✅ Done v10.31 | upper-font controls moved to main-tab-bar after Brute button |
 | 16 | ANSI colour in Ctrl+B notes — render terminal colour codes in the notes panel | Med | ✅ Done v10.31/v10.50 | renderNotes() uses ansiToHtml(); domSelectionToAnsi() for DOM selections |
 | 17 | ANSI colour in log window — render colour codes in the Log tab output | Med | ✅ Done v10.31 | loadLog() uses ansiToHtml() instead of textContent |
-| 18 | Sticky processes table header — keep column headers visible during scroll | Low | ✅ Already done | `th { position:sticky; top:0; z-index:1 }` in legion.css since initial flask-clean commit |
+| 18 | Sticky processes table header — keep column headers visible during scroll | Low | ✅ Done v10.54 | moved sticky from `th` to `thead` — border-collapse:collapse breaks per-cell sticky |
 | 19 | Kill nmap subprocesses on exit — orphaned nmap scans survive Legion shutdown | Med | ✅ Done v10.53 | _kill_all_descendants() via /proc BFS scan; called from killRunningProcesses() |
 
 ### Backlog #10 — Tool Manager GUI
