@@ -2816,7 +2816,10 @@ document.addEventListener('DOMContentLoaded', function() {
             'ansi-fg-blue':34,'ansi-fg-magenta':35,'ansi-fg-cyan':36,'ansi-fg-white':37,
             'ansi-fg-bright-black':90,'ansi-fg-bright-red':91,'ansi-fg-bright-green':92,
             'ansi-fg-bright-yellow':93,'ansi-fg-bright-blue':94,'ansi-fg-bright-magenta':95,
-            'ansi-fg-bright-cyan':96,'ansi-fg-bright-white':97
+            'ansi-fg-bright-cyan':96,'ansi-fg-bright-white':97,
+            /* match-positive: CSS color:#ff0 (bright yellow) + font-weight:700 (bold)
+               → ANSI bold (1) + bright-yellow foreground (93) */
+            'match-positive':'1;93'
         };
 
         var range  = sel.getRangeAt(0);
