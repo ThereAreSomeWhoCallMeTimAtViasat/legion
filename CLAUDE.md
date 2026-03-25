@@ -35,7 +35,7 @@
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
 - **Current Flask version:** v10.54-flask
-- **Static asset cache:** `?v=58` in `base.html`
+- **Static asset cache:** `?v=59` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
