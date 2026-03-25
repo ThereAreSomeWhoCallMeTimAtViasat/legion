@@ -27,18 +27,52 @@ cachedDbLogger = None
 
 
 class _InMemoryLogHandler(logging.Handler):
-    """Captures log records in memory so /api/logs works without a file redirect.
-    Thread-safe: deque append/popleft are atomic in CPython."""
-    def __init__(self, maxlen=2000):
+    """Captures Rich-formatted log records so /api/logs renders the same
+    ANSI colours as the server console (which uses RichHandler on stderr).
+
+    Each record is formatted through a private Rich console writing to a
+    StringIO with force_terminal=True so escape codes are always emitted
+    regardless of whether the StringIO is a real tty.  A threading.Lock
+    protects the shared StringIO from concurrent writes.
+    """
+    def __init__(self, maxlen=10000):
         super().__init__()
         self._buf = deque(maxlen=maxlen)
-        self.setFormatter(logging.Formatter(
-            '%(asctime)s  %(levelname)-8s  %(name)s: %(message)s',
-            datefmt='%H:%M:%S'))
+        import threading as _thr
+        import io as _io
+        self._lock = _thr.Lock()
+        self._sio  = _io.StringIO()
+        try:
+            from rich.console import Console as _Con
+            from rich.logging import RichHandler as _RH
+            self._rich_console = _Con(
+                file=self._sio, force_terminal=True,
+                width=200, highlight=False, markup=False)
+            self._rich_handler = _RH(
+                console=self._rich_console,
+                show_time=True, show_path=False, rich_tracebacks=False)
+            self._rich_handler.setFormatter(
+                logging.Formatter("%(message)s", datefmt="[%X]"))
+            self._use_rich = True
+        except Exception:
+            # Fallback if Rich is unavailable
+            self.setFormatter(logging.Formatter(
+                '%(asctime)s  %(levelname)-8s  %(name)s: %(message)s',
+                datefmt='%H:%M:%S'))
+            self._use_rich = False
 
     def emit(self, record):
         try:
-            self._buf.append(self.format(record))
+            if self._use_rich:
+                with self._lock:
+                    self._sio.seek(0)
+                    self._sio.truncate(0)
+                    self._rich_handler.emit(record)
+                    line = self._sio.getvalue().rstrip('\n')
+                    if line:
+                        self._buf.append(line)
+            else:
+                self._buf.append(self.format(record))
         except Exception:
             pass
 
@@ -48,7 +82,8 @@ class _InMemoryLogHandler(logging.Handler):
         if level == 'DEBUG':
             return list(self._buf)
         keep = {'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
-        return [l for l in self._buf if any(f'  {k}' in l for k in keep)]
+        # Level keyword is present in the string even with surrounding ANSI codes
+        return [l for l in self._buf if any(k in l for k in keep)]
 
 
 # Singleton — shared by all loggers in the process

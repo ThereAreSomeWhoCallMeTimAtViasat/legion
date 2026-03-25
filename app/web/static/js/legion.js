@@ -2618,6 +2618,67 @@ document.addEventListener('DOMContentLoaded', function() {
         alert(_VERSION + '\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts');
     });
 
+    /* ── xterm buffer → ANSI string ─────────────────────────────────────────────
+       xterm.getSelection() returns plain text — all colour information is
+       stripped at the API level.  This function walks the buffer cell-by-cell
+       over the selected range and reconstructs ANSI escape sequences from the
+       stored fg-colour mode and colour value of each character cell.
+       Falls back to plain getSelection() if the buffer API is unavailable. */
+    function xtermSelectionToAnsi(xterm) {
+        if (!xterm) return '';
+        var pos;
+        try { pos = xterm.getSelectionPosition(); } catch(e) {}
+        if (!pos) return xterm.getSelection() || '';
+
+        var buf = xterm.buffer.active;
+        var result = '';
+        var prevEsc = '';   /* last escape written — skip if unchanged */
+
+        for (var row = pos.startRow; row <= pos.endRow; row++) {
+            var line = buf.getLine(row);
+            if (!line) { if (row < pos.endRow) result += '\n'; continue; }
+
+            var colFrom = (row === pos.startRow) ? pos.startColumn : 0;
+            var colTo   = (row === pos.endRow)   ? pos.endColumn   : line.length;
+
+            for (var col = colFrom; col < colTo; col++) {
+                var cell = line.getCell(col);
+                if (!cell) continue;
+                var ch = cell.getChars();
+                if (!ch) continue;
+
+                /* Reconstruct fg colour escape for this cell.
+                   mode 0 = default, 1 = 16-colour ANSI, 2 = 256-colour, 3 = RGB */
+                var esc = '';
+                var mode  = cell.getFgColorMode();
+                var color = cell.getFgColor();
+                if      (mode === 1 && color < 8)  esc = '\x1b[3' + color + 'm';
+                else if (mode === 1)               esc = '\x1b[9' + (color - 8) + 'm';
+                else if (mode === 2)               esc = '\x1b[38;5;' + color + 'm';
+                else if (mode === 3) {
+                    var r = (color >> 16) & 0xff;
+                    var g = (color >> 8)  & 0xff;
+                    var b =  color        & 0xff;
+                    esc = '\x1b[38;2;' + r + ';' + g + ';' + b + 'm';
+                }
+                if (cell.isBold()) esc = '\x1b[1m' + esc;
+                if (cell.isDim())  esc = '\x1b[2m' + esc;
+
+                if (esc !== prevEsc) {
+                    result += esc || '\x1b[0m';
+                    prevEsc = esc;
+                }
+                result += ch;
+            }
+            if (row < pos.endRow) {
+                if (prevEsc) { result += '\x1b[0m'; prevEsc = ''; }
+                result += '\n';
+            }
+        }
+        if (prevEsc) result += '\x1b[0m';
+        return result || (xterm.getSelection() || '');
+    }
+
     /* ── Ctrl+B / Send selection to notes (Qt6: view.py:sendSelectionToNotes) ──
        Gets selected text + title from active output area, APPENDS to notes with
        an orange header "=== Selection from {title} ===", flashes source orange,
@@ -2633,7 +2694,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* ── 1. Check lower-panel xterm (Interactive processes) ── */
         if (!text && _termState.xterm && typeof _termState.xterm.getSelection === 'function') {
-            var xtSel = _termState.xterm.getSelection();
+            var xtSel = xtermSelectionToAnsi(_termState.xterm);
             if (xtSel) {
                 text = xtSel;
                 var procRow = $('processes-body').querySelector('tr.selected');
@@ -2645,7 +2706,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* ── 2. Check upper-panel dynamic xterm (dynamic tool tabs) ── */
         if (!text && _dynTermState.xterm && typeof _dynTermState.xterm.getSelection === 'function') {
-            var dynSel = _dynTermState.xterm.getSelection();
+            var dynSel = xtermSelectionToAnsi(_dynTermState.xterm);
             if (dynSel) {
                 text = dynSel;
                 var dynTabBtn = $('right-tab-bar') && $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
@@ -3291,21 +3352,10 @@ document.addEventListener('DOMContentLoaded', function() {
             var out = $('log-output');
             if (out) {
                 var logAtBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
-                /* Level-based colouring: the in-memory log handler uses a plain
-                   formatter (no ANSI codes), so we parse level keywords from the
-                   formatted line and wrap in a colour span.  ansiToHtml() handles
-                   any ANSI that does appear AND safely HTML-escapes the text. */
-                var logHtml = (d.lines || []).map(function(line) {
-                    var colored = ansiToHtml(line);
-                    if (/\bCRITICAL\b|\bERROR\b/.test(line))
-                        return '<span class="ansi-fg-red">'    + colored + '</span>';
-                    if (/\bWARNING\b/.test(line))
-                        return '<span class="ansi-fg-yellow">'  + colored + '</span>';
-                    if (/\bDEBUG\b/.test(line))
-                        return '<span class="ansi-fg-bright-black">' + colored + '</span>';
-                    return colored;
-                }).join('\n');
-                out.innerHTML = logHtml;
+                /* _InMemoryLogHandler now stores Rich-formatted lines with ANSI
+                   escape codes (same colours as the server console).  ansiToHtml()
+                   converts them to coloured <span>s and HTML-escapes everything else. */
+                out.innerHTML = ansiToHtml((d.lines || []).join('\n'));
                 if (logAtBottom) out.scrollTop = out.scrollHeight;
             }
             setText('log-line-count', (d.lines||[]).length + ' lines');
