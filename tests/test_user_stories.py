@@ -606,6 +606,166 @@ class TestUS42_LogAnsiColor:
 
 
 # ===========================================================================
+# GROUP 7 — Multi-Instance Isolation (US-55)
+# ===========================================================================
+
+PORT_A = 5085   # primary test server
+PORT_B = 5086   # second instance
+
+# Unique IPs used only by these tests — chosen to not clash with seed data
+IP_A = '10.55.85.1'   # imported into instance A only
+IP_B = '10.55.86.1'   # imported into instance B only
+
+_SEED_XML_A = f"""<?xml version="1.0"?>
+<nmaprun>
+  <host><status state="up"/>
+    <address addr="{IP_A}" addrtype="ipv4"/>
+    <ports><port protocol="tcp" portid="80">
+      <state state="open"/><service name="http"/>
+    </port></ports>
+  </host>
+</nmaprun>"""
+
+_SEED_XML_B = f"""<?xml version="1.0"?>
+<nmaprun>
+  <host><status state="up"/>
+    <address addr="{IP_B}" addrtype="ipv4"/>
+    <ports><port protocol="tcp" portid="443">
+      <state state="open"/><service name="https"/>
+    </port></ports>
+  </host>
+</nmaprun>"""
+
+
+def _import_xml_to(port, xml):
+    """Import XML into the instance at port. Uses /tmp since both servers run as root."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as f:
+        f.write(xml)
+        path = f.name
+    try:
+        resp = requests.post(f'http://127.0.0.1:{port}/api/nmap/import-xml',
+                             json={'path': path}, timeout=20)
+        return resp.json()
+    finally:
+        os.unlink(path)
+
+
+def _hosts_at(port):
+    """Return list of host IPs at the given port instance."""
+    snap = requests.get(f'http://127.0.0.1:{port}/api/snapshot', timeout=5).json()
+    return [h['ip'] for h in snap.get('hosts', [])]
+
+
+def _ui_host_ips(driver, url):
+    """Navigate to url and return all data-host-ip values from the hosts table."""
+    driver.get(url)
+    time.sleep(2.5)   # let snapshot poll render
+    return driver.execute_script("""
+        return Array.from(
+            document.querySelectorAll('#hosts-body tr[data-host-ip]')
+        ).map(r => r.dataset.hostIp);
+    """)
+
+
+def _ensure_isolated_seed():
+    """Import IP_A into A and IP_B into B if not already present."""
+    if IP_A not in _hosts_at(PORT_A):
+        _import_xml_to(PORT_A, _SEED_XML_A)
+        time.sleep(1)
+    if IP_B not in _hosts_at(PORT_B):
+        _import_xml_to(PORT_B, _SEED_XML_B)
+        time.sleep(1)
+
+
+class TestUS55_TwoInstancesIndependent:
+    """
+    US-55: Two Legion instances running on different ports (5085, 5086) must
+    have completely independent databases, hosts, and processes.
+
+    Data imported into instance A must NOT appear in instance B's snapshot
+    or UI, and vice versa.
+
+    Uses one Selenium driver that navigates between the two server URLs —
+    the hosts table is read from the DOM (#hosts-body tr[data-host-ip])
+    at each URL to verify isolation both at API and UI level.
+
+    Requires BOTH servers to be running:
+        sudo python3 legion.py --web --port 5085 &
+        sudo python3 legion.py --web --port 5086 &
+    """
+
+    @pytest.fixture(autouse=True)
+    def _seed(self):
+        """Ensure each instance has its unique host before the test runs."""
+        _ensure_isolated_seed()
+
+    def test_host_imported_to_a_not_visible_in_b_api(self, driver, seed_host):
+        """API: IP_A in 5085 snapshot, NOT in 5086 snapshot."""
+        hosts_a = _hosts_at(PORT_A)
+        hosts_b = _hosts_at(PORT_B)
+        assert IP_A in hosts_a, f'{IP_A} missing from 5085'
+        assert IP_A not in hosts_b, (
+            f'{IP_A} leaked from 5085 into 5086! hosts_b={hosts_b}')
+
+    def test_host_imported_to_b_not_visible_in_a_api(self, driver, seed_host):
+        """API: IP_B in 5086 snapshot, NOT in 5085 snapshot."""
+        hosts_a = _hosts_at(PORT_A)
+        hosts_b = _hosts_at(PORT_B)
+        assert IP_B in hosts_b, f'{IP_B} missing from 5086'
+        assert IP_B not in hosts_a, (
+            f'{IP_B} leaked from 5086 into 5085! hosts_a={hosts_a}')
+
+    def test_host_a_visible_in_ui_at_port_a(self, driver, seed_host):
+        """Selenium: navigating to :5085 shows IP_A in the hosts table."""
+        ips = _ui_host_ips(driver, f'http://127.0.0.1:{PORT_A}')
+        assert IP_A in ips, (
+            f'IP_A ({IP_A}) not in 5085 UI hosts table. Got: {ips}')
+
+    def test_host_a_not_visible_in_ui_at_port_b(self, driver, seed_host):
+        """Selenium: navigating to :5086 does NOT show IP_A in the hosts table."""
+        ips = _ui_host_ips(driver, f'http://127.0.0.1:{PORT_B}')
+        assert IP_A not in ips, (
+            f'IP_A ({IP_A}) leaked into 5086 UI hosts table! Got: {ips}')
+
+    def test_host_b_visible_in_ui_at_port_b(self, driver, seed_host):
+        """Selenium: navigating to :5086 shows IP_B in the hosts table."""
+        ips = _ui_host_ips(driver, f'http://127.0.0.1:{PORT_B}')
+        assert IP_B in ips, (
+            f'IP_B ({IP_B}) not in 5086 UI hosts table. Got: {ips}')
+
+    def test_host_b_not_visible_in_ui_at_port_a(self, driver, seed_host):
+        """Selenium: navigating to :5085 does NOT show IP_B in the hosts table."""
+        ips = _ui_host_ips(driver, f'http://127.0.0.1:{PORT_A}')
+        assert IP_B not in ips, (
+            f'IP_B ({IP_B}) leaked into 5085 UI hosts table! Got: {ips}')
+
+    def test_process_scan_on_a_not_in_b(self, driver, seed_host):
+        """Scan submitted to 5085 creates a process in 5085 but not in 5086."""
+        procs_b_before = len(
+            requests.get(f'http://127.0.0.1:{PORT_B}/api/snapshot').json()
+            .get('processes', []))
+
+        # Submit a scan to A only
+        resp = requests.post(f'http://127.0.0.1:{PORT_A}/api/nmap/scan', json={
+            'targets': '127.0.0.1',
+            'scan_mode': 'Easy', 'discovery': False, 'staged': False,
+            'timing': '4', 'nmap_options': ['-n'], 'enable_ipv6': False,
+        }, timeout=10)
+        assert resp.status_code == 200, f'Scan submission to 5085 failed: {resp.json()}'
+
+        time.sleep(2.5)   # snapshot poll
+
+        procs_b_after = len(
+            requests.get(f'http://127.0.0.1:{PORT_B}/api/snapshot').json()
+            .get('processes', []))
+        assert procs_b_after == procs_b_before, (
+            f'Process count in 5086 changed after scan submitted to 5085: '
+            f'before={procs_b_before} after={procs_b_after}. '
+            f'Scan leaked between instances.')
+
+
+# ===========================================================================
 # GROUP 5 — Live Output (US-16, US-18)
 # ===========================================================================
 
