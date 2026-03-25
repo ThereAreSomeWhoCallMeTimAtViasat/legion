@@ -34,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.27-flask
-- **Static asset cache:** `?v=32` in `base.html`
+- **Current Flask version:** v10.30-flask
+- **Static asset cache:** `?v=34` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -174,6 +174,10 @@ Called automatically from `start()` on every project open/create:
 - **v10.25**: Startup/shutdown defensive checks: _startup_check() marks orphan Running/Waiting→Crashed + cleans .live_output files; closeProject() WAL checkpoint + database.dispose(); SIGINT settle sleep
 - **v10.26**: File isolation: RotatingFileHandler (10MB/3 backups) + session separator; _cleanup_orphaned_temp_files() with /proc FD scanning + PID sentinel; _screenshots_taken reset in start(); database.dispose() before file deletion
 - **v10.27**: 25-test session isolation suite (tests/test_session_isolation.py); fixed flock→/proc FD scanning; fixed name-based folder cleanup→PID sentinel approach
+- **v10.28**: settings.py stage defaults fixed (PORTS| prefix, stage3 was wrong "Vulners,CVE", stage6 now NSE|vulners); scroll preservation in loadProcessOutput + loadLog; split font size controls (upper/lower panels independent, `legion_upper_font_pt` key, `upper-font-dec`/`upper-font-inc` buttons)
+- **v10.29**: `legion.py --web` opens Firefox automatically (`--no-remote --profile ~/.mozilla/firefox/legion-profile`, runs as SUDO_USER via `sudo -u`, 1.5s Timer delay)
+- **v10.30**: upper-panel scroll position survives tab rebuilds (`_procScrollPos` map, saved before `container.innerHTML=''`, restored in `loadProcessOutput` on fresh elements)
+- **Test fixes**: test_08 notes (storeNotes in _ensure_seeded_host); test_09 project name (check snapshot API not DOM title); test_clear retry loop (safe — Clear uses postJson, no window.confirm); NEVER add retry loops to actions that trigger window.confirm() — pending dialog blocks Selenium with UnexpectedAlertPresentException
 
 ---
 
@@ -195,6 +199,24 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 - Output served via `/api/screenshots?path=` (not `<path:filename>`)
 - Screenshot PNG found by walking `{outputfile}-dir/` for first `.png`
 - `_deleted_hosts` set — hosts added on delete; `_run_screenshot` skips blacklisted IPs
+
+### Firefox Auto-Open (v10.29)
+- `legion.py --web` fires `threading.Timer(1.5, _open_browser)` before `app.run()`
+- Uses `sudo -u $SUDO_USER env DISPLAY=... XAUTHORITY=... firefox --no-remote --profile PATH`
+- Profile: `~/.mozilla/firefox/legion-profile` — created + chown'd to SUDO_USER on first run
+- `--no-remote`: prevents IPC with existing kali Firefox session (avoids "already running" error)
+- Root cannot use kali's Xauthority cookie directly — must run as the original user
+
+### Upper-Panel Scroll Preservation (v10.30)
+- `renderDynamicToolTabs()` does `container.innerHTML=''` every 1.5s poll, destroying all `scrollTop`
+- Fix: `_procScrollPos = {}` (module-level) maps processId → `'bottom'` | integer scrollTop
+- Before wipe: iterate `dyn-output-*` elements, save `scrollHeight - scrollTop - clientHeight < 40 ? 'bottom' : scrollTop`
+- `loadProcessOutput()` distinguishes: element has content (read actual scrollTop) vs. empty/fresh (read `_procScrollPos`)
+- After innerHTML set: if saved position was a number, `setTimeout(() => el.scrollTop = saved, 0)` restores it
+
+### Font Size Controls
+- **Lower panel** (`legion_output_font_pt`): controls `#process-output-inline`, `#log-panel`, `_termState` xterm; buttons `output-font-dec`/`output-font-inc`, `log-font-dec`/`log-font-inc`
+- **Upper panel** (`legion_upper_font_pt`): controls `#dynamic-tabs-container`, `_dynTermState` xterm; buttons `upper-font-dec`/`upper-font-inc` in right-panel tab bar
 
 ### Log Tab
 - `_InMemoryLogHandler` in `app/logging/legionLog.py` — captures up to 10,000 lines
@@ -228,6 +250,52 @@ self.view.updateInterface() → no-op (browser polls /api/snapshot every 1.5s)
 ---
 
 ## Pending Features — Approved Design Decisions
+
+### Backlog #17 — ANSI Colour in Log Window
+
+**Problem:** The Log tab shows raw ANSI escape codes (e.g. `\x1b[32m`) as literal text instead of rendering them as colour. The original bash terminal rendered these naturally.
+
+**Scope:** Strip or render ANSI codes in the Log tab's output div. Same approach as #16.
+
+**Implementation:** Same ANSI-to-HTML conversion used for #16 — apply to `/api/logs` response rendering in `legion.js`. The log lines come from `_InMemoryLogHandler` which captures Python logger output; tool subprocess output goes through `_capture_output` which also sends lines with ANSI codes.
+
+**Key files:** `app/web/static/js/legion.js` (log tab render), `app/web/routes.py` (`/api/logs`), `app/logging/legionLog.py`
+
+---
+
+### Backlog #16 — ANSI Colour in Ctrl+B Notes
+
+**Problem:** Notes captured via Ctrl+B (terminal copy-to-notes) contain raw ANSI escape sequences. The original Qt terminal rendered colour; the Flask notes panel shows raw codes.
+
+**Scope:** When rendering note content in the notes panel, convert ANSI escape sequences to styled HTML spans before inserting into the DOM.
+
+**Implementation options:**
+- Use the `ansi_up` JS library (MIT, CDN or bundled) — `AnsiUp.ansi_to_html(text)` converts ANSI codes to `<span style="color:...">` HTML
+- Or write a minimal ANSI-to-HTML converter for the subset of codes used by common terminals (30-37 foreground, 40-47 background, 1 bold, 0 reset)
+
+**Key files:** `app/web/static/js/legion.js` (notes render function), `app/web/templates/base.html` (add ansi_up script tag if using library)
+
+---
+
+### Backlog #15 — Move Font Size Controls
+
+**Problem:** The A+/A- font size buttons currently appear before the tab bar. They should be repositioned to after the Brute tab for better visual grouping with the content they control.
+
+**Scope:** Move the `#output-font-dec` / `#output-font-inc` buttons in `index.html` to after the Brute tab button in the tab bar. Verify JS references still work (they use IDs, not position).
+
+**Key files:** `app/web/templates/index.html`, `app/web/static/css/legion.css` (button styling may need adjustment)
+
+---
+
+### Backlog #14 — Taller Tabs
+
+**Problem:** The right-panel tab bar tabs are too short/thin, making them hard to click and visually cramped.
+
+**Scope:** CSS-only change. Increase `min-height` / `padding` on the `.tab-btn` or equivalent tab button selector in `legion.css`.
+
+**Key files:** `app/web/static/css/legion.css` — find `.tab-btn`, `#right-tabs button`, or similar selector; bump `padding-top`/`padding-bottom` or set explicit `height`.
+
+---
 
 ### Backlog #13 — Update legion.conf Tool List
 
@@ -435,6 +503,10 @@ Raw tool output (nikto, dirbuster, hydra) is noisy — verbose headers, informat
 | 11 | Settings GUI — change GeneralSettings/BruteSettings/etc in a form | Med | ❌ Not started | Replaces direct legion.conf editing for settings |
 | 12 | Fix Hydra SSH against legacy targets (libssh2 MAC incompatibility) | Med | ❌ Not started | See design below |
 | 13 | Update legion.conf tool list — retire deprecated tools, add modern equivalents | Med | ✅ Done v10.28 | install_tools.sh + update script; both confs updated |
+| 14 | Taller tabs — increase height of the right-panel tab bar tabs | Low | ❌ Not started | CSS only |
+| 15 | Move font size controls — relocate A+/A- buttons to after the Brute tab | Low | ❌ Not started | index.html + JS |
+| 16 | ANSI colour in Ctrl+B notes — render terminal colour codes in the notes panel | Med | ❌ Not started | xterm.js or CSS ANSI parser in the notes view |
+| 17 | ANSI colour in log window — render colour codes in the Log tab output | Med | ❌ Not started | Same ANSI parser approach as #16 |
 
 ### Backlog #10 — Tool Manager GUI
 Allows adding and removing tool entries (HostActions, PortActions, PortTerminalActions, SchedulerSettings) via a form instead of raw conf editing.
@@ -600,6 +672,23 @@ Allows changing `[GeneralSettings]`, `[BruteSettings]`, `[ToolSettings]`, and `[
 **Root cause**: DB (`legion-k_ne1jmx.legion`) and running folder (`legion-kbb34rnt-running`) are independently named by separate `mkdtemp`/`NamedTemporaryFile` calls. Name-based correlation always fails.
 **Fix**: Write `.legion_session_pid` sentinel in running/output folders on `start()`; use `os.kill(pid, 0)` for liveness.
 **Commit**: `1f6e942` (v10.27)
+
+### T19 — Selenium retry loops broke tests that trigger window.confirm()
+**Symptom**: After adding retry loops to TestHostDelete/TestHostChecked, those tests started failing. TestHostDelete had been passing before.
+**Root cause**: If `ctx_menu_click('Delete')` triggers `window.confirm()` and then raises an exception (any reason), the retry loop catches it and tries again. But the `confirm()` dialog is still pending — Selenium cannot interact with the DOM while a JS dialog is open. The next `wait_row()` in the retry raises `UnexpectedAlertPresentException`, which is NOT in the except clause, and the test fails.
+**Rule**: Only add retry loops to actions that call `postJson()` with NO `window.confirm()` (e.g. Clear). NEVER add retries to Delete, Mark as checked/unchecked, Open Terminal, or any other action that shows a JS dialog.
+**Fix**: Reverted all retry loops except test_clear; commit `1c302b6`
+
+### T20 — test_09 read host name from title bar instead of project name
+**Symptom**: `test_09_title_bar_shows_project_name_after_open` always failed — title showed `10.50.60.1 (unknown)`.
+**Root cause**: test_08 clicks a host row, which updates `#window-title` to the host name. test_09 then reads that DOM element and doesn't find the project filename.
+**Fix**: Check `project.name` from `/api/snapshot` instead of `#window-title`. The snapshot value is authoritative and unaffected by host selection.
+
+### T21 — Upper-panel scroll reset on every snapshot poll
+**Symptom**: Scrolling up in a Running process tab to read earlier output gets hijacked back to the bottom every 1.5 seconds.
+**Root cause**: `renderDynamicToolTabs()` calls `container.innerHTML = ''` on every poll, destroying all `dyn-output-*` elements and their `scrollTop`. The rebuilt element is empty (`scrollHeight ≈ clientHeight`), which `loadProcessOutput` reads as `atBottom = true`, so it auto-scrolls to the bottom.
+**Fix**: `_procScrollPos = {}` map saves positions before the wipe; `loadProcessOutput` checks `_hasContent` to distinguish fresh elements from elements with real content, then restores the saved scroll position.
+**Commit**: `eb00195` (v10.30)
 
 ---
 
