@@ -1189,6 +1189,19 @@ function loadProcessOutput(processId, targetEl) {
         atBottom = true;   /* first load — default to follow */
     }
     fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
+        /* Skip this update if the user has an active text selection inside the
+           element — setting innerHTML would wipe the selection mid-drag.  The
+           next poll (1.5 s) will apply the update once the selection is gone. */
+        try {
+            var _ds = window.getSelection();
+            if (_ds && _ds.toString() && _ds.rangeCount > 0) {
+                var _dr = _ds.getRangeAt(0);
+                if (targetEl.contains(_dr.startContainer) || targetEl.contains(_dr.endContainer)) {
+                    return;
+                }
+            }
+        } catch(e) {}
+
         var text = data.output_chunk || data.output || '';
         /* Prepend match banner when process has match hits (Qt6: yellow QLabel at top) */
         var matchBanner = '';
@@ -2623,23 +2636,36 @@ document.addEventListener('DOMContentLoaded', function() {
        stripped at the API level.  This function walks the buffer cell-by-cell
        over the selected range and reconstructs ANSI escape sequences from the
        stored fg-colour mode and colour value of each character cell.
-       Falls back to plain getSelection() if the buffer API is unavailable. */
+       Falls back to plain getSelection() if the buffer API is unavailable.
+       Handles both xterm.js 5.x naming (startRow/startColumn) and older
+       naming (start.x / start.y) defensively. */
     function xtermSelectionToAnsi(xterm) {
         if (!xterm) return '';
         var pos;
         try { pos = xterm.getSelectionPosition(); } catch(e) {}
         if (!pos) return xterm.getSelection() || '';
 
+        /* Normalise field names across xterm.js versions */
+        var startRow = pos.startRow !== undefined ? pos.startRow
+                     : (pos.start   !== undefined ? pos.start.y : undefined);
+        var startCol = pos.startColumn !== undefined ? pos.startColumn
+                     : (pos.start      !== undefined ? pos.start.x : undefined);
+        var endRow   = pos.endRow !== undefined ? pos.endRow
+                     : (pos.end   !== undefined ? pos.end.y : undefined);
+        var endCol   = pos.endColumn !== undefined ? pos.endColumn
+                     : (pos.end      !== undefined ? pos.end.x : undefined);
+        if (startRow === undefined) return xterm.getSelection() || '';
+
         var buf = xterm.buffer.active;
         var result = '';
         var prevEsc = '';   /* last escape written — skip if unchanged */
 
-        for (var row = pos.startRow; row <= pos.endRow; row++) {
+        for (var row = startRow; row <= endRow; row++) {
             var line = buf.getLine(row);
-            if (!line) { if (row < pos.endRow) result += '\n'; continue; }
+            if (!line) { if (row < endRow) result += '\n'; continue; }
 
-            var colFrom = (row === pos.startRow) ? pos.startColumn : 0;
-            var colTo   = (row === pos.endRow)   ? pos.endColumn   : line.length;
+            var colFrom = (row === startRow) ? startCol : 0;
+            var colTo   = (row === endRow)   ? endCol   : line.length;
 
             for (var col = colFrom; col < colTo; col++) {
                 var cell = line.getCell(col);
@@ -2670,13 +2696,54 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 result += ch;
             }
-            if (row < pos.endRow) {
+            if (row < endRow) {
                 if (prevEsc) { result += '\x1b[0m'; prevEsc = ''; }
                 result += '\n';
             }
         }
         if (prevEsc) result += '\x1b[0m';
         return result || (xterm.getSelection() || '');
+    }
+
+    /* ── DOM selection → ANSI string ────────────────────────────────────────────
+       Browser getSelection().toString() strips HTML tags and returns plain text.
+       For output areas rendered with ansi-fg-* spans, we can reconstruct the
+       ANSI codes by walking the cloned selection fragment and reading class names.
+       Returns plain text (no escapes) for uncoloured spans. */
+    var _ansiClassMap = {
+        'ansi-fg-black':13, 'ansi-fg-red':31, 'ansi-fg-green':32, 'ansi-fg-yellow':33,
+        'ansi-fg-blue':34, 'ansi-fg-magenta':35, 'ansi-fg-cyan':36, 'ansi-fg-white':37,
+        'ansi-fg-bright-black':90, 'ansi-fg-bright-red':91, 'ansi-fg-bright-green':92,
+        'ansi-fg-bright-yellow':93, 'ansi-fg-bright-blue':94, 'ansi-fg-bright-magenta':95,
+        'ansi-fg-bright-cyan':96, 'ansi-fg-bright-white':97
+    };
+    function _walkFragment(node, out) {
+        if (node.nodeType === 3) { /* TEXT_NODE */
+            out.push(node.textContent);
+            return;
+        }
+        if (node.nodeType !== 1) return; /* skip non-element */
+        var cls = node.className || '';
+        var open = '';
+        var classes = cls.split(' ');
+        for (var i = 0; i < classes.length; i++) {
+            var code = _ansiClassMap[classes[i]];
+            if (code) { open = '\x1b[' + code + 'm'; break; }
+        }
+        if (cls.indexOf('ansi-bold') >= 0) open = '\x1b[1m' + open;
+        if (open) out.push(open);
+        node.childNodes.forEach(function(c) { _walkFragment(c, out); });
+        if (open) out.push('\x1b[0m');
+    }
+    function domSelectionToAnsi() {
+        var sel = window.getSelection();
+        if (!sel || !sel.rangeCount || !sel.toString()) return '';
+        var parts = [];
+        try {
+            var frag = sel.getRangeAt(0).cloneContents();
+            frag.childNodes.forEach(function(n) { _walkFragment(n, parts); });
+        } catch(e) { return sel.toString(); }
+        return parts.join('');
     }
 
     /* ── Ctrl+B / Send selection to notes (Qt6: view.py:sendSelectionToNotes) ──
@@ -2717,8 +2784,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* ── 3. Fall back to browser text selection (non-terminal areas) ── */
         if (!text) {
-            var sel = window.getSelection();
-            text = sel ? sel.toString() : '';
+            /* domSelectionToAnsi walks the cloned selection fragment and
+               reconstructs ANSI codes from ansi-fg-* span class names, so
+               colour is preserved for selections in plain-output / dyn-output-*
+               areas that are rendered with ansiToHtml().  Falls back to
+               plain toString() for uncoloured text. */
+            text = domSelectionToAnsi();
             if (text) {
                 try {
                     var node = sel.anchorNode;
