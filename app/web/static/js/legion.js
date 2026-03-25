@@ -4,14 +4,16 @@
    ================================================================ */
 'use strict';
 
-/* ── Notes rendering: convert plain text to HTML with styled === headers === ── */
-/* Qt6: notesCursor.insertText(header, headerFormat) — orange bg, black text */
+/* ── Notes rendering: headers + ANSI colour ── */
+/* Qt6: notesCursor.insertText(header, headerFormat) — orange bg, black text.
+   Lines may contain ANSI codes when inserted via Ctrl+B from terminal output;
+   ansiToHtml() handles both ANSI stripping and HTML escaping. */
 function renderNotes(text) {
     return (text || '').split('\n').map(function(line) {
         if (/^===.*===$/.test(line.trim())) {
             return '<span class="note-header">' + esc(line) + '</span>';
         }
-        return esc(line) || '\u200B'; /* zero-width space keeps empty lines visible */
+        return ansiToHtml(line) || '\u200B'; /* zero-width space keeps empty lines visible */
     }).join('\n');
 }
 function _showNotesDisplay(text) {
@@ -3289,7 +3291,7 @@ document.addEventListener('DOMContentLoaded', function() {
             var out = $('log-output');
             if (out) {
                 var logAtBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
-                out.textContent = (d.lines || []).join('\n');
+                out.innerHTML = ansiToHtml((d.lines || []).join('\n'));
                 if (logAtBottom) out.scrollTop = out.scrollHeight;
             }
             setText('log-line-count', (d.lines||[]).length + ' lines');

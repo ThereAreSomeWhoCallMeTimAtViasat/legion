@@ -102,7 +102,7 @@ html,body{
 .tab-btn{
   background:var(--tab-inactive);border:1px solid var(--border);
   border-bottom:none;color:var(--text);font:inherit;
-  padding:12px 14px;cursor:pointer;white-space:nowrap;
+  padding:15px 14px;cursor:pointer;white-space:nowrap;
   margin-right:-1px;margin-bottom:-1px;
 }
 .tab-btn:hover{background:var(--midlight)}
