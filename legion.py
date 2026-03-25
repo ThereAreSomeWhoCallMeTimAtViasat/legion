@@ -340,22 +340,38 @@ if __name__ == "__main__":
             _display   = _env.get('DISPLAY', ':0')
             _xauth     = _env.get('XAUTHORITY',
                                   f'/home/{_sudo_user}/.Xauthority' if _sudo_user else '')
-            try:
+
+            # Dedicated Legion profile so Firefox never conflicts with an
+            # existing session (--no-remote skips IPC with the running instance;
+            # --profile points at an isolated directory).
+            _home = f'/home/{_sudo_user}' if _sudo_user else _os.path.expanduser('~')
+            _profile = _os.path.join(_home, '.mozilla', 'firefox', 'legion-profile')
+            if not _os.path.isdir(_profile):
+                _os.makedirs(_profile, exist_ok=True)
+                # Profile dir must be owned by the user, not root
                 if _sudo_user:
-                    # Running under sudo: launch Firefox as the original user so
-                    # it can authenticate to their X session (root cannot use the
-                    # kali user's Xauthority cookie directly).
+                    try:
+                        import pwd as _pwd
+                        _pi = _pwd.getpwnam(_sudo_user)
+                        _os.chown(_profile, _pi.pw_uid, _pi.pw_gid)
+                        _os.chown(_os.path.dirname(_profile), _pi.pw_uid, _pi.pw_gid)
+                    except Exception:
+                        pass
+
+            try:
+                _cmd = ['firefox', '--no-remote',
+                        '--profile', _profile,
+                        '--new-window', _url]
+                if _sudo_user:
                     _sp.Popen(
                         ['sudo', '-u', _sudo_user,
                          'env',
                          f'DISPLAY={_display}',
-                         f'XAUTHORITY={_xauth}',
-                         'firefox', '--new-window', _url],
+                         f'XAUTHORITY={_xauth}'] + _cmd,
                         stdout=_sp.DEVNULL, stderr=_sp.DEVNULL
                     )
                 else:
-                    _sp.Popen(['firefox', '--new-window', _url],
-                              stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, env=_env)
+                    _sp.Popen(_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, env=_env)
             except Exception as _be:
                 print(f"[Legion] Could not open Firefox automatically: {_be}")
         import threading as _threading
