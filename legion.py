@@ -328,6 +328,19 @@ if __name__ == "__main__":
         except Exception:
             _ver = 'v??'
         print(f"LEGION {_ver} — web UI starting at http://127.0.0.1:5000")
+
+        # Open a new Firefox window after Flask has had 1.5 s to bind.
+        # Using --new-window guarantees a fresh window rather than a new tab
+        # in an existing session.
+        def _open_browser():
+            try:
+                import subprocess as _sp
+                _sp.Popen(['firefox', '--new-window', 'http://127.0.0.1:5000'],
+                          stdout=_os.devnull, stderr=_os.devnull)
+            except Exception as _be:
+                print(f"[Legion] Could not open Firefox automatically: {_be}")
+        _threading.Timer(1.5, _open_browser).start()
+
         app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
         sys.exit(0)
 
