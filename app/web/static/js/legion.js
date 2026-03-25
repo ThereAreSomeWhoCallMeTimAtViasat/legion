@@ -2864,7 +2864,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* ── 1. Check lower-panel xterm (Interactive processes) ── */
         if (!text && _termState.xterm && typeof _termState.xterm.getSelection === 'function') {
-            var xtSel = xtermSelectionToAnsi(_termState.xterm);
+            var xtSel = _termState.xterm.getSelection();
             if (xtSel) {
                 text = xtSel;
                 var procRow = $('processes-body').querySelector('tr.selected');
@@ -2876,7 +2876,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* ── 2. Check upper-panel dynamic xterm (dynamic tool tabs) ── */
         if (!text && _dynTermState.xterm && typeof _dynTermState.xterm.getSelection === 'function') {
-            var dynSel = xtermSelectionToAnsi(_dynTermState.xterm);
+            var dynSel = _dynTermState.xterm.getSelection();
             if (dynSel) {
                 text = dynSel;
                 var dynTabBtn = $('right-tab-bar') && $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
