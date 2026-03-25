@@ -104,6 +104,25 @@ WRAPPER
 fi
 
 # ---------------------------------------------------------------------------
+# nuclei templates — required before nuclei can scan for anything.
+# The -duc flag in legion.conf commands suppresses per-scan update checks,
+# but templates must be present. They install to ~/.local/nuclei-templates.
+# ---------------------------------------------------------------------------
+NUCLEI_TEMPLATES_DIR="$HOME/.local/nuclei-templates"
+if [[ -d "$NUCLEI_TEMPLATES_DIR" ]] && [[ -n "$(ls -A "$NUCLEI_TEMPLATES_DIR" 2>/dev/null)" ]]; then
+    skip "nuclei templates already present at $NUCLEI_TEMPLATES_DIR"
+else
+    info "Downloading nuclei templates (this may take a moment)..."
+    if nuclei -update-templates 2>&1 | tee /tmp/nuclei-update.log | grep -qE "Successfully installed|up.to.date|No new updates"; then
+        ok "nuclei templates ready at $NUCLEI_TEMPLATES_DIR"
+    elif [[ -d "$NUCLEI_TEMPLATES_DIR" ]]; then
+        ok "nuclei templates present at $NUCLEI_TEMPLATES_DIR"
+    else
+        warn "nuclei template download may have failed — check: nuclei -update-templates"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # mongosh — MongoDB shell (optional; needed for mongo terminal actions)
 # ---------------------------------------------------------------------------
 if command -v mongosh &>/dev/null || command -v mongo &>/dev/null; then
@@ -123,7 +142,7 @@ fi
 echo ""
 echo "=== Summary ==="
 NEWLY_MISSING=()
-for tool in ssh-audit kerbrute rdp-sec-check; do
+for tool in ssh-audit kerbrute rdp-sec-check nuclei; do
     if command -v "$tool" &>/dev/null; then
         ok "$tool: $(command -v $tool)"
     else
