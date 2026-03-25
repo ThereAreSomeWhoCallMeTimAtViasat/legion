@@ -1343,3 +1343,448 @@ class TestUS34_CtrlBExactTextMatch:
             assert marker in body, (
                 f'{marker!r} missing from notes body.\n'
                 f'  Notes body: {body!r}')
+
+
+# ===========================================================================
+# GROUP 2 — Font Size Controls (US-25, US-26)
+# Pytest classes mirroring the logic in generate_report_US25/26.py.
+# The generate_report scripts default to port 5095; these tests use the
+# session-scoped driver on port 5085 (same server as all other pytest tests).
+# ===========================================================================
+
+def _get_font_px(driver, element_id):
+    """Return computed font-size in px for the element (float)."""
+    return driver.execute_script(
+        f"var el = document.getElementById('{element_id}');"
+        "if (!el) return null;"
+        "return parseFloat(window.getComputedStyle(el).fontSize);")
+
+
+class TestUS25_UpperFontSize:
+    """
+    US-25: Clicking #upper-font-inc increases #dynamic-tabs-container font-size
+    without changing #process-output-inline (lower panel is independent).
+    """
+
+    def test_upper_font_increases_on_inc_click(self, driver, seed_host):
+        """One click of #upper-font-inc increases upper panel computed font-size."""
+        before = _get_font_px(driver, 'dynamic-tabs-container')
+        assert before is not None and before > 0, \
+            '#dynamic-tabs-container has no computed font-size'
+
+        driver.execute_script("document.getElementById('upper-font-inc').click()")
+        time.sleep(0.4)
+
+        after = _get_font_px(driver, 'dynamic-tabs-container')
+        assert after > before, (
+            f'Upper font did not increase after #upper-font-inc click: '
+            f'before={before}px after={after}px')
+
+        # Restore
+        driver.execute_script("document.getElementById('upper-font-dec').click()")
+        time.sleep(0.2)
+
+    def test_upper_font_change_does_not_affect_lower_panel(self, driver, seed_host):
+        """Clicking #upper-font-inc leaves #process-output-inline font-size unchanged."""
+        lower_before = _get_font_px(driver, 'process-output-inline')
+        assert lower_before is not None and lower_before > 0, \
+            '#process-output-inline has no computed font-size'
+
+        driver.execute_script("document.getElementById('upper-font-inc').click()")
+        time.sleep(0.4)
+
+        lower_after = _get_font_px(driver, 'process-output-inline')
+        assert abs(lower_after - lower_before) < 1.0, (
+            f'Lower panel font changed after upper A+ click: '
+            f'before={lower_before}px after={lower_after}px — panels must be independent')
+
+        driver.execute_script("document.getElementById('upper-font-dec').click()")
+        time.sleep(0.2)
+
+    def test_upper_font_dec_decreases_size(self, driver, seed_host):
+        """#upper-font-dec shrinks the upper panel font."""
+        # First grow so there is room to shrink
+        driver.execute_script("document.getElementById('upper-font-inc').click()")
+        time.sleep(0.3)
+        before = _get_font_px(driver, 'dynamic-tabs-container')
+
+        driver.execute_script("document.getElementById('upper-font-dec').click()")
+        time.sleep(0.4)
+
+        after = _get_font_px(driver, 'dynamic-tabs-container')
+        assert after < before, (
+            f'Upper font did not decrease after #upper-font-dec click: '
+            f'before={before}px after={after}px')
+
+
+class TestUS26_LowerFontSize:
+    """
+    US-26: Clicking #output-font-inc increases #process-output-inline font-size
+    without changing #dynamic-tabs-container (upper panel is independent).
+    """
+
+    def test_lower_font_increases_on_inc_click(self, driver, seed_host):
+        """One click of #output-font-inc increases lower panel computed font-size."""
+        before = _get_font_px(driver, 'process-output-inline')
+        assert before is not None and before > 0, \
+            '#process-output-inline has no computed font-size'
+
+        driver.execute_script("document.getElementById('output-font-inc').click()")
+        time.sleep(0.4)
+
+        after = _get_font_px(driver, 'process-output-inline')
+        assert after > before, (
+            f'Lower font did not increase after #output-font-inc click: '
+            f'before={before}px after={after}px')
+
+        driver.execute_script("document.getElementById('output-font-dec').click()")
+        time.sleep(0.2)
+
+    def test_lower_font_change_does_not_affect_upper_panel(self, driver, seed_host):
+        """Clicking #output-font-inc leaves #dynamic-tabs-container font-size unchanged."""
+        upper_before = _get_font_px(driver, 'dynamic-tabs-container')
+        assert upper_before is not None and upper_before > 0
+
+        driver.execute_script("document.getElementById('output-font-inc').click()")
+        time.sleep(0.4)
+
+        upper_after = _get_font_px(driver, 'dynamic-tabs-container')
+        assert abs(upper_after - upper_before) < 1.0, (
+            f'Upper panel font changed after lower A+ click: '
+            f'before={upper_before}px after={upper_after}px — panels must be independent')
+
+        driver.execute_script("document.getElementById('output-font-dec').click()")
+        time.sleep(0.2)
+
+    def test_lower_font_dec_decreases_size(self, driver, seed_host):
+        """#output-font-dec shrinks the lower panel font."""
+        driver.execute_script("document.getElementById('output-font-inc').click()")
+        time.sleep(0.3)
+        before = _get_font_px(driver, 'process-output-inline')
+
+        driver.execute_script("document.getElementById('output-font-dec').click()")
+        time.sleep(0.4)
+
+        after = _get_font_px(driver, 'process-output-inline')
+        assert after < before, (
+            f'Lower font did not decrease after #output-font-dec click: '
+            f'before={before}px after={after}px')
+
+
+# ===========================================================================
+# GROUP 4 — Match Logic (US-44/45/46) and Proc-Match CSS (US-31)
+# Each test uses a unique fake port (2201-2209) so wc._matches keys
+# ("hostIp:custom (PORT/tcp)") do not accumulate between scenarios.
+# ===========================================================================
+
+def _run_cmd_and_wait(host_ip, cmd, port, timeout=25):
+    """Run cmd via /api/processes/custom and wait for Finished/Crashed.
+    Returns (has_match, match_text, status) from snapshot."""
+    resp = api('post', '/api/processes/custom', json={
+        'command': cmd, 'host_ip': host_ip, 'port': str(port), 'protocol': 'tcp'})
+    pid = resp.json().get('process_id')
+    assert pid, f'No process_id: {resp.json()}'
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        procs = api('get', '/api/snapshot').json().get('processes', [])
+        for p in procs:
+            if str(p.get('id')) == str(pid):
+                if p.get('status') in ('Finished', 'Crashed'):
+                    return pid, p.get('has_match', False), p.get('match_text', ''), p.get('status')
+        time.sleep(0.5)
+    return pid, False, '', 'Timeout'
+
+
+def _proc_match_class(driver, pid):
+    """True if the process row has CSS class proc-match."""
+    return driver.execute_script(
+        f"var r = document.querySelector('#processes-body tr[data-process-id=\"{pid}\"]');"
+        "return r ? r.classList.contains('proc-match') : null;")
+
+
+_MATCH_HOST = '10.10.10.1'
+
+
+class TestUS44US45US46_MatchLogic:
+    """
+    US-44: Matching is case-sensitive — 'SUCCEED' matches; 'succeed' does not.
+    US-45: Space-guarded keywords use word-boundary regex — ' PUT ' matches
+           'HTTP PUT is allowed' but NOT 'PUTTY OUTPUT'.
+    US-46: Global-negative suppresses global-positive on the same line.
+
+    Each scenario runs a real command via /api/processes/custom, waits for
+    it to Finish, then checks has_match in the snapshot AND proc-match CSS
+    class in the DOM — two independent layers of verification.
+    """
+
+    def test_us44_uppercase_keyword_matches(self, driver, seed_host):
+        """'SUCCEED' (uppercase) in output → has_match=True, proc-match CSS set."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, status = _run_cmd_and_wait(_MATCH_HOST, 'printf "SUCCEED test"', 2201)
+        time.sleep(1.5)
+        row_match = _proc_match_class(driver, pid)
+
+        assert has_match is True, \
+            f'"SUCCEED" in output → has_match must be True; got {has_match} (status={status})'
+        assert row_match is True, \
+            f'proc-match CSS class missing from process row {pid}'
+
+    def test_us44_lowercase_keyword_no_match(self, driver, seed_host):
+        """'succeed' (lowercase) → has_match=False — matching is case-sensitive."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, status = _run_cmd_and_wait(_MATCH_HOST, 'printf "succeed test"', 2202)
+        time.sleep(1.5)
+        row_match = _proc_match_class(driver, pid)
+
+        assert has_match is False, \
+            f'"succeed" (lowercase) must NOT match "SUCCEED" keyword; got has_match={has_match}'
+        assert row_match is not True, \
+            f'proc-match CSS class incorrectly set for lowercase output'
+
+    def test_us45_word_boundary_match(self, driver, seed_host):
+        """' PUT ' word-boundary: 'HTTP PUT is allowed' → match."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, _ = _run_cmd_and_wait(_MATCH_HOST, 'printf "HTTP PUT is allowed"', 2203)
+        time.sleep(1.5)
+
+        assert has_match is True, \
+            '"HTTP PUT is allowed" must match — PUT surrounded by non-word chars'
+
+    def test_us45_word_boundary_no_match_embedded(self, driver, seed_host):
+        """' PUT ' word-boundary: 'PUTTY OUTPUT' → no match (PUT embedded in words)."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, _ = _run_cmd_and_wait(_MATCH_HOST, 'printf "PUTTY OUTPUT"', 2204)
+        time.sleep(1.5)
+
+        assert has_match is False, \
+            '"PUTTY OUTPUT" must NOT match — PUT followed/preceded by word chars'
+
+    def test_us46_positive_fires_without_negative(self, driver, seed_host):
+        """'vulnerable' with no negative keyword on same line → match."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, _ = _run_cmd_and_wait(
+            _MATCH_HOST, 'printf "system is vulnerable"', 2205)
+        time.sleep(1.5)
+
+        assert has_match is True, \
+            '"system is vulnerable" must match — "vulnerable" is in global-positive'
+
+    def test_us46_negative_suppresses_positive(self, driver, seed_host):
+        """'NOT vulnerable' on same line → negative suppresses 'vulnerable' positive."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, _ = _run_cmd_and_wait(
+            _MATCH_HOST, 'printf "system is NOT vulnerable to this"', 2206)
+        time.sleep(1.5)
+
+        assert has_match is False, (
+            '"NOT vulnerable" is in global-negative — must suppress "vulnerable" positive. '
+            '_getMatches checks negatives FIRST and returns empty immediately.')
+
+
+class TestUS31_ProcMatchCSS:
+    """
+    US-31 (corrected): When a tool produces output containing a global-positive
+    keyword, the process row gets CSS class 'proc-match' and the dynamic tab
+    button gets class 'tab-match'.
+    """
+
+    def test_matching_output_sets_proc_match_class(self, driver, seed_host):
+        """Command outputting 'State: VULNERABLE' → process row gets proc-match."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, status = _run_cmd_and_wait(
+            _MATCH_HOST, 'printf "State: VULNERABLE"', 2207)
+        time.sleep(1.5)
+
+        row_match = _proc_match_class(driver, pid)
+        assert has_match is True, f'has_match must be True; got {has_match}'
+        assert row_match is True, (
+            f'proc-match CSS class not on process row {pid} after matching output. '
+            f'renderProcesses() adds it when p.has_match is truthy (legion.js line 705).')
+
+    def test_non_matching_output_no_proc_match_class(self, driver, seed_host):
+        """Command with no keyword match → process row has NO proc-match class."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, _ = _run_cmd_and_wait(
+            _MATCH_HOST, 'printf "nothing interesting here xyzzy"', 2208)
+        time.sleep(1.5)
+
+        row_match = _proc_match_class(driver, pid)
+        assert has_match is False, f'has_match should be False for non-matching output'
+        assert row_match is not True, \
+            f'proc-match class incorrectly set on process row {pid}'
+
+    def test_matching_output_star_in_name_cell(self, driver, seed_host):
+        """Process row Name cell (td:nth-child(2)) gets a ★ prefix on match."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_MATCH_HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        pid, has_match, _, _ = _run_cmd_and_wait(
+            _MATCH_HOST, 'printf "State: VULNERABLE"', 2209)
+        time.sleep(1.5)
+
+        name_cell = driver.execute_script(
+            f"var r = document.querySelector('#processes-body tr[data-process-id=\"{pid}\"]');"
+            "if (!r) return null;"
+            "var c = r.querySelectorAll('td');"
+            "return c.length >= 2 ? c[1].textContent : null;")
+
+        assert name_cell is not None, f'Process row {pid} not found in DOM'
+        assert '\u2605' in (name_cell or ''), (
+            f'★ (U+2605) not in Name cell after match. Got: {name_cell!r}. '
+            f'legion.js line 708: matchIcon = "★" prepended when p.has_match is true.')
+
+
+# ===========================================================================
+# GROUP 6 — Config Manager Ctrl+F (US-54)
+# ===========================================================================
+
+def _open_config_manager(driver):
+    """Open Config Manager via JS click (same path as F2 keydown handler).
+    Waits for textarea content — cfgLoadProfiles() populates it async."""
+    driver.execute_script("document.getElementById('action-config').click()")
+    W(driver, 5).until(
+        lambda d: 'is-open' in (
+            d.find_element(By.ID, 'config-modal').get_attribute('class') or ''))
+    # Wait for textarea to be populated by cfgLoadProfiles()
+    W(driver, 8).until(lambda d: bool(d.execute_script(
+        "var ta = document.querySelector('#config-editors textarea');"
+        "return ta && ta.value.length > 0;")))
+
+
+def _close_config_manager(driver):
+    try:
+        driver.find_element(By.CSS_SELECTOR, '#config-modal .modal-close-btn').click()
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+
+class TestUS54_ConfigManagerCtrlF:
+    """
+    US-54: Pressing Ctrl+F while the Config Manager modal is open must show
+    the find bar (#cfg-find-bar). Typing a search term must highlight matches
+    with <mark> elements. Pressing Escape must hide the bar and clear marks.
+
+    Ctrl+F is sent via ActionChains (isTrusted=true browser keyboard event)
+    through the document keydown listener, not dispatchEvent.
+    """
+
+    def _get_config_textarea(self, driver):
+        """The config textarea is dynamically created inside #config-editors.
+        Selector: #config-editors textarea (data-profile attribute varies)."""
+        return driver.execute_script(
+            "return document.querySelector('#config-editors textarea');")
+
+    def test_ctrlf_opens_find_bar(self, driver, seed_host):
+        """Ctrl+F while Config Manager is open makes #cfg-find-bar visible."""
+        _open_config_manager(driver)
+        time.sleep(0.8)   # JS creates the textarea dynamically
+
+        # Confirm find bar hidden before Ctrl+F
+        bar = driver.find_element(By.ID, 'cfg-find-bar')
+        assert not bar.is_displayed(), '#cfg-find-bar should be hidden before Ctrl+F'
+
+        # JS-focus the textarea (no ActionChains click — element may be off-screen)
+        # then send Ctrl+F with no target element so it goes to the document
+        driver.execute_script(
+            "var ta = document.querySelector('#config-editors textarea');"
+            "if (ta) ta.focus();")
+        time.sleep(0.2)
+        ActionChains(driver).key_down(Keys.CONTROL).send_keys('f') \
+                            .key_up(Keys.CONTROL).perform()
+        time.sleep(0.5)
+
+        assert bar.is_displayed(), \
+            '#cfg-find-bar not visible after Ctrl+F in Config Manager'
+
+        _close_config_manager(driver)
+
+    def test_search_term_produces_mark_highlights(self, driver, seed_host):
+        """Typing 'nmap' in the find bar highlights matches with <mark> elements."""
+        _open_config_manager(driver)
+
+        driver.execute_script(
+            "var ta = document.querySelector('#config-editors textarea');"
+            "if (ta) ta.focus();")
+        time.sleep(0.2)
+        ActionChains(driver).key_down(Keys.CONTROL).send_keys('f') \
+                            .key_up(Keys.CONTROL).perform()
+        time.sleep(0.4)
+
+        find_input = driver.find_element(By.ID, 'cfg-find-input')
+        find_input.clear()
+        find_input.send_keys('nmap')
+        time.sleep(0.5)
+
+        mark_count = driver.execute_script(
+            "return document.querySelectorAll('.cfg-find-overlay mark').length")
+        assert mark_count > 0, (
+            f'No <mark> elements after searching "nmap" — '
+            f'find bar must highlight matches in the config text overlay')
+
+        _close_config_manager(driver)
+
+    def test_escape_hides_find_bar(self, driver, seed_host):
+        """Escape key hides #cfg-find-bar and clears match highlights."""
+        _open_config_manager(driver)
+
+        driver.execute_script(
+            "var ta = document.querySelector('#config-editors textarea');"
+            "if (ta) ta.focus();")
+        time.sleep(0.2)
+        ActionChains(driver).key_down(Keys.CONTROL).send_keys('f') \
+                            .key_up(Keys.CONTROL).perform()
+        time.sleep(0.4)
+
+        find_input = driver.find_element(By.ID, 'cfg-find-input')
+        find_input.send_keys('nmap')
+        time.sleep(0.4)
+
+        find_input.send_keys(Keys.ESCAPE)
+        time.sleep(0.4)
+
+        bar = driver.find_element(By.ID, 'cfg-find-bar')
+        assert not bar.is_displayed(), \
+            '#cfg-find-bar still visible after Escape key'
+
+        mark_count = driver.execute_script(
+            "return document.querySelectorAll('.cfg-find-overlay mark').length")
+        assert mark_count == 0, \
+            f'<mark> elements not cleared after Escape: {mark_count} remain'
+
+        _close_config_manager(driver)
