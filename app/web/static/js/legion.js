@@ -16,12 +16,22 @@ function renderNotes(text) {
         return ansiToHtml(line) || '\u200B'; /* zero-width space keeps empty lines visible */
     }).join('\n');
 }
+/* True while the user is actively editing notes (textarea visible).
+   _showNotesDisplay() respects this flag so that snapshot refreshes and
+   tab switches don't pull the user out of edit mode mid-edit. */
+var _notesEditMode = false;
+
 function _showNotesDisplay(text) {
     var disp = $('notes-display'), ta = $('notes-text');
     if (!disp || !ta) return;
+    if (_notesEditMode) {
+        /* User is editing — refresh the textarea value with the latest server
+           text only if it differs from what they have (avoids clobbering
+           in-progress edits but keeps the textarea in sync with saved content). */
+        return;
+    }
     /* Keep the textarea value in sync with the raw text (including ANSI codes)
-       so that clicking the display to edit always has the correct raw string.
-       Without this, clicking the display would read an empty or stale textarea. */
+       so that entering edit mode always has the correct raw string available. */
     ta.value = (text || '');
     disp.innerHTML = renderNotes(text);
     disp.style.display = '';
@@ -35,7 +45,8 @@ var _noteHostId = null;
 function _showNotesEdit(text) {
     var disp = $('notes-display'), ta = $('notes-text');
     if (!disp || !ta) return;
-    _noteHostId = L.selectedHostId;   /* snapshot host ID at edit-start */
+    _noteHostId = L.selectedHostId;
+    _notesEditMode = true;
     ta.value = text !== undefined ? text : (ta.value || '');
     disp.style.display = 'none';
     ta.style.display = '';
@@ -2435,6 +2446,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* Textarea blur → save to the host that was being edited (_noteHostId),
        NOT L.selectedHostId which may already point to a newly-clicked host. */
     if (notesTa) notesTa.addEventListener('blur', function() {
+        _notesEditMode = false;   /* leave edit mode before calling _showNotesDisplay */
         var saveId = _noteHostId || L.selectedHostId;
         _noteHostId = null;
         if (!saveId) { _showNotesDisplay(notesTa.value); return; }
@@ -2971,12 +2983,24 @@ document.addEventListener('DOMContentLoaded', function() {
             _notesTabBtn.style.background = 'rgba(255,165,0,0.6)';
             setTimeout(function() { _notesTabBtn.style.background = _origBtnBg; }, 400);
         }
-        /* Also flash the source element when it is a plain DOM area
-           (not an xterm terminal where the flash would be invisible). */
-        if (sourceEl && sourceEl.id !== 'terminal-output') {
-            var origBg = sourceEl.style.background;
-            sourceEl.style.background = 'rgba(255,165,0,0.35)';
-            setTimeout(function() { sourceEl.style.background = origBg; }, 200);
+        /* Flash the source element background with a positioned overlay so the
+           flash is visible even when xterm or other content renders on top.
+           The overlay sits at z-index 9999, is pointer-events:none so it
+           doesn't block interaction, and removes itself after 250 ms. */
+        if (sourceEl) {
+            try {
+                var _ov = document.createElement('div');
+                _ov.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;'
+                    + 'background:rgba(255,165,0,0.4);z-index:9999;'
+                    + 'pointer-events:none;border-radius:inherit';
+                var _pos = window.getComputedStyle(sourceEl).position;
+                if (_pos === 'static') sourceEl.style.position = 'relative';
+                sourceEl.appendChild(_ov);
+                setTimeout(function() {
+                    if (_ov.parentNode) _ov.parentNode.removeChild(_ov);
+                    if (_pos === 'static') sourceEl.style.position = '';
+                }, 250);
+            } catch(e2) {}
         }
 
         /* Build formatted block: orange header + selection + spacing */
