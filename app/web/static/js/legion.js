@@ -19,6 +19,10 @@ function renderNotes(text) {
 function _showNotesDisplay(text) {
     var disp = $('notes-display'), ta = $('notes-text');
     if (!disp || !ta) return;
+    /* Keep the textarea value in sync with the raw text (including ANSI codes)
+       so that clicking the display to edit always has the correct raw string.
+       Without this, clicking the display would read an empty or stale textarea. */
+    ta.value = (text || '');
     disp.innerHTML = renderNotes(text);
     disp.style.display = '';
     ta.style.display = 'none';
@@ -2386,7 +2390,10 @@ document.addEventListener('DOMContentLoaded', function() {
     var notesTa   = $('notes-text');
     /* Click display div → switch to textarea for editing */
     if (notesDisp) notesDisp.addEventListener('click', function() {
-        _showNotesEdit(notesDisp.innerText);
+        /* Use the textarea's existing value (which holds raw ANSI codes),
+           NOT notesDisp.innerText which strips all HTML tags and loses colour.
+           The textarea value is always kept in sync with the raw note text. */
+        _showNotesEdit(notesTa ? notesTa.value : notesDisp.innerText);
     });
     /* Textarea blur → save to the host that was being edited (_noteHostId),
        NOT L.selectedHostId which may already point to a newly-clicked host. */
