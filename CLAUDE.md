@@ -728,6 +728,46 @@ Allows changing `[GeneralSettings]`, `[BruteSettings]`, `[ToolSettings]`, and `[
 | 5097 | test_selenium_multihost.py |
 | 5096 | test_selenium_gaps.py |
 | 5094 | test_selenium_terminal.py |
+| 5091 | test_goal1_upper_selection.py |
+| 5090 | test_goal5_notes_formatting.py |
+| 5089 | test_goal6_terminal_ctrlb.py |
+| 5088 | test_goal4_match_highlight_ctrlb.py |
+| 5087 | test_goal3_ansi_ctrlb.py |
+| 5086 | test_goal2_lower_selection.py |
+| 5085 | test_goal_selection_confinement.py / test_user_stories.py (live server) |
+| 5084 | test_shutdown_subprocess.py (heartbeat watchdog) |
+| 5083 | test_shutdown_subprocess.py (kill descendants) |
+
+### User Story Tests (tests/test_user_stories.py)
+Run against a **real** `legion.py --web --port 5085` server (not a test-app fixture).
+Seed: `curl -X POST http://127.0.0.1:5085/api/nmap/import-xml -d '{"path":"/tmp/seed.xml"}'`
+
+| Class | US | What is verified |
+|-------|----|-----------------|
+| `TestUS04_InvalidHostInput` | US-04 | Empty → JS validation visible; pipe/backtick → zero new processes (server 400); valid IP → process created |
+| `TestUS34_CtrlBExactTextMatch` | US-34 | Single-line: `terminal.select(col,row,len)` selects exact marker; `xterm.getSelection()` == notes body after Ctrl+B. Multi-line: span from first to last marker; same equality check |
+
+**Key implementation details for US-34:**
+- `_select_marker_in_buffer(driver, marker)` — scans xterm buffer via JS, calls `terminal.select(col, row, len)`, returns `getSelection()`
+- `_select_markers_range(driver, start, end)` — finds start/end rows, computes span length across `terminal.cols`, calls `terminal.select()`
+- `_ctrlb(driver)` — JS `.focus()` on `.xterm-helper-textarea` (NOT `.click()` — click clears selection), then ActionChains Ctrl+B
+- `_parse_notes_body(notes_raw, marker)` — splits on `=== Selection from`, finds last block containing marker, returns body text
+- Comparison: `selection.strip() == body.strip()` — exact match of what xterm reported selected vs what landed in notes
+
+### HTML Test Report Generator (tests/generate_test1_report.py)
+Generates a self-contained HTML report with inline base64 screenshots for US-04.
+```bash
+sudo python3 tests/generate_test1_report.py --port 5085 --out /tmp/legion_report/us04.html
+firefox /tmp/legion_report/us04.html
+```
+Each step has: step number, annotation text, pass/fail indicator, screenshot with orange outline on the relevant element.
+
+### Test Audit — Real vs Hollow
+| Category | Files | Verdict |
+|----------|-------|---------|
+| **Real** | test_behavioral.py, test_session_isolation.py, test_selenium_*.py, test_phase1-5_*.py, test_routes_webcontroller.py, test_goal*.py, test_user_stories.py | Execute live code, check DB/DOM |
+| **Hollow** | tests/integration/test_SmokeTests.py, test_CoreWorkflows.py, test_UIRegressions.py, test_CriticalPaths.py, tests/features/test_Tab*.py, test_Notes*.py, test_Html*.py, test_Tool*.py | MagicMock everything; zero real assertions |
+| **Qt6 only** | tests/ui/observers/, tests/ui/test_eventfilter.py, test_qt6_gaps.py, test_visualupgrades_features.py, test_v6_v7_fixes.py | Skipped in Flask mode |
 
 ### Known Gotchas
 - **Firefox as root**: must `os.environ.pop('XAUTHORITY', None); os.environ.pop('DISPLAY', None)` before starting driver
