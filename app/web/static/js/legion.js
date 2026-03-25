@@ -1191,11 +1191,13 @@ function loadProcessOutput(processId, targetEl) {
     }
     fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
         /* Skip this update if the user has an active text selection inside the
-           element — setting innerHTML would wipe the selection mid-drag.  The
-           next poll (1.5 s) will apply the update once the selection is gone. */
+           element — setting innerHTML would wipe the selection mid-drag.
+           Only skip when the element already has content (scrollHeight > clientHeight
+           or has child nodes); skip on an empty/placeholder element would prevent
+           the first load from ever populating it. */
         try {
             var _ds = window.getSelection();
-            if (_ds && _ds.toString() && _ds.rangeCount > 0) {
+            if (_ds && _ds.toString() && _ds.rangeCount > 0 && targetEl.childNodes.length > 1) {
                 var _dr = _ds.getRangeAt(0);
                 if (targetEl.contains(_dr.startContainer) || targetEl.contains(_dr.endContainer)) {
                     return;
@@ -2725,62 +2727,73 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     /* ── DOM selection → ANSI string ──────────────────────────────────────────
-       cloneContents() alone does NOT work: a text node selected WITHIN a coloured
-       span (e.g. <span class="ansi-fg-green">open</span>) appears as a plain
-       orphan text node in the clone — its parent span (which holds the colour
-       class) is not cloned.  Instead we use a TreeWalker to visit every text
-       node that overlaps the selection range, then climb its parent chain to
-       find the nearest ansi-fg-* class and reconstruct the ANSI escape. */
+       Walks every text node that is a descendant of the selection's common
+       ancestor, checking whether it falls within the selection range and
+       climbing its parent chain to reconstruct ansi-fg-* ANSI escape codes.
+       Uses a simple recursive walk instead of TreeWalker+compareBoundaryPoints
+       to avoid browser-specific issues with those APIs inside event handlers. */
     function domSelectionToAnsi() {
         var sel = window.getSelection();
         if (!sel || !sel.rangeCount || !sel.toString()) return '';
 
-        var range = sel.getRangeAt(0);
-        var parts = [];
+        /* Local colour map (not a closure reference) so it's always reachable
+           from inside dispatched-event callbacks regardless of scope quirks. */
+        var am = {
+            'ansi-fg-black':30,'ansi-fg-red':31,'ansi-fg-green':32,'ansi-fg-yellow':33,
+            'ansi-fg-blue':34,'ansi-fg-magenta':35,'ansi-fg-cyan':36,'ansi-fg-white':37,
+            'ansi-fg-bright-black':90,'ansi-fg-bright-red':91,'ansi-fg-bright-green':92,
+            'ansi-fg-bright-yellow':93,'ansi-fg-bright-blue':94,'ansi-fg-bright-magenta':95,
+            'ansi-fg-bright-cyan':96,'ansi-fg-bright-white':97
+        };
+
+        var range  = sel.getRangeAt(0);
+        var result = [];
 
         try {
-            /* TreeWalker root: the common ancestor element */
             var root = range.commonAncestorContainer;
             if (root.nodeType === 3) root = root.parentElement;
 
-            var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-            var node;
+            /* Recursive walk — no TreeWalker, no compareBoundaryPoints.
+               For text nodes we use startOffset/endOffset when the node is
+               a range boundary; otherwise we take the full text.  All text
+               nodes that are descendants of root are visited; ones outside
+               the selection produce empty text (substring 0→0 or len→len)
+               and are silently skipped by the `if (!txt)` guard. */
+            function walk(node) {
+                if (node.nodeType === 3) {
+                    var off0 = (node === range.startContainer) ? range.startOffset : 0;
+                    var off1 = (node === range.endContainer)   ? range.endOffset   : node.length;
+                    var txt  = node.textContent.substring(off0, off1);
+                    if (!txt) return;
 
-            while ((node = walker.nextNode())) {
-                /* Range intersection check using boundary-point comparison.
-                   END_TO_START: compare this node's end to selection's start.
-                   <= 0  →  node ends before or at selection start → skip.
-                   START_TO_END: compare this node's start to selection's end.
-                   >= 0  →  node starts at or after selection end → done.   */
-                var nr = document.createRange();
-                nr.selectNodeContents(node);
-                if (nr.compareBoundaryPoints(Range.END_TO_START, range) <= 0) continue;
-                if (nr.compareBoundaryPoints(Range.START_TO_END, range) >= 0) break;
-
-                var startOff = (node === range.startContainer) ? range.startOffset : 0;
-                var endOff   = (node === range.endContainer)   ? range.endOffset   : node.length;
-                var text     = node.textContent.substring(startOff, endOff);
-
-                if (text) {
-                    /* Climb parent chain looking for the nearest ansi colour class */
+                    /* Climb parent chain to find the nearest colour class */
                     var esc = '', bold = false, p = node.parentElement;
                     while (p && p !== root) {
-                        var classes = (p.className || '').split(' ');
-                        for (var i = 0; i < classes.length; i++) {
-                            var code = _ansiClassMap[classes[i]];
+                        var cls = (p.className || '').split(' ');
+                        for (var i = 0; i < cls.length; i++) {
+                            var code = am[cls[i]];
                             if (code) { esc = '\x1b[' + code + 'm'; break; }
-                            if (classes[i] === 'ansi-bold') bold = true;
+                            if (cls[i] === 'ansi-bold') bold = true;
                         }
                         if (esc) break;
                         p = p.parentElement;
                     }
                     if (bold) esc = '\x1b[1m' + esc;
-                    parts.push(esc ? esc + text + '\x1b[0m' : text);
+                    result.push(esc ? esc + txt + '\x1b[0m' : txt);
+
+                } else if (node.nodeType === 1) {
+                    for (var j = 0; j < node.childNodes.length; j++) {
+                        walk(node.childNodes[j]);
+                    }
                 }
+            }
+
+            for (var k = 0; k < root.childNodes.length; k++) {
+                walk(root.childNodes[k]);
             }
         } catch(e) { return sel.toString(); }
 
-        return parts.join('') || sel.toString();
+        return result.join('') || sel.toString();
     }
 
     /* ── Ctrl+B / Send selection to notes (Qt6: view.py:sendSelectionToNotes) ──
