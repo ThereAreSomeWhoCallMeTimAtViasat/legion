@@ -652,10 +652,17 @@ class TestContextMenus:
         dismiss_menu(driver)
 
     def test_host_ctx_menu_has_delete(self, driver):
-        row = wait_for_host_row(driver, '10.10.10.1')
-        ActionChains(driver).context_click(row).perform()
-        menu = wait_present(driver, '#ctx-menu')
-        labels = [b.text for b in menu.find_elements(By.TAG_NAME, 'button')]
+        from selenium.common.exceptions import StaleElementReferenceException
+        labels = []
+        for _attempt in range(8):
+            try:
+                row = wait_for_host_row(driver, '10.10.10.1')
+                ActionChains(driver).context_click(row).perform()
+                menu = wait_present(driver, '#ctx-menu')
+                labels = [b.text for b in menu.find_elements(By.TAG_NAME, 'button')]
+                break
+            except (StaleElementReferenceException, Exception):
+                time.sleep(0.3)
         assert any('Delete' in l or 'delete' in l for l in labels), \
             f"No Delete in menu: {labels}"
         dismiss_menu(driver)

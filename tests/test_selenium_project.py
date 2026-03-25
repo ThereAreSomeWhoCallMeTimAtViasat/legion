@@ -281,6 +281,14 @@ class TestProjectSaveOpen:
                 project=server['logic'].activeProject,
                 xml_path=p, output="")
             os.unlink(p)
+            # Restore note so save/open round-trip (test_08) can verify it
+            from app.auxiliary import Filters
+            _rsh = server['logic'].activeProject.repositoryContainer
+            _rsh_hosts = _rsh.hostRepository.getHosts(Filters())
+            if _rsh_hosts:
+                _rsh_h = _rsh_hosts[0]
+                _rsh_hid = _rsh_h.get('id') if isinstance(_rsh_h, dict) else getattr(_rsh_h, 'id')
+                _rsh.noteRepository.storeNotes(_rsh_hid, 'selenium-round-trip-note')
             wait_for_host_row(driver, '10.50.60.1', timeout=POLL * 3)
 
     def test_01_save_opens_file_browser(self, proj_driver, proj_server):
