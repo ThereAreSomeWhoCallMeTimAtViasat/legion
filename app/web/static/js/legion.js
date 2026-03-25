@@ -2742,10 +2742,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 var esc = '';
                 var mode  = cell.getFgColorMode();
                 var color = cell.getFgColor();
-                if      (mode === 1 && color < 8)  esc = '\x1b[3' + color + 'm';
-                else if (mode === 1)               esc = '\x1b[9' + (color - 8) + 'm';
-                else if (mode === 2)               esc = '\x1b[38;5;' + color + 'm';
-                else if (mode === 3) {
+                /* getFgColorMode() returns the raw xterm.js bitmask constant,
+                   not normalized 0/1/2/3 as the docs imply.
+                   CM_P16=0x1000000, CM_P256=0x2000000, CM_RGB=0x3000000 */
+                if      (mode === 0x1000000 && color < 8)  esc = '\x1b[3' + color + 'm';
+                else if (mode === 0x1000000)               esc = '\x1b[9' + (color - 8) + 'm';
+                else if (mode === 0x2000000)               esc = '\x1b[38;5;' + color + 'm';
+                else if (mode === 0x3000000) {
                     var r = (color >> 16) & 0xff;
                     var g = (color >> 8)  & 0xff;
                     var b =  color        & 0xff;
@@ -2995,13 +2998,24 @@ document.addEventListener('DOMContentLoaded', function() {
             _savedXtermSel = '';
             try {
                 if (_termState.xterm && typeof _termState.xterm.getSelection === 'function') {
-                    _savedXtermSel = _termState.xterm.getSelection() || '';
+                    /* Try ANSI colour extraction first (buffer API, capture phase —
+                       selection position and cell colours are still valid here).
+                       Fall back to plain text if buffer API fails or returns empty. */
+                    _savedXtermSel = xtermSelectionToAnsi(_termState.xterm)
+                                     || _termState.xterm.getSelection() || '';
                 }
                 if (!_savedXtermSel && _dynTermState.xterm &&
                         typeof _dynTermState.xterm.getSelection === 'function') {
-                    _savedXtermSel = _dynTermState.xterm.getSelection() || '';
+                    _savedXtermSel = xtermSelectionToAnsi(_dynTermState.xterm)
+                                     || _dynTermState.xterm.getSelection() || '';
                 }
-            } catch(e2) {}
+            } catch(e2) {
+                /* Any buffer API failure: fall back to plain text */
+                try {
+                    if (_termState.xterm) _savedXtermSel = _termState.xterm.getSelection() || '';
+                    else if (_dynTermState.xterm) _savedXtermSel = _dynTermState.xterm.getSelection() || '';
+                } catch(e3) {}
+            }
 
             if (_savedXtermSel) {
                 /* xterm has a selection: handle here, before xterm sees the key */

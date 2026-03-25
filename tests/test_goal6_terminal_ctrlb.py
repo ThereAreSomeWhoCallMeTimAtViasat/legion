@@ -181,6 +181,40 @@ def test_goal6_ctrlb_from_interactive_terminal(drv, srv):
         f'  after .focus():  {sel_after_focus[:60]!r}\n'
         f'  _savedXtermSel:  {saved[:60]!r}')
 
+    # Check for ANSI colour in notes-display (buffer API extraction)
+    notes_btn = W(drv).until(EC.presence_of_element_located(
+        (By.CSS_SELECTOR, '#right-tab-bar [data-tab="notes-right"]')))
+    js(drv, 'arguments[0].click()', notes_btn)
+    time.sleep(0.5)
+    html_check = js(drv, "return document.getElementById('notes-display').innerHTML") or ''
+    has_ansi = 'ansi-bold' in html_check or 'ansi-fg-' in html_check
+    has_fg_colour = 'ansi-fg-' in html_check
+    print(f'notes-display has ANY ansi span: {has_ansi}')
+    print(f'notes-display has fg colour span: {has_fg_colour}')
+    print(f'notes-display snippet: {html_check[:300]!r}')
+    # Check buffer cell colour mode for GREEN_TERM_TEXT
+    diag = js(drv, '''
+        var buf = _termState.xterm.buffer.active;
+        for (var r=0; r<buf.length; r++) {
+            var ln = buf.getLine(r);
+            if (!ln) continue;
+            var txt = ln.translateToString(true);
+            if (txt.indexOf('GREEN_TERM_TEXT')>=0) {
+                var cell = ln.getCell(0);
+                if (!cell) return 'cell null';
+                return 'mode='+cell.getFgColorMode()+' color='+cell.getFgColor();
+            }
+        }
+        return 'GREEN_TERM_TEXT line not found in buffer';
+    ''')
+    print(f'GREEN_TERM_TEXT cell colour mode: {diag}')
+    assert has_ansi, (
+        f'GOAL 6 FAILED: no ANSI formatting in notes after Ctrl+B from coloured terminal.\n'
+        f'  notes-display: {html_check[:300]}')
+    assert has_fg_colour, (
+        f'GOAL 6 FAILED: bold but no fg colour — buffer mode constants may be wrong.\n'
+        f'  notes-display: {html_check[:300]}')
+
     # ── Notes tab → check display ─────────────────────────────────────────────
     notes_btn = W(drv).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, '#right-tab-bar [data-tab="notes-right"]')))
