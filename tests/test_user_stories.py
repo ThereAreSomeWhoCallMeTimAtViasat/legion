@@ -431,6 +431,181 @@ class TestUS02_SemicolonSeparator:
 
 
 # ===========================================================================
+# GROUP 3 — Log Tab (US-40, US-41, US-42)
+# ===========================================================================
+
+def _open_log_tab(driver):
+    """Click the Log tab button in #bottom-tab-bar and wait for content."""
+    btn = driver.find_element(
+        By.CSS_SELECTOR, '#bottom-tab-bar [data-tab="log-panel"]')
+    driver.execute_script('arguments[0].click()', btn)
+    # loadLog() fires a fetchJson and populates #log-output async
+    W(driver, 8).until(lambda d: bool(
+        d.find_element(By.ID, 'log-output').get_attribute('innerHTML').strip()))
+
+
+def _log_total(level='INFO'):
+    """Return total (untruncated) line count from the API for given level."""
+    return api('get', f'/api/logs?level={level}').json().get('total', 0)
+
+
+def _log_line_count_text(driver):
+    """Read the '123 lines' span next to the log level selector."""
+    return driver.find_element(By.ID, 'log-line-count').text.strip()
+
+
+# ---------------------------------------------------------------------------
+# US-40: Log tab shows server log output (non-empty)
+# ---------------------------------------------------------------------------
+
+class TestUS40_LogTabNonEmpty:
+    """
+    US-40: The Log tab must display application log lines captured in the
+    in-memory buffer — without requiring stdout redirection.
+
+    Verifies:
+      - Clicking the Log tab populates #log-output with content.
+      - #log-line-count shows 'N lines' where N > 0.
+      - The API /api/logs returns lines (not empty).
+    """
+
+    def test_log_tab_output_is_non_empty(self, driver, seed_host):
+        """After clicking the Log tab, #log-output must have content."""
+        _open_log_tab(driver)
+        html = driver.find_element(By.ID, 'log-output').get_attribute('innerHTML')
+        assert html.strip(), \
+            '#log-output is empty after clicking Log tab'
+
+    def test_log_line_count_shows_positive_number(self, driver, seed_host):
+        """#log-line-count must display 'N lines' with N > 0."""
+        _open_log_tab(driver)
+        text = _log_line_count_text(driver)
+        assert 'lines' in text, \
+            f'#log-line-count does not contain "lines": {text!r}'
+        count = int(text.split()[0])
+        assert count > 0, \
+            f'#log-line-count shows 0 lines: {text!r}'
+
+    def test_api_returns_log_lines(self, driver, seed_host):
+        """Direct API call must return at least one log line."""
+        total = _log_total('INFO')
+        assert total > 0, \
+            f'/api/logs?level=INFO returned total={total}'
+
+
+# ---------------------------------------------------------------------------
+# US-41: Log level INFO→DEBUG increases line count
+# ---------------------------------------------------------------------------
+
+class TestUS41_LogLevelFilter:
+    """
+    US-41: Switching the log level selector from INFO to DEBUG (all) must
+    show more lines because DEBUG includes snapshot/queue entries that are
+    filtered out at INFO.
+
+    The displayed count is capped at 500, so we compare the API 'total'
+    field which reflects the un-truncated counts.  The UI content also
+    changes (different last-500 set).
+    """
+
+    def test_debug_total_greater_than_info_total(self, driver, seed_host):
+        """API total at DEBUG must be greater than at INFO."""
+        info_total  = _log_total('INFO')
+        debug_total = _log_total('DEBUG')
+        assert debug_total > info_total, (
+            f'DEBUG total ({debug_total}) is not greater than '
+            f'INFO total ({info_total}). '
+            f'Snapshot/queue DEBUG lines should outnumber INFO-only lines.'
+        )
+
+    def test_switching_to_debug_changes_log_output(self, driver, seed_host):
+        """Selecting DEBUG in the UI causes #log-output content to change."""
+        _open_log_tab(driver)
+        time.sleep(1.0)
+
+        # Capture INFO content
+        info_html = driver.find_element(By.ID, 'log-output').get_attribute('innerHTML')
+        assert info_html.strip(), 'INFO log output is empty before level switch'
+
+        # Switch to DEBUG via the select element
+        from selenium.webdriver.support.ui import Select
+        Select(driver.find_element(By.ID, 'log-level')).select_by_value('DEBUG')
+        time.sleep(2.5)   # fetchJson round-trip + render
+
+        debug_html = driver.find_element(By.ID, 'log-output').get_attribute('innerHTML')
+        assert debug_html.strip(), 'DEBUG log output is empty after level switch'
+
+        assert info_html != debug_html, (
+            'Log output did not change after switching from INFO to DEBUG. '
+            'DEBUG last-500 lines should differ from INFO last-500 lines.'
+        )
+
+    def test_log_line_count_text_present_after_switch(self, driver, seed_host):
+        """After switching to DEBUG the line count span is still populated."""
+        _open_log_tab(driver)
+        time.sleep(0.5)
+        from selenium.webdriver.support.ui import Select
+        Select(driver.find_element(By.ID, 'log-level')).select_by_value('DEBUG')
+        time.sleep(2.0)
+        text = _log_line_count_text(driver)
+        assert 'lines' in text and int(text.split()[0]) > 0, \
+            f'#log-line-count empty or zero after DEBUG switch: {text!r}'
+
+
+# ---------------------------------------------------------------------------
+# US-42: Log tab renders ANSI codes as coloured spans, not raw escape codes
+# ---------------------------------------------------------------------------
+
+class TestUS42_LogAnsiColor:
+    """
+    US-42: Log lines from the in-memory handler contain ANSI escape sequences.
+    ansiToHtml() must convert them to <span class="ansi-fg-..."> elements.
+
+    Verifies:
+      - #log-output innerHTML contains <span elements.
+      - #log-output innerHTML does NOT contain raw \\x1b[ sequences.
+      - At least one ansi-fg-* or ansi-bold class is present.
+    """
+
+    def test_log_output_contains_spans(self, driver, seed_host):
+        """#log-output must have <span elements (ANSI converted to HTML)."""
+        _open_log_tab(driver)
+        html = driver.find_element(By.ID, 'log-output').get_attribute('innerHTML')
+        assert '<span' in html, (
+            '#log-output has no <span elements — ANSI codes may not have been '
+            'converted by ansiToHtml()'
+        )
+
+    def test_log_output_has_no_raw_ansi_codes(self, driver, seed_host):
+        """#log-output must not contain raw \\x1b[ escape sequences."""
+        _open_log_tab(driver)
+        # Read via JS to get the exact innerHTML bytes
+        html = driver.execute_script(
+            "return document.getElementById('log-output').innerHTML")
+        assert '\x1b[' not in html, (
+            '#log-output contains raw ANSI escape sequences — '
+            'ansiToHtml() did not convert them'
+        )
+        assert 'ESC[' not in html, \
+            '#log-output contains literal ESC[ strings'
+
+    def test_log_output_has_ansi_colour_classes(self, driver, seed_host):
+        """#log-output must contain CSS classes produced by ansiToHtml():
+        ansi-fg-* (foreground colour) and/or ansi-bold."""
+        _open_log_tab(driver)
+        html = driver.execute_script(
+            "return document.getElementById('log-output').innerHTML")
+
+        has_fg    = 'ansi-fg-'  in html
+        has_bold  = 'ansi-bold' in html
+        assert has_fg or has_bold, (
+            f'No ansi-fg-* or ansi-bold classes in log output. '
+            f'Log lines have ANSI codes but ansiToHtml() may not be converting them. '
+            f'innerHTML snippet: {html[:200]!r}'
+        )
+
+
+# ===========================================================================
 # HELPERS shared by Ctrl+B tests
 # ===========================================================================
 
