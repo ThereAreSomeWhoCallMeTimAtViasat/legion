@@ -333,23 +333,19 @@ if __name__ == "__main__":
         # Using --new-window guarantees a fresh window rather than a new tab
         # in an existing session.
         def _open_browser():
+            import subprocess as _sp
+            _url = 'http://127.0.0.1:5000'
+            _env = _os.environ.copy()
+            _sudo_user = _env.get('SUDO_USER', '')
+            _display    = _env.get('DISPLAY', '')
+            _xauth      = _env.get('XAUTHORITY', '')
+            print(f"[Legion] Browser: SUDO_USER={_sudo_user!r} DISPLAY={_display!r} XAUTHORITY={_xauth!r}")
             try:
-                import subprocess as _sp
-                _url = 'http://127.0.0.1:5000'
-                _env = _os.environ.copy()
-                # sudo strips XAUTHORITY; restore it from the invoking user's home
-                # so Firefox can authenticate to the X server.
-                _sudo_user = _env.get('SUDO_USER', '')
-                if _sudo_user:
-                    _xauth = f'/home/{_sudo_user}/.Xauthority'
-                    if _os.path.isfile(_xauth):
-                        _env['XAUTHORITY'] = _xauth
-                if not _env.get('DISPLAY'):
-                    _env['DISPLAY'] = ':0'
                 _sp.Popen(['firefox', '--new-window', _url],
                           stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, env=_env)
+                print("[Legion] Browser: firefox launched")
             except Exception as _be:
-                print(f"[Legion] Could not open Firefox automatically: {_be}")
+                print(f"[Legion] Browser: launch failed — {_be}")
         import threading as _threading
         _threading.Timer(1.5, _open_browser).start()
 
