@@ -1346,6 +1346,340 @@ class TestUS34_CtrlBExactTextMatch:
 
 
 # ===========================================================================
+# GROUP 8 — Live Scan Tests (US-09, US-32, US-39)
+# These require LEGION_TEST_TARGET env var pointing at a reachable host.
+# US-32 only requires a running server (CVEs injected via API — no live scan).
+# US-09 and US-39 require the live target for nmap and eyewitness.
+# ===========================================================================
+
+_LIVE_TARGET = os.environ.get('LEGION_TEST_TARGET', '').strip()
+_LIVE_SKIP   = pytest.mark.skipif(
+    not _LIVE_TARGET,
+    reason='Set LEGION_TEST_TARGET=<ip> to run live tests')
+
+
+class TestUS32_CvesSortedByScore:
+    """
+    US-32: The CVEs tab must display vulnerabilities sorted by CVSS score
+    descending — highest severity first.
+
+    Uses the real CVE injection endpoint (same one used by vulners NSE) so
+    no live nmap scan is required.  Verifies the DOM sort order and that it
+    persists after navigating to a different host and back.
+    """
+
+    _HOST = '10.10.10.1'
+    _CVES = [
+        ('CVE-2021-0001', 7.8,  'medium',   'Kernel bug'),
+        ('CVE-2021-0002', 9.8,  'critical', 'RCE in SSH'),
+        ('CVE-2021-0003', 5.0,  'low',      'Info disclosure'),
+        ('CVE-2021-0004', 9.3,  'critical', 'Privilege escalation'),
+        ('CVE-2021-0005', 9.8,  'critical', 'Buffer overflow'),
+    ]
+    _EXPECTED_ORDER = [9.8, 9.8, 9.3, 7.8, 5.0]
+
+    def _get_host_id(self):
+        snap = api('get', '/api/snapshot').json()
+        for h in snap.get('hosts', []):
+            if h.get('ip') == self._HOST:
+                return h.get('id')
+        return None
+
+    def _inject_cves(self, host_id):
+        """POST one CVE per call — endpoint takes a single CVE (name, severity, product)."""
+        for cve_id, cvss, _sev, product in self._CVES:
+            api('post', f'/api/workspace/hosts/{host_id}/cves',
+                json={'name': cve_id, 'severity': str(cvss), 'product': product})
+        time.sleep(0.5)
+
+    def _open_cves_tab(self, driver):
+        """Select host row then click CVEs tab; wait for loadHostDetail async fetch."""
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{self._HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(1.2)   # loadHostDetail fires CVE fetch async
+        driver.execute_script(
+            "var btn = document.querySelector('#right-tab-bar [data-tab=\"cves-right\"]');"
+            "if (btn) btn.click();")
+        time.sleep(1.0)
+
+    def _read_cvss_from_dom(self, driver):
+        """Read CVSS values from #host-detail-cves rows — td[1] holds the severity float."""
+        return driver.execute_script("""
+            var rows = document.querySelectorAll('#host-detail-cves tr');
+            var scores = [];
+            rows.forEach(function(r) {
+                var cells = r.querySelectorAll('td');
+                if (cells.length >= 2) {
+                    var v = parseFloat(cells[1].textContent.trim());
+                    if (!isNaN(v)) scores.push(v);
+                }
+            });
+            return scores;
+        """)
+
+    def test_injected_cves_appear_in_tab(self, driver, seed_host):
+        """All 5 injected CVEs appear in the CVEs tab."""
+        host_id = self._get_host_id()
+        assert host_id, f'Host {self._HOST} not found in snapshot'
+        self._inject_cves(host_id)
+        self._open_cves_tab(driver)
+
+        scores = self._read_cvss_from_dom(driver)
+        assert len(scores) >= len(self._CVES), (
+            f'Expected ≥{len(self._CVES)} CVE rows, got {len(scores)}')
+
+    def test_cves_sorted_descending_by_cvss(self, driver, seed_host):
+        """CVE rows are ordered highest CVSS first."""
+        host_id = self._get_host_id()
+        assert host_id, f'Host {self._HOST} not found'
+        self._inject_cves(host_id)
+        self._open_cves_tab(driver)
+
+        scores = self._read_cvss_from_dom(driver)
+        assert scores, 'No CVSS scores found in CVEs tab DOM'
+        assert scores == sorted(scores, reverse=True), (
+            f'CVEs not sorted descending. Got: {scores}. '
+            f'Expected: {sorted(scores, reverse=True)}')
+
+    def test_cve_sort_persists_after_host_navigation(self, driver, seed_host):
+        """Sort order is preserved after clicking a different host and back."""
+        host_id = self._get_host_id()
+        assert host_id
+        self._inject_cves(host_id)
+        self._open_cves_tab(driver)
+
+        # Click any other row (use the hosts list — pick a different ip if available)
+        other = driver.execute_script(
+            f"var rows = Array.from(document.querySelectorAll('#hosts-body tr[data-host-ip]'));"
+            f"var other = rows.filter(r => r.dataset.hostIp !== '{self._HOST}')[0];"
+            "if (other) { other.click(); return other.dataset.hostIp; } return null;")
+        time.sleep(1.0)
+
+        # Navigate back
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{self._HOST}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+        driver.execute_script(
+            "var btn = document.querySelector('#right-tab-bar [data-tab=\"cves-right\"]');"
+            "if (btn) btn.click();")
+        time.sleep(1.5)
+
+        scores = self._read_cvss_from_dom(driver)
+        assert scores == sorted(scores, reverse=True), (
+            f'Sort lost after navigation. Got: {scores}')
+
+
+@_LIVE_SKIP
+class TestUS09_NmapProgressPercent:
+    """
+    US-09: The % column in the Processes table exists and reflects nmap
+    progress when --stats-every 5s emits 'About N% done' lines.
+
+    Structural test: verifies the % column header and the DOM rendering
+    pipeline (DB percent field → snapshot → td[5]).  On fast local VMs
+    the scan completes before 5s fires so percent may be empty — the
+    DOM % cell and snapshot percent field must match either way.
+
+    Set LEGION_TEST_TARGET=192.168.85.11 to run.
+    """
+
+    def test_nmap_process_appears_as_running(self, driver, seed_host):
+        """Submitting a Hard-mode nmap scan creates a process row."""
+        proc_before = len(api('get', '/api/snapshot').json().get('processes', []))
+        resp = api('post', '/api/nmap/scan', json={
+            'targets': _LIVE_TARGET,
+            'scan_mode': 'Hard', 'discovery': True, 'staged': False,
+            'timing': '4', 'nmap_options': ['-sV'], 'enable_ipv6': False,
+        })
+        assert resp.status_code == 200, f'Scan failed: {resp.json()}'
+        time.sleep(2.5)
+
+        proc_after = api('get', '/api/snapshot').json().get('processes', [])
+        new = [p for p in proc_after if p['id'] > proc_before]
+        assert new, 'No new process appeared after submitting nmap scan'
+
+        status = new[0].get('status')
+        assert status in ('Running', 'Waiting', 'Finished'), \
+            f'Unexpected status: {status}'
+
+    def test_percent_column_header_and_cell_exist(self, driver, seed_host):
+        """% column header exists at index 5; process row has ≥6 cells."""
+        # Submit a scan to ensure a process row exists
+        api('post', '/api/nmap/scan', json={
+            'targets': _LIVE_TARGET,
+            'scan_mode': 'Hard', 'discovery': True, 'staged': False,
+            'timing': '4', 'nmap_options': ['-sV'], 'enable_ipv6': False,
+        })
+        time.sleep(2.5)
+
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_LIVE_TARGET}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        result = driver.execute_script("""
+            var headers = document.querySelectorAll('#processes-table thead th');
+            var pctIdx = -1;
+            for (var i = 0; i < headers.length; i++) {
+                if (headers[i].textContent.trim() === '%') { pctIdx = i; break; }
+            }
+            var row = document.querySelector('#processes-body tr[data-process-id]');
+            var cells = row ? row.querySelectorAll('td').length : 0;
+            return {headerIndex: pctIdx, rowCells: cells};
+        """)
+        assert result['headerIndex'] == 5, \
+            f'% header not at index 5: {result}'
+        assert result['rowCells'] >= 6, \
+            f'Process row has <6 cells: {result["rowCells"]}'
+
+    def test_dom_percent_matches_snapshot_percent(self, driver, seed_host):
+        """After scan, DOM % cell value == snapshot percent field (same DB source)."""
+        resp = api('post', '/api/nmap/scan', json={
+            'targets': _LIVE_TARGET,
+            'scan_mode': 'Hard', 'discovery': True, 'staged': False,
+            'timing': '4', 'nmap_options': ['-sV'], 'enable_ipv6': False,
+        })
+        pid = resp.json().get('result', {}).get('process_id') or \
+              max(p['id'] for p in api('get', '/api/snapshot').json()['processes'])
+        time.sleep(1)
+
+        # Wait for finish
+        deadline = time.monotonic() + 60
+        snap_pct = None
+        while time.monotonic() < deadline:
+            procs = api('get', '/api/snapshot').json().get('processes', [])
+            for p in procs:
+                if p['id'] == pid and p['status'] in ('Finished', 'Crashed'):
+                    snap_pct = (p.get('percent') or '').strip()
+                    break
+            if snap_pct is not None:
+                break
+            time.sleep(1)
+
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_LIVE_TARGET}\"]');"
+            "if (r) r.click();")
+        time.sleep(1.5)
+
+        dom_pct = (driver.execute_script(
+            f"var r = document.querySelector('#processes-body tr[data-process-id=\"{pid}\"]');"
+            "if (!r) return '';"
+            "var c = r.querySelectorAll('td');"
+            "return c.length >= 6 ? c[5].textContent.trim() : '';") or '').strip()
+
+        assert snap_pct == dom_pct, (
+            f'Snapshot percent {snap_pct!r} != DOM % cell {dom_pct!r}. '
+            f'Both must come from the same DB process.percent field.')
+
+
+@_LIVE_SKIP
+class TestUS39_ScreenshotTabShowsImage:
+    """
+    US-39: After the screenshooter (eyewitness) runs against an HTTP service,
+    clicking the screenshooter process row must show an <img> in #plain-output
+    pointing to /api/screenshots?path=...
+
+    Set LEGION_TEST_TARGET=192.168.85.11 to run.
+    Requires: eyewitness at /usr/bin/eyewitness; xvfb-run.
+    """
+
+    def _import_http_host(self):
+        xml = f"""<?xml version="1.0"?>
+<nmaprun><host><status state="up"/>
+  <address addr="{_LIVE_TARGET}" addrtype="ipv4"/>
+  <ports><port protocol="tcp" portid="80">
+    <state state="open"/><service name="http"/>
+  </port></ports>
+</host></nmaprun>"""
+        with tempfile.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as f:
+            f.write(xml); path = f.name
+        api('post', '/api/nmap/import-xml', json={'path': path})
+        os.unlink(path)
+        time.sleep(1)
+
+    def test_screenshooter_process_appears(self, driver, seed_host):
+        """Triggering scheduler on HTTP host creates a screenshooter process."""
+        self._import_http_host()
+        api('post', '/api/scheduler/run', json={'host_ip': _LIVE_TARGET})
+        time.sleep(3)
+
+        procs = api('get', '/api/snapshot').json().get('processes', [])
+        shooter = [p for p in procs if 'screenshooter' in (p.get('name') or '').lower()]
+        assert shooter, 'No screenshooter process found after scheduler run'
+
+    def test_screenshooter_output_is_screenshot_path(self, driver, seed_host):
+        """Process output starts with 'screenshot:' once eyewitness finishes."""
+        self._import_http_host()
+        resp = api('post', '/api/scheduler/run', json={'host_ip': _LIVE_TARGET})
+        time.sleep(2)
+
+        procs = api('get', '/api/snapshot').json().get('processes', [])
+        shooter = next((p for p in procs
+                        if 'screenshooter' in (p.get('name') or '').lower()), None)
+        assert shooter, 'No screenshooter process'
+
+        pid = shooter['id']
+        deadline = time.monotonic() + 90
+        output = ''
+        while time.monotonic() < deadline:
+            data = api('get', f'/api/processes/{pid}/output').json()
+            output = data.get('output_chunk', '') or data.get('output', '')
+            if output.startswith('screenshot:'):
+                break
+            status = next((p['status'] for p in
+                           api('get', '/api/snapshot').json()['processes']
+                           if p['id'] == pid), '')
+            if status == 'Finished':
+                break
+            time.sleep(2)
+
+        assert output.startswith('screenshot:'), (
+            f'Process {pid} output does not start with "screenshot:": {output[:80]!r}')
+
+    def test_screenshooter_row_renders_img_in_panel(self, driver, seed_host):
+        """Clicking screenshooter row renders <img src=/api/screenshots?...>."""
+        self._import_http_host()
+        api('post', '/api/scheduler/run', json={'host_ip': _LIVE_TARGET})
+        time.sleep(3)
+
+        procs = api('get', '/api/snapshot').json().get('processes', [])
+        shooter = next((p for p in procs
+                        if 'screenshooter' in (p.get('name') or '').lower()), None)
+        assert shooter, 'No screenshooter process'
+        pid = shooter['id']
+
+        # Wait for finish
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            p = next((x for x in api('get', '/api/snapshot').json()['processes']
+                      if x['id'] == pid), {})
+            if p.get('status') == 'Finished':
+                break
+            time.sleep(2)
+
+        driver.execute_script(
+            f"var r = document.querySelector('#hosts-body tr[data-host-ip=\"{_LIVE_TARGET}\"]');"
+            "if (r) r.click();")
+        time.sleep(0.8)
+
+        css = f'#processes-body tr[data-process-id="{pid}"]'
+        W(driver, 8).until(lambda d: d.find_elements(By.CSS_SELECTOR, css))
+        row = driver.find_element(By.CSS_SELECTOR, css)
+        driver.execute_script(
+            'arguments[0].scrollIntoView({block:"center"}); arguments[0].click()', row)
+        time.sleep(2)
+
+        img = driver.find_elements(By.CSS_SELECTOR, '#plain-output img')
+        assert img, '#plain-output contains no <img> after clicking screenshooter row'
+
+        src = img[0].get_attribute('src') or ''
+        assert '/api/screenshots' in src, \
+            f'<img> src does not point to /api/screenshots: {src!r}'
+
+
+# ===========================================================================
 # GROUP 2 — Font Size Controls (US-25, US-26)
 # Pytest classes mirroring the logic in generate_report_US25/26.py.
 # The generate_report scripts default to port 5095; these tests use the

@@ -223,8 +223,11 @@ def run_percent_end_to_end(driver, pid):
         return cells.length >= 6 ? cells[5].textContent.trim() : null;
     """)
 
-    # Key assertion: DOM % cell == snapshot percent (both from same DB value)
-    pct_match = str(snap_pct).strip() == str(dom_pct or '').strip()
+    # Key assertion: DOM % cell == snapshot percent (both from same DB value).
+    # Normalise None → '' so that "no percent stored" matches "empty % cell".
+    snap_norm = (snap_pct or '').strip()
+    dom_norm  = (dom_pct  or '').strip()
+    pct_match = snap_norm == dom_norm
 
     R.record(driver, name, 2,
              f'Process {pid}: snapshot percent={snap_pct!r}, '
