@@ -1121,6 +1121,20 @@ function renderDynamicToolTabs(hostIp) {
     var activeBtn = bar.querySelector('.dynamic-tab.active');
     var prevActiveTabId = activeBtn ? activeBtn.dataset.tab : null;
 
+    /* Skip rebuild if the user has an active text selection inside the upper
+       output area — clearing innerHTML destroys the selection immediately.
+       The next poll (1.5 s) will rebuild once the selection is gone. */
+    try {
+        var _upSel = window.getSelection();
+        if (_upSel && _upSel.toString() && _upSel.rangeCount > 0) {
+            var _upRange = _upSel.getRangeAt(0);
+            if (container.contains(_upRange.startContainer) ||
+                container.contains(_upRange.endContainer)) {
+                return;
+            }
+        }
+    } catch(e) {}
+
     /* Save scroll positions of all output elements BEFORE wiping.
        container.innerHTML='' destroys the DOM nodes and their scrollTop. */
     container.querySelectorAll('[id^="dyn-output-"]').forEach(function(el) {
