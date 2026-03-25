@@ -3291,7 +3291,21 @@ document.addEventListener('DOMContentLoaded', function() {
             var out = $('log-output');
             if (out) {
                 var logAtBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
-                out.innerHTML = ansiToHtml((d.lines || []).join('\n'));
+                /* Level-based colouring: the in-memory log handler uses a plain
+                   formatter (no ANSI codes), so we parse level keywords from the
+                   formatted line and wrap in a colour span.  ansiToHtml() handles
+                   any ANSI that does appear AND safely HTML-escapes the text. */
+                var logHtml = (d.lines || []).map(function(line) {
+                    var colored = ansiToHtml(line);
+                    if (/\bCRITICAL\b|\bERROR\b/.test(line))
+                        return '<span class="ansi-fg-red">'    + colored + '</span>';
+                    if (/\bWARNING\b/.test(line))
+                        return '<span class="ansi-fg-yellow">'  + colored + '</span>';
+                    if (/\bDEBUG\b/.test(line))
+                        return '<span class="ansi-fg-bright-black">' + colored + '</span>';
+                    return colored;
+                }).join('\n');
+                out.innerHTML = logHtml;
                 if (logAtBottom) out.scrollTop = out.scrollHeight;
             }
             setText('log-line-count', (d.lines||[]).length + ' lines');
