@@ -754,10 +754,11 @@ function _drawProcesses() {
             return id && prevSet.indexOf(id) < 0;
         });
         if (newActive.length > 0) {
-            /* Only auto-switch if the new process is different from what's selected.
-               Don't restart the poll timer unnecessarily — that kills live output. */
-            var newest = newActive[newActive.length-1];
-            if (L.selectedProcessId !== parseInt(newest)) {
+            /* Only auto-select when nothing is currently selected (initial load).
+               After the first selection the user controls which process they view —
+               auto-switching every time a new process starts is disruptive. */
+            if (!L.selectedProcessId) {
+                var newest = newActive[newActive.length-1];
                 var newRow = body.querySelector('tr[data-process-id="' + newest + '"]');
                 if (newRow) newRow.click();
             }
