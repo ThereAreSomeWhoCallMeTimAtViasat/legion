@@ -60,6 +60,7 @@ if __name__ == "__main__":
         help="Run scripted actions/automated attacks after scan/import"
     )
     parser.add_argument("--web", action="store_true", help="Start Legion web UI (Flask)")
+    parser.add_argument("--port", type=int, default=5000, help="Port for the web UI (default: 5000)")
     args = parser.parse_args()
 
     if args.mcp_server:
@@ -327,14 +328,15 @@ if __name__ == "__main__":
             _ver = _m.group(1) if _m else 'v??'
         except Exception:
             _ver = 'v??'
-        print(f"LEGION {_ver} — web UI starting at http://127.0.0.1:5000")
+        _port = args.port
+        print(f"LEGION {_ver} — web UI starting at http://127.0.0.1:{_port}")
 
         # Open a new Firefox window after Flask has had 1.5 s to bind.
         # Using --new-window guarantees a fresh window rather than a new tab
         # in an existing session.
         def _open_browser():
             import subprocess as _sp
-            _url = 'http://127.0.0.1:5000'
+            _url = f'http://127.0.0.1:{_port}'
             _env = _os.environ.copy()
             _sudo_user = _env.get('SUDO_USER', '')
             _display   = _env.get('DISPLAY', ':0')
@@ -398,7 +400,7 @@ if __name__ == "__main__":
         import threading as _threading
         _threading.Timer(1.5, _open_browser).start()
 
-        app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+        app.run(host="127.0.0.1", port=_port, debug=False, threaded=True)
         sys.exit(0)
 
     # --- GUI MODE ---
