@@ -347,7 +347,7 @@ if __name__ == "__main__":
             # existing session (--no-remote skips IPC with the running instance;
             # --profile points at an isolated directory).
             _home = f'/home/{_sudo_user}' if _sudo_user else _os.path.expanduser('~')
-            _profile = _os.path.join(_home, '.mozilla', 'firefox', 'legion-profile')
+            _profile = _os.path.join(_home, '.mozilla', 'firefox', f'legion-profile-{_port}')
             if not _os.path.isdir(_profile):
                 _os.makedirs(_profile, exist_ok=True)
                 # Profile dir must be owned by the user, not root
