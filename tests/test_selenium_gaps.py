@@ -223,15 +223,9 @@ class TestHostDelete:
 
     def test_delete_removes_host_from_ui(self, gap_driver):
         """Right-click host A → Delete → confirm → host A row gone."""
-        from selenium.common.exceptions import StaleElementReferenceException
-        for _attempt in range(8):
-            try:
-                row_a = wait_row(gap_driver, IP_A)
-                ActionChains(gap_driver).context_click(row_a).perform()
-                ctx_menu_click(gap_driver, 'Delete')
-                break
-            except (StaleElementReferenceException, AssertionError):
-                time.sleep(0.3)
+        row_a = wait_row(gap_driver, IP_A)
+        ActionChains(gap_driver).context_click(row_a).perform()
+        ctx_menu_click(gap_driver, 'Delete')
 
         # Accept the confirm() dialog
         W(gap_driver, 3).until(EC.alert_is_present())
@@ -881,34 +875,22 @@ class TestHostChecked:
 
     def _set_checked(self, driver, checked: bool):
         """Ensure host A is in the desired checked state, waiting for snapshot to confirm."""
-        from selenium.common.exceptions import StaleElementReferenceException
         currently = self._is_checked(driver)
         if currently == checked:
             return  # already correct
+        row_a = wait_row(driver, IP_A)
+        ActionChains(driver).context_click(row_a).perform()
         label = 'checked' if checked else 'unchecked'
-        for _attempt in range(8):
-            try:
-                row_a = wait_row(driver, IP_A)
-                ActionChains(driver).context_click(row_a).perform()
-                ctx_menu_click(driver, label)
-                break
-            except (StaleElementReferenceException, AssertionError):
-                time.sleep(0.3)
+        ctx_menu_click(driver, label)
         # Wait for snapshot to re-render the row with the new checked state
         W(driver, 5).until(lambda d: self._is_checked(d) == checked)
 
     def test_mark_checked_adds_css_class(self, gap_driver):
         """Right-click → 'Mark as checked' → row gets host-checked CSS class."""
-        from selenium.common.exceptions import StaleElementReferenceException
         self._set_checked(gap_driver, False)   # start from unchecked
-        for _attempt in range(8):
-            try:
-                row_a = wait_row(gap_driver, IP_A)
-                ActionChains(gap_driver).context_click(row_a).perform()
-                ctx_menu_click(gap_driver, 'checked')
-                break
-            except (StaleElementReferenceException, AssertionError):
-                time.sleep(0.3)
+        row_a = wait_row(gap_driver, IP_A)
+        ActionChains(gap_driver).context_click(row_a).perform()
+        ctx_menu_click(gap_driver, 'checked')
         time.sleep(POLL)
         row_a = wait_row(gap_driver, IP_A)
         classes = row_a.get_attribute('class') or ''
@@ -918,7 +900,6 @@ class TestHostChecked:
     def test_mark_checked_shows_checkmark(self, gap_driver):
         """After marking checked, the host row displays a ✓ prefix."""
         self._set_checked(gap_driver, True)
-        # Re-find to avoid stale ref after snapshot rebuild
         row_a = wait_row(gap_driver, IP_A)
         row_text = row_a.text
         assert '✓' in row_text or 'host-checked' in (row_a.get_attribute('class') or ''), \
@@ -926,16 +907,10 @@ class TestHostChecked:
 
     def test_mark_unchecked_removes_css_class(self, gap_driver):
         """Right-click → 'Mark as unchecked' → host-checked class removed."""
-        from selenium.common.exceptions import StaleElementReferenceException
         self._set_checked(gap_driver, True)    # ensure checked first
-        for _attempt in range(8):
-            try:
-                row_a = wait_row(gap_driver, IP_A)
-                ActionChains(gap_driver).context_click(row_a).perform()
-                ctx_menu_click(gap_driver, 'unchecked')
-                break
-            except (StaleElementReferenceException, AssertionError):
-                time.sleep(0.3)
+        row_a = wait_row(gap_driver, IP_A)
+        ActionChains(gap_driver).context_click(row_a).perform()
+        ctx_menu_click(gap_driver, 'unchecked')
         time.sleep(POLL)
         row_a = wait_row(gap_driver, IP_A)
         classes = row_a.get_attribute('class') or ''

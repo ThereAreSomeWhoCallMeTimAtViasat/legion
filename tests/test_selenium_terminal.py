@@ -236,20 +236,12 @@ class TestOpenTerminal:
     def test_open_terminal_in_host_menu(self, term_driver):
         """Right-click host → 'Open Terminal' must appear in context menu."""
         from selenium.webdriver.common.action_chains import ActionChains
-        from selenium.common.exceptions import StaleElementReferenceException
-        import time as _time
-        labels = []
-        for _attempt in range(8):
-            try:
-                row = term_driver.find_element(By.CSS_SELECTOR,
-                    '#hosts-body tr[data-host-ip="10.88.88.1"]')
-                ActionChains(term_driver).context_click(row).perform()
-                _time.sleep(0.3)
-                menu = term_driver.find_element(By.ID, 'ctx-menu')
-                labels = [b.text for b in menu.find_elements(By.TAG_NAME, 'button')]
-                break
-            except (StaleElementReferenceException, Exception):
-                _time.sleep(0.3)
+        row = term_driver.find_element(By.CSS_SELECTOR,
+            '#hosts-body tr[data-host-ip="10.88.88.1"]')
+        ActionChains(term_driver).context_click(row).perform()
+        time.sleep(0.5)
+        menu = term_driver.find_element(By.ID, 'ctx-menu')
+        labels = [b.text for b in menu.find_elements(By.TAG_NAME, 'button')]
         # Dismiss menu
         term_driver.find_element(By.TAG_NAME, 'body').click()
         time.sleep(0.2)
