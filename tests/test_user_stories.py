@@ -606,6 +606,246 @@ class TestUS42_LogAnsiColor:
 
 
 # ===========================================================================
+# GROUP 5 — Live Output (US-16, US-18)
+# ===========================================================================
+
+# Shared slow-process command:
+# - python3, no 'bash'/'msfconsole' → NOT marked Interactive by runCommand
+# - single-quoted so no escaping issues in the JSON payload
+# - 0.35 s/line → 40 lines takes ~14 s of running time
+_SLOW_CMD = (
+    "python3 -c "
+    "'import time; "
+    "[(print(\"LINE_\"+str(i),flush=True),time.sleep(0.35)) for i in range(40)]'"
+)
+_HOST_IP = '10.10.10.1'
+
+
+def _start_slow_process():
+    """Start _SLOW_CMD via /api/processes/custom. Returns process_id."""
+    resp = api('post', '/api/processes/custom', json={
+        'command': _SLOW_CMD,
+        'host_ip': _HOST_IP,
+        'port': '',
+        'protocol': 'tcp',
+    })
+    pid = resp.json().get('process_id')
+    assert pid, f'No process_id from /api/processes/custom: {resp.json()}'
+    return pid
+
+
+def _select_host_and_process(driver, process_id, wait_for_rows=8):
+    """Select the host row then click the given process row.
+    Waits up to wait_for_rows seconds for the process row to appear."""
+    # Select host row so the right panel activates
+    driver.execute_script("""
+        var row = document.querySelector('#hosts-body tr[data-host-ip="' + arguments[0] + '"]');
+        if (row) row.click();
+    """, _HOST_IP)
+    time.sleep(0.8)
+
+    # Wait for the process row to exist in the DOM
+    css = f'#processes-body tr[data-process-id="{process_id}"]'
+    W(driver, wait_for_rows).until(lambda d: d.find_elements(By.CSS_SELECTOR, css))
+
+    # Click it to load output in #plain-output
+    row = driver.find_element(By.CSS_SELECTOR, css)
+    driver.execute_script(
+        'arguments[0].scrollIntoView({block:"center"}); arguments[0].click()', row)
+    time.sleep(1.5)   # one snapshot poll for output to load
+
+
+def _plain_output_text(driver):
+    """Return the current text content of #plain-output."""
+    return driver.execute_script(
+        "return document.getElementById('plain-output').innerText || ''")
+
+
+def _plain_output_html_len(driver):
+    """Return innerHTML length of #plain-output (includes HTML tags)."""
+    return driver.execute_script(
+        "return (document.getElementById('plain-output').innerHTML || '').length")
+
+
+# ---------------------------------------------------------------------------
+# US-16: Live output content grows while a process is Running
+# ---------------------------------------------------------------------------
+
+class TestUS16_LiveOutputGrows:
+    """
+    US-16: When a Running process is selected in the Processes tab, the
+    output panel (#plain-output) must update with new lines as the tool
+    produces them — without any manual refresh.
+
+    The snapshot poll fires every 1.5 s and calls loadProcessOutput() for
+    the selected process, which reads the .live_output temp file.
+    """
+
+    def test_output_text_grows_over_time(self, driver, seed_host):
+        """#plain-output text is longer 3 s after first reading."""
+        pid = _start_slow_process()
+        time.sleep(1.0)   # let a few lines appear before we click
+
+        _select_host_and_process(driver, pid)
+
+        t0_text = _plain_output_text(driver)
+        assert t0_text.strip(), \
+            f'#plain-output is empty immediately after clicking process {pid}'
+
+        time.sleep(3.5)   # ~2-3 more polls; ~10 more lines at 0.35 s/line
+
+        t1_text = _plain_output_text(driver)
+        assert len(t1_text) > len(t0_text), (
+            f'Output did not grow after 3.5 s.\n'
+            f'  T=0: {len(t0_text)} chars — {t0_text[:60]!r}\n'
+            f'  T=3: {len(t1_text)} chars — {t1_text[:60]!r}'
+        )
+
+    def test_output_contains_expected_line_markers(self, driver, seed_host):
+        """After 6 s the output contains multiple LINE_N markers."""
+        pid = _start_slow_process()
+        time.sleep(6.0)   # ~17 lines produced
+
+        _select_host_and_process(driver, pid)
+        time.sleep(1.5)
+
+        text = _plain_output_text(driver)
+        # Count how many LINE_N markers are present
+        count = sum(1 for ln in text.splitlines() if ln.strip().startswith('LINE_'))
+        assert count >= 5, (
+            f'Expected ≥5 LINE_N markers in output after 6 s, got {count}.\n'
+            f'  Output: {text[:200]!r}'
+        )
+
+    def test_status_shows_running_while_output_live(self, driver, seed_host):
+        """Process row status column must show Running while output is active."""
+        pid = _start_slow_process()
+        time.sleep(1.0)
+
+        _select_host_and_process(driver, pid)
+
+        status = driver.execute_script("""
+            var row = document.querySelector(
+                '#processes-body tr[data-process-id="' + arguments[0] + '"]');
+            if (!row) return 'NOT FOUND';
+            var cells = row.querySelectorAll('td');
+            return cells.length >= 5 ? cells[4].textContent.trim() : 'NO STATUS CELL';
+        """, str(pid))
+        assert status == 'Running', (
+            f'Process {pid} status should be Running while outputting, got: {status!r}'
+        )
+
+
+# ---------------------------------------------------------------------------
+# US-18: Auto-scroll stays at bottom when user is at bottom
+# ---------------------------------------------------------------------------
+
+class TestUS18_AutoScrollAtBottom:
+    """
+    US-18: When the user is scrolled to the bottom of a Running process's
+    output, new lines arriving via the snapshot poll must keep the view
+    at the bottom — the panel auto-scrolls to follow new content.
+
+    loadProcessOutput() reads atBottom = (scrollHeight - scrollTop -
+    clientHeight < 40) BEFORE each fetch.  After the innerHTML update it
+    sets scrollTop = scrollHeight if atBottom was true.
+    """
+
+    def test_panel_stays_at_bottom_across_polls(self, driver, seed_host):
+        """After clicking a Running process from the bottom, the panel
+        remains at the bottom (gap < 40 px) across two more polls."""
+        pid = _start_slow_process()
+        # Wait for enough lines to make the panel scrollable
+        time.sleep(10.0)   # ~28 lines × 18 px ≈ 500 px — should overflow panel
+
+        _select_host_and_process(driver, pid)
+        time.sleep(1.5)   # let first load settle
+
+        # Confirm the panel is actually scrollable
+        scrollable = driver.execute_script("""
+            var el = document.getElementById('plain-output');
+            return el.scrollHeight > el.clientHeight;
+        """)
+        if not scrollable:
+            # Not enough content yet — wait another cycle
+            time.sleep(3.0)
+            scrollable = driver.execute_script("""
+                var el = document.getElementById('plain-output');
+                return el.scrollHeight > el.clientHeight;
+            """)
+
+        assert scrollable, (
+            '#plain-output is not scrollable — not enough content to test auto-scroll'
+        )
+
+        # Explicitly scroll to the bottom (simulates user being at bottom)
+        driver.execute_script("""
+            var el = document.getElementById('plain-output');
+            el.scrollTop = el.scrollHeight;
+        """)
+        time.sleep(0.1)
+
+        # Record the gap at the bottom (should be ~0)
+        gap0 = driver.execute_script("""
+            var el = document.getElementById('plain-output');
+            return el.scrollHeight - el.scrollTop - el.clientHeight;
+        """)
+        assert gap0 < 40, f'Scroll not at bottom before poll: gap={gap0}'
+
+        # Wait for 2 more polls (~3 s) — each poll must keep us at bottom
+        time.sleep(3.5)
+
+        gap1 = driver.execute_script("""
+            var el = document.getElementById('plain-output');
+            return el.scrollHeight - el.scrollTop - el.clientHeight;
+        """)
+        assert gap1 < 40, (
+            f'Auto-scroll failed: panel drifted away from bottom after polls.\n'
+            f'  Gap before: {gap0} px\n'
+            f'  Gap after 3.5 s: {gap1} px  (must be < 40 px)'
+        )
+
+    def test_scroll_up_position_is_preserved(self, driver, seed_host):
+        """When user scrolls UP, position is preserved across polls
+        (panel does NOT auto-jump back to bottom — v10.30 behaviour)."""
+        pid = _start_slow_process()
+        time.sleep(10.0)
+
+        _select_host_and_process(driver, pid)
+        time.sleep(1.5)
+
+        scrollable = driver.execute_script("""
+            var el = document.getElementById('plain-output');
+            return el.scrollHeight > el.clientHeight;
+        """)
+        if not scrollable:
+            time.sleep(3.0)
+
+        # Scroll to the TOP (user reading from beginning)
+        driver.execute_script("""
+            var el = document.getElementById('plain-output');
+            el.scrollTop = 0;
+        """)
+        time.sleep(0.1)
+
+        top_before = driver.execute_script(
+            "return document.getElementById('plain-output').scrollTop")
+
+        # Wait 3 s (2 polls) — scroll position must be preserved
+        time.sleep(3.5)
+
+        top_after = driver.execute_script(
+            "return document.getElementById('plain-output').scrollTop")
+
+        # Allow ±5 px drift from sub-pixel rendering
+        assert abs(top_after - top_before) < 20, (
+            f'Scroll position was NOT preserved: '
+            f'before={top_before}px after={top_after}px. '
+            f'Panel jumped (auto-scroll should only fire when at the BOTTOM).'
+        )
+
+
+# ===========================================================================
 # HELPERS shared by Ctrl+B tests
 # ===========================================================================
 
