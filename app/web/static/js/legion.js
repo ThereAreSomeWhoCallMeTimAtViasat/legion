@@ -1908,7 +1908,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var addStart = $('add-hosts-start');
     if (addStart) addStart.addEventListener('click', function() {
         var targets = ($('add-hosts-targets') || {}).value || '';
-        targets = targets.replace(/;/g, ' ').trim();
+        targets = targets.trim();
         if (!targets) {
             var v = $('add-hosts-validation');
             if (v) v.style.display = '';

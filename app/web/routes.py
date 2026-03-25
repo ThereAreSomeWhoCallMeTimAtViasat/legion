@@ -497,10 +497,10 @@ def nmap_scan():
     if not raw:
         return _err("targets required")
 
-    # Split on newline or comma — each becomes a separate parallel nmap process.
-    # Semicolons are NOT split here — they are injection-protection characters
-    # and nmap handles comma-separated targets natively in a single invocation.
-    parts = [t.strip() for t in _re.split(r'[\n,]+', raw) if t.strip()]
+    # Split on newline or semicolon — each becomes a separate parallel nmap process.
+    # Commas are NOT split here — they remain invalid per validateNmapInput so any
+    # comma-containing input is rejected before reaching nmap.
+    parts = [t.strip() for t in _re.split(r'[\n;]+', raw) if t.strip()]
     if not parts:
         return _err("targets required")
 
