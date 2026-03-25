@@ -274,6 +274,163 @@ class TestUS04_InvalidHostInput:
 
 
 # ===========================================================================
+# TEST — US-03: nmap comma-range syntax is accepted and starts a scan
+# ===========================================================================
+
+class TestUS03_CommaRangeSyntax:
+    """
+    US-03: '192.168.1.1,2' is valid nmap target syntax that expands to
+    192.168.1.1 and 192.168.1.2 in a single nmap invocation.
+    The Add Hosts dialog must accept it without a validation error and
+    the server must create at least one scan process.
+
+    validateNmapInput allows [a-zA-Z0-9:./-\\s,] — comma is in the set.
+    The split in routes.py uses [\\n;]+ so the comma stays intact and
+    is handed to nmap as-is.
+    """
+
+    def test_comma_range_passes_validation(self, driver, seed_host):
+        """The JS validation element must NOT appear for '192.168.1.1,2'."""
+        textarea = open_add_hosts_modal(driver)
+        textarea.clear()
+        textarea.send_keys('192.168.1.1,2')
+        time.sleep(0.2)
+
+        driver.find_element(By.ID, 'add-hosts-start').click()
+        time.sleep(0.5)
+
+        # Validation error must be hidden (JS only shows it for empty input)
+        validation = driver.find_element(By.ID, 'add-hosts-validation')
+        assert not validation.is_displayed(), (
+            "#add-hosts-validation is visible — comma range was incorrectly "
+            "treated as invalid input by the JS guard"
+        )
+
+    def test_comma_range_creates_scan_process(self, driver, seed_host):
+        """Submitting '192.168.1.1,2' must create at least one nmap process."""
+        proc_before = len(api('get', '/api/snapshot').json().get('processes', []))
+
+        textarea = open_add_hosts_modal(driver)
+        textarea.clear()
+        textarea.send_keys('192.168.1.1,2')
+
+        driver.find_element(By.ID, 'add-hosts-start').click()
+        # Wait for server round-trip + modal close (1.5 s) + snapshot poll
+        time.sleep(4.0)
+
+        proc_after = len(api('get', '/api/snapshot').json().get('processes', []))
+        assert proc_after > proc_before, (
+            f"No scan process created for '192.168.1.1,2': "
+            f"before={proc_before} after={proc_after}"
+        )
+
+    def test_comma_range_server_accepts_not_rejects(self, driver, seed_host):
+        """Direct API call confirms the server returns 200 not 400 for comma range."""
+        resp = api('post', '/api/nmap/scan', json={
+            'targets': '192.168.1.1,2',
+            'scan_mode': 'Easy',
+            'discovery': True,
+            'staged': True,
+            'timing': '4',
+            'nmap_options': ['-n'],
+            'enable_ipv6': False,
+        })
+        data = resp.json()
+        assert resp.status_code == 200, (
+            f"Server rejected '192.168.1.1,2' with {resp.status_code}: {data}"
+        )
+        assert data.get('status') != 'error', (
+            f"Server returned error for comma-range target: {data}"
+        )
+
+
+# ===========================================================================
+# TEST — US-02: Semicolons create two independent parallel scan processes
+# ===========================================================================
+
+class TestUS02_SemicolonSeparator:
+    """
+    US-02: Entering 'host1; host2' in the Add Hosts dialog must create two
+    separate nmap processes — one per host — running in parallel.
+
+    routes.py splits on [\\n;]+ so each semicolon-separated token becomes
+    an independent call to wc.addHosts() → runStagedNmap().
+    """
+
+    def test_two_hosts_create_two_process_groups(self, driver, seed_host):
+        """Submitting '127.0.0.1; 127.0.0.2' must produce at least 2 new
+        processes, one targeting each host."""
+        snap_before  = api('get', '/api/snapshot').json()
+        procs_before = {p['id'] for p in snap_before.get('processes', [])}
+
+        textarea = open_add_hosts_modal(driver)
+        textarea.clear()
+        textarea.send_keys('127.0.0.1; 127.0.0.2')
+        driver.find_element(By.ID, 'add-hosts-start').click()
+        time.sleep(5.0)   # two staged scans launching + snapshot poll
+
+        snap_after  = api('get', '/api/snapshot').json()
+        new_procs   = [p for p in snap_after.get('processes', [])
+                       if p['id'] not in procs_before]
+
+        assert len(new_procs) >= 2, (
+            f"Expected ≥2 new processes for '127.0.0.1; 127.0.0.2', "
+            f"got {len(new_procs)}: {new_procs}"
+        )
+
+        host_ips = {p.get('hostIp', '') for p in new_procs}
+        assert '127.0.0.1' in host_ips, \
+            f"No process for 127.0.0.1 — got host IPs: {host_ips}"
+        assert '127.0.0.2' in host_ips, \
+            f"No process for 127.0.0.2 — got host IPs: {host_ips}"
+
+    def test_semicolons_not_treated_as_injection(self, driver, seed_host):
+        """The semicolon is treated as a separator, not a shell injection char.
+        Each resulting token is validated by validateNmapInput individually.
+        '127.0.0.1; 127.0.0.2' produces two valid tokens — both accepted."""
+        resp = api('post', '/api/nmap/scan', json={
+            'targets': '127.0.0.1; 127.0.0.2',
+            'scan_mode': 'Easy',
+            'discovery': True,
+            'staged': True,
+            'timing': '4',
+            'nmap_options': ['-n'],
+            'enable_ipv6': False,
+        })
+        assert resp.status_code == 200, \
+            f"Server rejected valid semicolon-separated targets: {resp.json()}"
+        assert resp.json().get('status') != 'error', \
+            f"Server returned error for semicolon-separated targets: {resp.json()}"
+
+    def test_newline_separator_also_creates_two_processes(self, driver, seed_host):
+        """Newline is an equivalent separator to semicolon — both produce
+        independent processes per host."""
+        snap_before  = api('get', '/api/snapshot').json()
+        procs_before = {p['id'] for p in snap_before.get('processes', [])}
+
+        textarea = open_add_hosts_modal(driver)
+        textarea.clear()
+        # Send_keys with \n inserts a newline in the textarea
+        textarea.send_keys('127.0.0.3\n127.0.0.4')
+        driver.find_element(By.ID, 'add-hosts-start').click()
+        time.sleep(5.0)
+
+        snap_after = api('get', '/api/snapshot').json()
+        new_procs  = [p for p in snap_after.get('processes', [])
+                      if p['id'] not in procs_before]
+
+        assert len(new_procs) >= 2, (
+            f"Expected ≥2 new processes for newline-separated hosts, "
+            f"got {len(new_procs)}"
+        )
+        host_ips = {p.get('hostIp', '') for p in new_procs}
+        assert '127.0.0.3' in host_ips, \
+            f"No process for 127.0.0.3 — got: {host_ips}"
+        assert '127.0.0.4' in host_ips, \
+            f"No process for 127.0.0.4 — got: {host_ips}"
+
+
+# ===========================================================================
 # HELPERS shared by Ctrl+B tests
 # ===========================================================================
 
