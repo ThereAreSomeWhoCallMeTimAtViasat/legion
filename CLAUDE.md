@@ -527,10 +527,10 @@ Raw tool output (nikto, dirbuster, hydra) is noisy — verbose headers, informat
 | 11 | Settings GUI — change GeneralSettings/BruteSettings/etc in a form | Med | ❌ Not started | Replaces direct legion.conf editing for settings |
 | 12 | Fix Hydra SSH against legacy targets (libssh2 MAC incompatibility) | Med | ❌ Not started | See design below |
 | 13 | Update legion.conf tool list — retire deprecated tools, add modern equivalents | Med | ✅ Done v10.28 | install_tools.sh + update script; both confs updated |
-| 14 | Taller tabs — increase height of the right-panel tab bar tabs | Low | ❌ Not started | CSS only |
-| 15 | Move font size controls — relocate A+/A- buttons to after the Brute tab | Low | ❌ Not started | index.html + JS |
-| 16 | ANSI colour in Ctrl+B notes — render terminal colour codes in the notes panel | Med | ✅ Done v10.50 | domSelectionToAnsi() reconstructs ANSI from span CSS classes; xterm path via xtermSelectionToAnsi() |
-| 17 | ANSI colour in log window — render colour codes in the Log tab output | Med | ❌ Not started | Same ANSI parser approach as #16 |
+| 14 | Taller tabs — increase height of the right-panel tab bar tabs | Low | ✅ Done v10.31 | .tab-btn padding 12px → 15px top/bottom |
+| 15 | Move font size controls — relocate A+/A- buttons to after the Brute tab | Low | ✅ Done v10.31 | upper-font controls moved to main-tab-bar after Brute button |
+| 16 | ANSI colour in Ctrl+B notes — render terminal colour codes in the notes panel | Med | ✅ Done v10.31/v10.50 | renderNotes() uses ansiToHtml(); domSelectionToAnsi() for DOM selections |
+| 17 | ANSI colour in log window — render colour codes in the Log tab output | Med | ✅ Done v10.31 | loadLog() uses ansiToHtml() instead of textContent |
 | 18 | Sticky processes table header — keep column headers visible during scroll | Low | ❌ Not started | CSS `position: sticky; top: 0` on the `<thead>` or header row |
 | 19 | Kill nmap subprocesses on exit — orphaned nmap scans survive Legion shutdown | Med | ✅ Done v10.53 | _kill_all_descendants() via /proc BFS scan; called from killRunningProcesses() |
 
