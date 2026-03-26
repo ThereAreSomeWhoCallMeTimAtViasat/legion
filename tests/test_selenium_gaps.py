@@ -23,6 +23,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import StaleElementReferenceException
 
 GAPS_PORT = 5096
 POLL = 1.5
@@ -199,7 +200,10 @@ def load_ports(driver, ip):
     return ports
 
 def wait_process_status(driver, name_fragment, status, timeout=30):
-    """Wait until a process row matching name_fragment has the given status."""
+    """Wait until a process row matching name_fragment has the given status.
+    Ignores StaleElementReferenceException — the snapshot poll rebuilds
+    #processes-body every 1.5 s and can make row/cell references stale
+    between the outer find_elements() and the inner .text access."""
     def _check(d):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             cells = row.find_elements(By.TAG_NAME, 'td')
@@ -209,7 +213,8 @@ def wait_process_status(driver, name_fragment, status, timeout=30):
                     if cells[4].text.strip() == status:
                         return row
         return False
-    return W(driver, timeout).until(_check)
+    return WebDriverWait(driver, timeout,
+                         ignored_exceptions=[StaleElementReferenceException]).until(_check)
 
 def host_count(driver):
     return len(driver.find_elements(By.CSS_SELECTOR, '#hosts-body tr[data-host-id]'))
@@ -394,7 +399,6 @@ class TestProcessActions:
         the element stale.  We retry the grab+right-click+clear sequence so the
         element is always fresh when .perform() fires.
         """
-        from selenium.common.exceptions import StaleElementReferenceException
         wc = gap_server['wc']
         result = wc.runCommand('echo clear-target', name='clear-test', hostIp=IP_A)
         pid = result.get('process_id')
