@@ -545,18 +545,17 @@ JS_PATH = os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')
 JS = open(JS_PATH).read()
 
 def test_f1_xterm_font_size():
-    """applyFontSize block must reference both terminals and set options.fontSize.
-    Verify the code block that handles xterm font update contains all required pieces."""
-    # Find the applyFontSize function in JS and check its body contains the xterm update
+    """Lower-panel applyFontSize must update _termState xterm with options.fontSize.
+    There are two separate applyFontSize closures (lower + upper panel).
+    This test checks the FIRST one (lower panel) covers _termState."""
     start = JS.find('function applyFontSize()')
-    end = JS.find('\n    }', start + 1)  # closing brace of function
+    end   = JS.find('\n    }', start + 1)
     if start == -1:
-        return "FAIL: applyFontSize function not found in JS"
+        return "FAIL: applyFontSize (lower panel) not found in JS"
     body = JS[start:end+10]
-    return ok('options.fontSize' in body and '_termState' in body and
-              '_dynTermState' in body and 'fit()' in body,
-              "applyFontSize body missing options.fontSize, terminal references, or fit() call")
-test("F1.1: Font size buttons update xterm.js terminals via options.fontSize", test_f1_xterm_font_size)
+    return ok('options.fontSize' in body and '_termState' in body and 'fit()' in body,
+              "Lower-panel applyFontSize missing options.fontSize, _termState, or fit() call")
+test("F1.1: Lower-panel font size updates _termState xterm via options.fontSize", test_f1_xterm_font_size)
 
 def test_f2_xterm_font_pt_to_px():
     """xterm fontSize must be computed from pt using a conversion factor near 1.333."""
@@ -641,14 +640,18 @@ def test_f8_hydra_no_creds_returns_400():
 test("F3.4: brute/run returns 400 when no credentials supplied", test_f8_hydra_no_creds_returns_400)
 
 def test_f9_xterm_both_terminals_covered():
-    """applyFontSize forEach must iterate over both _termState and _dynTermState."""
-    start = JS.find('function applyFontSize()')
-    end = JS.find('\n    }', start + 1)
-    body = JS[start:end+10] if start != -1 else ''
-    # The forEach block updating terminals must reference both terminal state objects
-    return ok('_termState' in body and '_dynTermState' in body,
-              "applyFontSize body does not reference both _termState and _dynTermState")
-test("F1.3: applyFontSize body covers both _termState and _dynTermState", test_f9_xterm_both_terminals_covered)
+    """Upper-panel applyFontSize must update _dynTermState xterm with options.fontSize.
+    The second applyFontSize closure handles the upper (dynamic-tabs) panel.
+    This test checks it separately from the lower-panel closure."""
+    first  = JS.find('function applyFontSize()')
+    second = JS.find('function applyFontSize()', first + 1) if first != -1 else -1
+    if second == -1:
+        return "FAIL: upper-panel applyFontSize (second occurrence) not found in JS"
+    end  = JS.find('\n    }', second + 1)
+    body = JS[second:end+10]
+    return ok('options.fontSize' in body and '_dynTermState' in body and 'fit()' in body,
+              "Upper-panel applyFontSize missing options.fontSize, _dynTermState, or fit() call")
+test("F1.3: Upper-panel font size updates _dynTermState xterm via options.fontSize", test_f9_xterm_both_terminals_covered)
 
 def test_f10_xterm_fit_called():
     """After fontSize update, fitAddon.fit() must appear after options.fontSize in the function."""

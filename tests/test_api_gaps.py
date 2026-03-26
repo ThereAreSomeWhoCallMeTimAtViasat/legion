@@ -683,9 +683,11 @@ def test_p39_addhost_rejects_empty():
 test("P8.4: add-hosts rejects empty target string → 400", test_p39_addhost_rejects_empty)
 
 def test_p40_addhost_rejects_semicolon():
-    """POST /api/nmap/scan with semicolon injection must return 400."""
+    """POST /api/nmap/scan with semicolon injection must return 400.
+    Uses 'echo injected' (spaces → invalid nmap target) rather than
+    'rm -rf /' so the test payload is harmless if validation ever regresses."""
     r = client.post('/api/nmap/scan',
-                    json={'targets': '127.0.0.1; rm -rf /'})
+                    json={'targets': '127.0.0.1; echo injected'})
     return ok(r.status_code == 400,
               f"Expected 400 for semicolon injection, got {r.status_code}")
 test("P8.5: add-hosts rejects semicolon injection → 400", test_p40_addhost_rejects_semicolon)

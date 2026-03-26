@@ -19,8 +19,13 @@ Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@
 import re
 
 def validateNmapInput(text):
-    """Validate nmap input entered in Add Hosts dialog."""
-    if re.search(r'[^a-zA-Z0-9:.\/\-\s,]', text) is not None:
+    """Validate nmap input entered in Add Hosts dialog.
+    Allowed: letters, digits, colon, dot, slash, hyphen, comma.
+    Spaces are intentionally excluded — no valid nmap target (IP, CIDR,
+    hostname, range) contains a space.  Permitting spaces allows shell
+    command sequences like 'rm -rf /' to pass character validation after
+    semicolon-splitting (T12)."""
+    if re.search(r'[^a-zA-Z0-9:.\/\-,]', text) is not None:
         return False
     return True
 

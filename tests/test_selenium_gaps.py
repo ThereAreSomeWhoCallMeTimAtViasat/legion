@@ -532,12 +532,14 @@ class TestAddPort:
 class TestNotes:
 
     def _open_notes_edit(self, driver, ip):
-        """Select host, click Notes tab, click display to enter edit mode."""
+        """Select host, click Notes tab, double-click display to enter edit mode.
+        v10.47 changed entry from single-click to dblclick for UX reasons."""
         select_host(driver, ip)
         click_right_tab(driver, 'notes-right')
         time.sleep(0.3)
         driver.execute_script(
-            "var d=document.getElementById('notes-display'); if(d) d.click();")
+            "var d=document.getElementById('notes-display');"
+            "if(d) d.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));")
         time.sleep(0.2)
 
     def _set_note_text(self, driver, text):
@@ -813,13 +815,16 @@ class TestSendSelectionToNotes:
             """, pid)
             time.sleep(POLL)
 
-        # Wait for output text to appear in the inline panel
+        # Wait for output text to appear in #plain-output (not the outer container
+        # which includes the font-size toolbar and would pollute the selection).
         W(gap_driver, 8).until(lambda d: len(
-            d.find_element(By.ID, 'process-output-inline').text.strip()) > 0)
+            d.find_element(By.ID, 'plain-output').text.strip()) > 0)
 
-        # Programmatically select all text in process-output-inline
+        # Select all text in #plain-output only — the font toolbar lives in
+        # the parent #process-output-inline so selecting the parent would include
+        # "Font 10 A− A+" text that makes the notes assertion fragile.
         gap_driver.execute_script("""
-            var el = document.getElementById('process-output-inline');
+            var el = document.getElementById('plain-output');
             if (!el) return;
             var range = document.createRange();
             range.selectNodeContents(el);

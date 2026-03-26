@@ -353,7 +353,8 @@ class TestNotesIsolation:
 
         # Enter edit mode (click display div → _showNotesEdit captures _noteHostId = A)
         mh_driver.execute_script(
-            "var d=document.getElementById('notes-display'); if(d) d.click();")
+            "var d=document.getElementById('notes-display');"
+            "if(d) d.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));")
         time.sleep(0.2)
 
         # Set text in textarea
@@ -379,7 +380,8 @@ class TestNotesIsolation:
         time.sleep(0.3)
 
         mh_driver.execute_script(
-            "var d=document.getElementById('notes-display'); if(d) d.click();")
+            "var d=document.getElementById('notes-display');"
+            "if(d) d.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));")
         time.sleep(0.2)
         mh_driver.execute_script("""
             var ta=document.getElementById('notes-text');

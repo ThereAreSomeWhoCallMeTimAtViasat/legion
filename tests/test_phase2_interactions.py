@@ -155,10 +155,12 @@ def test_i1_close_x_button_in_rendered_tab():
     """renderDynamicToolTabs function must create close-x button inside dynamic-tab."""
     with open(os.path.join(PROJECT_ROOT, 'app/web/static/js/legion.js')) as f:
         src = f.read()
-    # Find renderDynamicToolTabs function body and check for close-x creation inside it
+    # Find renderDynamicToolTabs function body and check for close-x creation inside it.
+    # The close-x span is created ~1974 chars into the function (inside the forEach loop);
+    # the window must be wide enough to reach it.
     idx = src.find('function renderDynamicToolTabs(')
     if idx < 0: return "FAIL: renderDynamicToolTabs function not found"
-    body = src[idx:idx+1500]
+    body = src[idx:idx+2500]
     return ok('close-x' in body and 'dynamic-tab' in body,
               "renderDynamicToolTabs does not create close-x inside dynamic-tab")
 test("I1.5: renderDynamicToolTabs function body creates close-x inside dynamic-tab", test_i1_close_x_button_in_rendered_tab)
