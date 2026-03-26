@@ -623,7 +623,7 @@ pip install "anthropic[vertex]"
 | 4 | Config editor find/search (F2) | Low–Med | ✅ Done v10.8 | |
 | 5 | Terminal notes Ctrl+B | Med | ✅ Done v10.9 | |
 | 6 | Parallel nmap stages | High | ✅ Done v10.19 | PORTS parallel; NSE last with all ports |
-| 7 | LLM host analysis (AI tab) | Med | ❌ Not started | Design approved above |
+| 7 | LLM host analysis (AI tab) | Med | ✅ Done v10.55 | Vertex AI, two-phase, history DB, Jaccard similarity, side-by-side |
 | 8 | Save-on-exit prompt | Low | ✅ Done v10.3 | |
 | 9 | Auto per-service NSE scripts after discovery | Med | ❌ Not started | Flask only; after #7 |
 | 10 | Tool manager GUI — add/remove tools from legion.conf | Med | ❌ Not started | Form-based; no direct conf editing |
