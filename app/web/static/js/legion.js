@@ -4011,6 +4011,236 @@ document.addEventListener('DOMContentLoaded', function() {
         if (bottomSec) saveSplitterPos('bottom', bottomSec);
     });
 
+    /* ══ AI TAB ══════════════════════════════════════════════════════════════
+       Backlog #7 — LLM host analysis via Vertex AI (two-phase pipeline).
+       Blocking conditions → ready state → spinner → results → side-by-side.
+    ══════════════════════════════════════════════════════════════════════════ */
+    var _aiHostId   = null;   // host_id currently shown in AI tab
+    var _aiResults  = null;   // most recent analysis result
+
+    /* Severity colour for Phase 1 findings table */
+    var _aiSevColour = {
+        critical: '#e44', high: '#f80', medium: '#fa0',
+        low: '#48f', info: 'var(--disabled)'
+    };
+
+    /* Render a Phase 1 JSON array into tbody rows */
+    function _aiRenderFindings(tbodyId, findings) {
+        var tbody = $(tbodyId);
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        var rows = typeof findings === 'string' ? JSON.parse(findings) : findings;
+        (rows || []).forEach(function(f) {
+            var tr   = document.createElement('tr');
+            var sev  = (f.severity || 'info').toLowerCase();
+            var col  = _aiSevColour[sev] || 'var(--text)';
+            tr.innerHTML =
+                '<td style="color:' + col + ';font-weight:700">' + esc(f.severity || '') + '</td>' +
+                '<td>' + esc(f.source  || '') + '</td>' +
+                '<td>' + esc(String(f.port || '')) + '</td>' +
+                '<td>' + esc(f.finding || '') + '</td>' +
+                '<td style="color:var(--disabled);font-size:8pt">' + esc(f.evidence || '') + '</td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    /* Simple Markdown → HTML (bold, inline-code, headers, bullets, code blocks) */
+    function _aiMd(md) {
+        if (!md) return '';
+        var html = esc(md);
+        // code blocks first (preserve newlines inside)
+        html = html.replace(/```[\s\S]*?```/g, function(m) {
+            return '<pre style="background:var(--dark);padding:6px;overflow:auto;font-size:8pt">' +
+                   m.replace(/^```[^\n]*\n?/, '').replace(/```$/, '') + '</pre>';
+        });
+        html = html.replace(/`([^`]+)`/g, '<code style="background:var(--dark);padding:1px 3px">$1</code>');
+        html = html.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 2px">$1</h4>');
+        html = html.replace(/^## (.+)$/gm,  '<h3 style="margin:10px 0 3px">$1</h3>');
+        html = html.replace(/^# (.+)$/gm,   '<h2 style="margin:10px 0 4px">$1</h2>');
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+        html = html.replace(/(<li>.*<\/li>)/s, '<ul style="padding-left:18px;margin:4px 0">$1</ul>');
+        html = html.replace(/\n/g, '<br>');
+        return html;
+    }
+
+    function _aiShowState(state) {
+        ['ai-blocking','ai-ready','ai-running','ai-results','ai-no-host'].forEach(function(id) {
+            var el = $(id); if (el) el.style.display = 'none';
+        });
+        var el = $(state); if (el) el.style.display = '';
+    }
+
+    function _aiLoadStatus(hostId) {
+        if (!hostId) { _aiShowState('ai-no-host'); return; }
+        _aiHostId = hostId;
+        fetchJson('/api/ai/host/' + hostId + '/status').then(function(s) {
+            if (s.blocking && s.blocking.length) {
+                _aiShowState('ai-blocking');
+                var ul = $('ai-blocking-list');
+                if (ul) {
+                    ul.innerHTML = '';
+                    s.blocking.forEach(function(p) {
+                        var li = document.createElement('li');
+                        li.textContent = p.name + ' (' + p.status + ')';
+                        ul.appendChild(li);
+                    });
+                }
+            } else {
+                _aiShowState('ai-ready');
+                var btn = $('ai-analyze-btn');
+                if (btn) btn.textContent = 'Analyze (~$' + (s.est_cost || 0).toFixed(2) + ')';
+                var hint = $('ai-cost-hint');
+                if (hint) hint.textContent = '~' + (s.est_tokens || 0).toLocaleString() + ' tokens estimated';
+            }
+        }).catch(function() { _aiShowState('ai-no-host'); });
+    }
+
+    function _aiLoadLatest(hostId) {
+        fetchJson('/api/ai/host/' + hostId + '/latest').then(function(r) {
+            if (r.found) {
+                _aiResults = r;
+                _aiShowResults(r, null);
+            } else {
+                _aiLoadStatus(hostId);
+            }
+        }).catch(function() { _aiLoadStatus(hostId); });
+    }
+
+    function _aiShowResults(result, histResult) {
+        _aiShowState('ai-results');
+        /* Cost bar */
+        var costText = $('ai-cost-text');
+        if (costText) {
+            var cached = !result.tokens_input;
+            costText.textContent = cached
+                ? 'Previously cost $' + (result.cost_usd || 0).toFixed(4) + ' — no charge for this view'
+                : 'Cost: $' + (result.cost_usd || 0).toFixed(4) +
+                  ' | ' + ((result.tokens_input || 0) + (result.tokens_output || 0)).toLocaleString() + ' tokens';
+        }
+        /* Phase 1 table + JSON */
+        try { _aiRenderFindings('ai-p1-body', result.phase1_json); } catch(e) {}
+        var p1json = $('ai-p1-json');
+        if (p1json) {
+            try { p1json.textContent = JSON.stringify(JSON.parse(result.phase1_json), null, 2); }
+            catch(e) { p1json.textContent = result.phase1_json || ''; }
+        }
+        /* Phase 2 markdown */
+        var p2 = $('ai-p2-markdown');
+        if (p2) p2.innerHTML = _aiMd(result.phase2_markdown || '');
+
+        /* Historical comparison */
+        if (histResult) {
+            var rc = $('ai-right-compare');
+            if (rc) rc.style.display = '';
+            try { _aiRenderFindings('ai-p1h-body', histResult.phase1_json); } catch(e) {}
+            var p1hj = $('ai-p1h-json');
+            if (p1hj) {
+                try { p1hj.textContent = JSON.stringify(JSON.parse(histResult.phase1_json), null, 2); }
+                catch(e) { p1hj.textContent = histResult.phase1_json || ''; }
+            }
+            var p2h = $('ai-p2h-markdown');
+            if (p2h) p2h.innerHTML = _aiMd(histResult.phase2_markdown || '');
+            var ct = $('ai-compare-cost');
+            if (ct) ct.textContent = 'Historical cost: $' + (histResult.cost_usd || 0).toFixed(4);
+            var title = $('ai-compare-title');
+            if (title) {
+                title.textContent = histResult.host_ip + ' — ' + (histResult.timestamp || '').substring(0, 10) +
+                    ' — ' + (histResult.similarity || 0) + '% match';
+            }
+        } else {
+            var rc2 = $('ai-right-compare'); if (rc2) rc2.style.display = 'none';
+        }
+    }
+
+    /* Populate comparison dropdown from history matches */
+    function _aiLoadSimilar(hostId) {
+        var sel = $('ai-compare-select');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— No similar hosts in history —</option>';
+        fetchJson('/api/ai/history/similar/' + hostId).then(function(r) {
+            (r.matches || []).forEach(function(m) {
+                var opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.host_ip + ' — ' + (m.timestamp || '').substring(0, 10) +
+                    ' — ' + m.similarity + '% match — ' + (m.os_family || 'Unknown') +
+                    ', ' + m.port_count + ' ports';
+                sel.appendChild(opt);
+            });
+        }).catch(function() {});
+    }
+
+    /* AI tab click → load status or latest results */
+    var _aiTabBtn = $('ai-tab-btn');
+    if (_aiTabBtn) {
+        _aiTabBtn.addEventListener('click', function() {
+            if (!L.selectedHostId) { _aiShowState('ai-no-host'); return; }
+            _aiLoadLatest(L.selectedHostId);
+            _aiLoadSimilar(L.selectedHostId);
+        });
+    }
+
+    /* Analyze button */
+    var _aiAnalyzeBtn = $('ai-analyze-btn');
+    if (_aiAnalyzeBtn) {
+        _aiAnalyzeBtn.addEventListener('click', function() {
+            if (!_aiHostId) return;
+            _aiShowState('ai-running');
+            postJson('/api/ai/analyze-host/' + _aiHostId, {})
+                .then(function(r) {
+                    _aiResults = r;
+                    _aiShowResults(r, null);
+                    _aiLoadSimilar(_aiHostId);
+                })
+                .catch(function(e) {
+                    _aiShowState('ai-ready');
+                    alert('AI analysis failed: ' + (e.message || e));
+                });
+        });
+    }
+
+    /* Phase 1 JSON toggle (current) */
+    var _p1toggle = $('ai-p1-toggle');
+    if (_p1toggle) {
+        _p1toggle.addEventListener('click', function() {
+            var tbl = $('ai-p1-table-wrap'), jsn = $('ai-p1-json');
+            if (!tbl || !jsn) return;
+            var showJson = tbl.style.display === 'none';
+            tbl.style.display = showJson ? '' : 'none';
+            jsn.style.display = showJson ? 'none' : '';
+            _p1toggle.textContent = showJson ? 'View as JSON' : 'View as Table';
+        });
+    }
+
+    /* Phase 1 JSON toggle (historical) */
+    var _p1htoggle = $('ai-p1h-toggle');
+    if (_p1htoggle) {
+        _p1htoggle.addEventListener('click', function() {
+            var tbl = document.querySelector('#ai-right-compare table'),
+                jsn = $('ai-p1h-json');
+            if (!tbl || !jsn) return;
+            var showJson = tbl.style.display === 'none';
+            tbl.style.display = showJson ? '' : 'none';
+            jsn.style.display = showJson ? 'none' : '';
+            _p1htoggle.textContent = showJson ? 'View as JSON' : 'View as Table';
+        });
+    }
+
+    /* Comparison dropdown change → load historical session */
+    var _aiCompSel = $('ai-compare-select');
+    if (_aiCompSel) {
+        _aiCompSel.addEventListener('change', function() {
+            var sid = this.value;
+            if (!sid || !_aiResults) {
+                var rc = $('ai-right-compare'); if (rc) rc.style.display = 'none';
+                return;
+            }
+            fetchJson('/api/ai/history/session/' + sid).then(function(hist) {
+                _aiShowResults(_aiResults, hist);
+            }).catch(function() {});
+        });
+    }
+
     /* P8: Graceful shutdown on page unload.
        Also warn if the project has unsaved data (tab close, browser nav, refresh). */
     window.addEventListener('beforeunload', function(e) {

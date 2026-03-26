@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.54-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.55-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -188,6 +188,7 @@
     <button class="tab-btn" type="button" data-tab="info-right">Information</button>
     <button class="tab-btn" type="button" data-tab="cves-right">CVEs</button>
     <button class="tab-btn" type="button" data-tab="notes-right">Notes</button>
+    <button class="tab-btn" type="button" data-tab="ai-right" id="ai-tab-btn">AI</button>
     <!-- dynamic tool output tabs added here by JS -->
 </div>
 
@@ -252,6 +253,99 @@
 <div class="tab-content" id="notes-right">
     <div class="notes-area" id="notes-display" title="Click to edit"></div>
     <textarea class="notes-area" id="notes-text" placeholder="Host notes..." style="display:none"></textarea>
+</div>
+
+<!-- AI Analysis tab -->
+<div class="tab-content" id="ai-right" style="overflow:auto;padding:0">
+    <!-- State: blocking | ready | running | done -->
+    <div id="ai-blocking" style="padding:12px;display:none">
+        <p style="color:var(--disabled);font-size:11pt;margin-bottom:8px">
+            Waiting for processes to finish before AI analysis:
+        </p>
+        <ul id="ai-blocking-list" style="padding-left:20px;color:var(--disabled);font-size:10pt"></ul>
+    </div>
+    <div id="ai-ready" style="padding:12px;display:none">
+        <button id="ai-analyze-btn" type="button" style="font-size:11pt;padding:6px 18px">
+            Analyze (~$0.00)
+        </button>
+        <span style="font-size:9pt;color:var(--disabled);margin-left:10px" id="ai-cost-hint"></span>
+    </div>
+    <div id="ai-running" style="padding:12px;display:none">
+        <span class="spinner"></span>
+        <span style="color:var(--disabled);margin-left:8px">Running AI analysis…</span>
+    </div>
+    <div id="ai-results" style="display:none;height:100%;overflow:auto">
+        <!-- Cost banner -->
+        <div id="ai-cost-bar" style="padding:4px 10px;font-size:9pt;color:var(--disabled);
+             border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0">
+            <span id="ai-cost-text"></span>
+            <span id="ai-compare-wrap">
+                Compare with:
+                <select id="ai-compare-select" style="font:inherit;background:var(--base);color:var(--text);border:1px solid var(--border);padding:1px 4px">
+                    <option value="">— No similar hosts in history —</option>
+                </select>
+            </span>
+        </div>
+        <!-- Side-by-side panels -->
+        <div id="ai-panels" style="display:flex;flex:1;min-height:0;overflow:hidden;height:calc(100% - 28px)">
+            <!-- Left: current analysis -->
+            <div id="ai-left" style="flex:1;min-width:0;overflow:auto;padding:8px;border-right:1px solid var(--border)">
+                <h4 style="margin:0 0 6px;font-size:10pt;color:var(--highlight)">Current Host</h4>
+                <!-- Phase 1 findings table -->
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                    <strong style="font-size:9pt">Findings</strong>
+                    <button id="ai-p1-toggle" type="button" style="font-size:8pt;padding:1px 6px">View as JSON</button>
+                </div>
+                <div id="ai-p1-table-wrap" style="overflow:auto;max-height:280px;margin-bottom:8px">
+                    <table id="ai-p1-table" style="width:100%;font-size:9pt">
+                        <thead><tr>
+                            <th style="width:70px">Severity</th>
+                            <th style="width:90px">Source</th>
+                            <th style="width:50px">Port</th>
+                            <th>Finding</th>
+                            <th style="width:160px">Evidence</th>
+                        </tr></thead>
+                        <tbody id="ai-p1-body"></tbody>
+                    </table>
+                </div>
+                <pre id="ai-p1-json" style="display:none;font-size:8pt;overflow:auto;max-height:280px;
+                     background:var(--dark);padding:6px;border:1px solid var(--border);margin-bottom:8px"></pre>
+                <!-- Phase 2 markdown -->
+                <strong style="font-size:9pt">Attack Plan</strong>
+                <div id="ai-p2-markdown" style="font-size:9pt;line-height:1.6;margin-top:4px;
+                     overflow:auto;max-height:400px"></div>
+            </div>
+            <!-- Right: historical comparison (hidden until user picks one) -->
+            <div id="ai-right-compare" style="flex:1;min-width:0;overflow:auto;padding:8px;display:none">
+                <h4 style="margin:0 0 6px;font-size:10pt;color:var(--disabled)" id="ai-compare-title">Historical Match</h4>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                    <strong style="font-size:9pt">Findings</strong>
+                    <button id="ai-p1h-toggle" type="button" style="font-size:8pt;padding:1px 6px">View as JSON</button>
+                </div>
+                <div style="overflow:auto;max-height:280px;margin-bottom:8px">
+                    <table id="ai-p1h-table" style="width:100%;font-size:9pt">
+                        <thead><tr>
+                            <th style="width:70px">Severity</th>
+                            <th style="width:90px">Source</th>
+                            <th style="width:50px">Port</th>
+                            <th>Finding</th>
+                            <th style="width:160px">Evidence</th>
+                        </tr></thead>
+                        <tbody id="ai-p1h-body"></tbody>
+                    </table>
+                </div>
+                <pre id="ai-p1h-json" style="display:none;font-size:8pt;overflow:auto;max-height:280px;
+                     background:var(--dark);padding:6px;border:1px solid var(--border);margin-bottom:8px"></pre>
+                <strong style="font-size:9pt">Attack Plan</strong>
+                <div id="ai-p2h-markdown" style="font-size:9pt;line-height:1.6;margin-top:4px;
+                     overflow:auto;max-height:400px"></div>
+                <div id="ai-compare-cost" style="font-size:8pt;color:var(--disabled);margin-top:6px"></div>
+            </div>
+        </div>
+    </div>
+    <div id="ai-no-host" style="padding:12px;color:var(--disabled);display:none">
+        Select a host to enable AI analysis.
+    </div>
 </div>
 
 <!-- Dynamic tool output tabs (content divs added by JS) -->

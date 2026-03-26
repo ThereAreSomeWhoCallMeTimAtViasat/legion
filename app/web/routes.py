@@ -1654,3 +1654,133 @@ def terminal_delete(session_id):
             _term_log.error(f'[Terminal] Failed to mark process {pid} as killed: {e}')
     _term_log.info(f'[Terminal] Deleted session {session_id[:8]}')
     return jsonify({"status": "ok"})
+
+
+# ═══════════════════════════════════════════
+# AI Analysis routes
+# ═══════════════════════════════════════════
+
+@web_bp.get("/api/ai/host/<int:host_id>/status")
+def ai_host_status(host_id):
+    """Return blocking conditions and cost estimate for the AI Analyze button."""
+    wc    = _wc()
+    logic = _logic()
+    from app.auxiliary import Filters
+    from app.ai.analyzer import estimate_cost, _assemble_host_data, _build_phase1_prompt
+
+    filters = Filters()
+    rc      = logic.activeProject.repositoryContainer
+    all_procs = rc.processRepository.getProcesses(
+        filters, showProcesses=True, sort='desc', ncol='id')
+
+    # Only regular (non-interactive) processes for this host
+    host_obj_q = None
+    try:
+        from db.entities.host import hostObj as HostObj
+        session = rc.hostRepository.dbAdapter.session()
+        host_obj_q = session.query(HostObj).filter(HostObj.id == host_id).first()
+    except Exception:
+        pass
+
+    host_ip = host_obj_q.ip if host_obj_q else ''
+    blocking = []
+    for p in all_procs:
+        if str(p.get('hostIp', '')) != host_ip:
+            continue
+        if p.get('status') in ('Running', 'Waiting') and p.get('status') != 'Interactive':
+            blocking.append({
+                'id': p.get('id'),
+                'name': p.get('name'),
+                'status': p.get('status'),
+            })
+
+    # Cost estimate from fingerprint size
+    est_chars = 0
+    if not blocking and host_obj_q:
+        try:
+            result = _assemble_host_data(logic, host_id)
+            if result:
+                (ho, hip, osf, ports, cves, scripts, note, procs, fp) = result
+                sample = _build_phase1_prompt(ho, hip, osf, ports, cves, scripts, note, [])
+                est_chars = len(sample)
+        except Exception:
+            pass
+
+    est_tokens, est_cost = estimate_cost(est_chars)
+    return jsonify({
+        'host_id':    host_id,
+        'host_ip':    host_ip,
+        'blocking':   blocking,
+        'ready':      len(blocking) == 0,
+        'est_tokens': est_tokens,
+        'est_cost':   est_cost,
+    })
+
+
+@web_bp.get("/api/ai/history/similar/<int:host_id>")
+def ai_history_similar(host_id):
+    """Return Jaccard-ranked list of similar hosts from the persistent history DB."""
+    logic = _logic()
+    from app.ai.analyzer import _assemble_host_data
+    from app.ai import history_db
+
+    result = _assemble_host_data(logic, host_id)
+    if not result:
+        return jsonify({'matches': [], 'fingerprint': []})
+
+    (_, host_ip, _, ports, _, _, _, _, fingerprint) = result
+    matches = history_db.find_similar(fingerprint, threshold=0.95, limit=10)
+    return jsonify({'matches': matches, 'fingerprint': fingerprint, 'host_ip': host_ip})
+
+
+@web_bp.post("/api/ai/analyze-host/<int:host_id>")
+def ai_analyze_host(host_id):
+    """Run Phase 1 + Phase 2 analysis. Blocks until complete (spinner on client)."""
+    logic = _logic()
+    from app.ai.analyzer import run_analysis
+    try:
+        result = run_analysis(logic, host_id)
+        return jsonify({'status': 'ok', **result})
+    except Exception as e:
+        import logging
+        logging.getLogger('legion').error(f"[AI] analyze-host error: {e}")
+        return _err(f"AI analysis failed: {e}", 500)
+
+
+@web_bp.get("/api/ai/host/<int:host_id>/latest")
+def ai_host_latest(host_id):
+    """Return the most recent saved AI analysis for this host from the project DB."""
+    logic = _logic()
+    rc    = logic.activeProject.repositoryContainer
+    session = rc.hostRepository.dbAdapter.session()
+    try:
+        from db.entities.ai_analysis import AiAnalysis
+        row = (session.query(AiAnalysis)
+               .filter(AiAnalysis.host_id == host_id)
+               .order_by(AiAnalysis.id.desc())
+               .first())
+        if not row:
+            return jsonify({'found': False})
+        return jsonify({
+            'found':          True,
+            'id':             row.id,
+            'timestamp':      row.timestamp,
+            'phase1_json':    row.phase1_json,
+            'phase2_markdown': row.phase2_markdown,
+            'tokens_input':   row.tokens_input,
+            'tokens_output':  row.tokens_output,
+            'cost_usd':       row.cost_usd,
+            'history_session_id': row.history_session_id,
+        })
+    finally:
+        session.close()
+
+
+@web_bp.get("/api/ai/history/session/<int:session_id>")
+def ai_history_session(session_id):
+    """Fetch a single history session by id (for side-by-side comparison)."""
+    from app.ai import history_db
+    session = history_db.get_session(session_id)
+    if not session:
+        return _err("Session not found", 404)
+    return jsonify(session)
