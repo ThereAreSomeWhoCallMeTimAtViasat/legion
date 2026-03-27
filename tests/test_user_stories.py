@@ -28,6 +28,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import StaleElementReferenceException
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -890,7 +891,7 @@ class TestUS16_LiveOutputGrows:
     def test_output_contains_expected_line_markers(self, driver, seed_host):
         """After 6 s of Running time the output contains multiple LINE_N markers."""
         pid = _start_slow_process()
-        _wait_for_running(pid, timeout=30)   # wait for queue to clear
+        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
         time.sleep(6.0)   # ~17 lines produced (0.35 s/line × 17 ≈ 6 s)
 
         _select_host_and_process(driver, pid)
@@ -907,7 +908,7 @@ class TestUS16_LiveOutputGrows:
     def test_status_shows_running_while_output_live(self, driver, seed_host):
         """Process row status column must show Running while output is active."""
         pid = _start_slow_process()
-        _wait_for_running(pid, timeout=30)   # wait for queue to clear
+        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
         time.sleep(0.5)   # brief pause after start
 
         _select_host_and_process(driver, pid)
@@ -943,7 +944,7 @@ class TestUS18_AutoScrollAtBottom:
         """After clicking a Running process from the bottom, the panel
         remains at the bottom (gap < 40 px) across two more polls."""
         pid = _start_slow_process()
-        _wait_for_running(pid, timeout=30)   # wait for queue to clear
+        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
         # Wait for enough lines to make the panel scrollable
         time.sleep(10.0)   # ~28 lines × 18 px ≈ 500 px — should overflow panel
 
@@ -1073,12 +1074,19 @@ def _send_input(session_id, text):
 
 def _click_interactive_row(driver, process_id, timeout=10):
     """Click the process row for process_id so xterm mounts in lower panel.
-    We find the element with Selenium (safe CSS) then click via JS to avoid
-    scroll-into-view issues — no string interpolation in JS needed."""
+    Uses a JS-based lookup inside execute_script to avoid StaleElementReferenceException:
+    in the full test suite the snapshot poll rebuilds #processes-body every 1.5 s, making
+    any previously-found element reference stale before .click() fires."""
     css = f'#processes-body tr[data-process-id="{process_id}"]'
-    W(driver, timeout).until(lambda d: d.find_elements(By.CSS_SELECTOR, css))
-    row = driver.find_element(By.CSS_SELECTOR, css)
-    driver.execute_script('arguments[0].scrollIntoView({block:"center"}); arguments[0].click()', row)
+    # Wait for the row to appear in the DOM (ignore stale refs during table rebuild)
+    WebDriverWait(driver, timeout,
+                  ignored_exceptions=[StaleElementReferenceException]).until(
+        lambda d: d.find_elements(By.CSS_SELECTOR, css))
+    # Re-look up inside JS so the reference is always fresh — immune to staleness
+    driver.execute_script(f"""
+        var row = document.querySelector('#processes-body tr[data-process-id="{process_id}"]');
+        if (row) {{ row.scrollIntoView({{block:'center'}}); row.click(); }}
+    """)
     time.sleep(2.0)  # xterm needs time to mount and render
 
 
