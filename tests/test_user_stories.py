@@ -2104,11 +2104,12 @@ def _open_config_manager(driver):
     """Open Config Manager via JS click (same path as F2 keydown handler).
     Waits for textarea content — cfgLoadProfiles() populates it async.
 
-    Navigates to BASE_URL first if needed — US-55 tests leave the browser on
-    port 5086 and reset_state does not navigate back."""
-    if BASE_URL not in driver.current_url:
-        driver.get(BASE_URL)
-        time.sleep(1.5)
+    Always navigates to BASE_URL first to guarantee a fresh page state —
+    US-55 browser tests leave the browser in an unknown state (may be on
+    port 5085 or 5086 with unknown JS state), and reset_state does not
+    navigate back. A fresh load ensures cfg-find-bar starts display:none."""
+    driver.get(BASE_URL)
+    time.sleep(1.5)
     driver.execute_script("document.getElementById('action-config').click()")
     W(driver, 5).until(
         lambda d: 'is-open' in (
