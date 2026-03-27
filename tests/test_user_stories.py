@@ -805,16 +805,39 @@ def _wait_for_running(pid, timeout=30):
     before the test can observe live output or Growing behaviour.
     """
     deadline = time.monotonic() + timeout
+    last_debug = time.monotonic()
     while time.monotonic() < deadline:
-        procs = api('get', '/api/snapshot').json().get('processes', [])
+        snap  = api('get', '/api/snapshot').json()
+        procs = snap.get('processes', [])
+        found_status = None
         for p in procs:
             if str(p.get('id')) == str(pid):
-                status = p.get('status', '')
-                if status == 'Running':
+                found_status = p.get('status', '')
+                if found_status == 'Running':
                     return True
-                if status in ('Finished', 'Crashed', 'Killed'):
-                    return False   # already done — test will need to handle this
+                if found_status in ('Finished', 'Crashed', 'Killed'):
+                    return False
+
+        # Debug: every 10 s print what is occupying the queue
+        now = time.monotonic()
+        if now - last_debug >= 10:
+            last_debug = now
+            running = [(p.get('id'), p.get('name'), p.get('status'))
+                       for p in procs
+                       if p.get('status') in ('Running', 'Waiting')]
+            elapsed = int(timeout - (deadline - now))
+            print(f'\n[_wait_for_running] pid={pid} status={found_status!r}'
+                  f' elapsed={elapsed}s'
+                  f' queue({len(running)})={running[:8]}', flush=True)
         time.sleep(0.5)
+
+    # Final debug dump on timeout
+    snap  = api('get', '/api/snapshot').json()
+    procs = snap.get('processes', [])
+    running = [(p.get('id'), p.get('name'), p.get('status'))
+               for p in procs if p.get('status') in ('Running', 'Waiting')]
+    print(f'\n[_wait_for_running] TIMEOUT after {timeout}s for pid={pid}.'
+          f' Queue={running}', flush=True)
     return False
 
 
@@ -1347,11 +1370,38 @@ class TestUS34_CtrlBExactTextMatch:
 
         # Wait until all three markers are in the xterm buffer
         for marker in (LINE_A, LINE_B, LINE_C):
-            assert _wait_for_marker(driver, marker, timeout=15), \
-                f'Marker {marker!r} never appeared in xterm buffer'
+            found = _wait_for_marker(driver, marker, timeout=15)
+            if not found:
+                # Debug: dump the xterm buffer so we can see what IS there
+                buf_text = driver.execute_script("""
+                    if (typeof _termState === 'undefined' || !_termState.xterm) return 'NO_XTERM';
+                    var buf = _termState.xterm.buffer.active;
+                    var lines = [];
+                    for (var i = 0; i < Math.min(buf.length, 50); i++) {
+                        var ln = buf.getLine(i);
+                        if (ln) lines.push(ln.translateToString(true));
+                    }
+                    return JSON.stringify(lines);
+                """)
+                print(f'\n[US34 debug] Marker {marker!r} NOT in xterm. '
+                      f'Buffer (up to 50 lines): {buf_text}', flush=True)
+            assert found, f'Marker {marker!r} never appeared in xterm buffer'
 
         # Select from start of LINE_A to end of LINE_C (spanning all three)
         selection = _select_markers_range(driver, LINE_A, LINE_C)
+        if not selection.strip():
+            buf_text = driver.execute_script("""
+                if (typeof _termState === 'undefined' || !_termState.xterm) return 'NO_XTERM';
+                var buf = _termState.xterm.buffer.active;
+                var lines = [];
+                for (var i = 0; i < Math.min(buf.length, 50); i++) {
+                    var ln = buf.getLine(i);
+                    if (ln) lines.push(ln.translateToString(true));
+                }
+                return JSON.stringify(lines);
+            """)
+            print(f'\n[US34 debug] selection empty after _select_markers_range. '
+                  f'Buffer: {buf_text}', flush=True)
         assert selection.strip(), 'Multi-line selection returned empty string'
 
         # All three markers must be inside the selection
