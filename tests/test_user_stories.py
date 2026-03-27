@@ -795,7 +795,7 @@ def _start_slow_process():
     return pid
 
 
-def _wait_for_running(pid, timeout=30):
+def _wait_for_running(pid, timeout=120):
     """Poll the snapshot API until process pid reaches Running status.
 
     In the full test suite, US-02/US-03 submit staged nmap scans that fill
@@ -805,39 +805,16 @@ def _wait_for_running(pid, timeout=30):
     before the test can observe live output or Growing behaviour.
     """
     deadline = time.monotonic() + timeout
-    last_debug = time.monotonic()
     while time.monotonic() < deadline:
-        snap  = api('get', '/api/snapshot').json()
-        procs = snap.get('processes', [])
-        found_status = None
+        procs = api('get', '/api/snapshot').json().get('processes', [])
         for p in procs:
             if str(p.get('id')) == str(pid):
-                found_status = p.get('status', '')
-                if found_status == 'Running':
+                status = p.get('status', '')
+                if status == 'Running':
                     return True
-                if found_status in ('Finished', 'Crashed', 'Killed'):
+                if status in ('Finished', 'Crashed', 'Killed'):
                     return False
-
-        # Debug: every 10 s print what is occupying the queue
-        now = time.monotonic()
-        if now - last_debug >= 10:
-            last_debug = now
-            running = [(p.get('id'), p.get('name'), p.get('status'))
-                       for p in procs
-                       if p.get('status') in ('Running', 'Waiting')]
-            elapsed = int(timeout - (deadline - now))
-            print(f'\n[_wait_for_running] pid={pid} status={found_status!r}'
-                  f' elapsed={elapsed}s'
-                  f' queue({len(running)})={running[:8]}', flush=True)
         time.sleep(0.5)
-
-    # Final debug dump on timeout
-    snap  = api('get', '/api/snapshot').json()
-    procs = snap.get('processes', [])
-    running = [(p.get('id'), p.get('name'), p.get('status'))
-               for p in procs if p.get('status') in ('Running', 'Waiting')]
-    print(f'\n[_wait_for_running] TIMEOUT after {timeout}s for pid={pid}.'
-          f' Queue={running}', flush=True)
     return False
 
 
@@ -893,7 +870,7 @@ class TestUS16_LiveOutputGrows:
         pid = _start_slow_process()
         # Wait for process to be Running before reading output — the queue may
         # be occupied by background nmap stages from earlier US-02/03 tests.
-        _wait_for_running(pid, timeout=30)
+        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
         time.sleep(1.0)   # let a few lines accumulate after start
 
         _select_host_and_process(driver, pid)
@@ -966,6 +943,14 @@ class TestUS18_AutoScrollAtBottom:
     def test_panel_stays_at_bottom_across_polls(self, driver, seed_host):
         """After clicking a Running process from the bottom, the panel
         remains at the bottom (gap < 40 px) across two more polls."""
+        # Ensure Processes bottom tab is active — Log tab tests leave the
+        # bottom section showing the Log panel, making #plain-output zero-height.
+        driver.execute_script("""
+            var btn = document.querySelector('#bottom-tab-bar [data-tab="processes-panel"]');
+            if (btn) btn.click();
+        """)
+        time.sleep(0.3)
+
         pid = _start_slow_process()
         _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
         # Wait for enough lines to make the panel scrollable
@@ -1105,12 +1090,32 @@ def _click_interactive_row(driver, process_id, timeout=10):
     WebDriverWait(driver, timeout,
                   ignored_exceptions=[StaleElementReferenceException]).until(
         lambda d: d.find_elements(By.CSS_SELECTOR, css))
+    # Ensure the Processes bottom tab is visible before clicking.
+    # The Log tab tests (US40/41/42) switch the bottom section to the Log tab
+    # and never switch back.  If #processes-panel is display:none, the
+    # #process-output-inline container has zero width, fitAddon defaults to
+    # 10 columns, and long markers wrap across rows and cannot be found.
+    driver.execute_script("""
+        var btn = document.querySelector('#bottom-tab-bar [data-tab="processes-panel"]');
+        if (btn) btn.click();
+    """)
+    time.sleep(0.3)
+
     # Re-look up inside JS so the reference is always fresh — immune to staleness
     driver.execute_script(f"""
         var row = document.querySelector('#processes-body tr[data-process-id="{process_id}"]');
         if (row) {{ row.scrollIntoView({{block:'center'}}); row.click(); }}
     """)
     time.sleep(2.0)  # xterm needs time to mount and render
+
+    # Force-fit the terminal after layout settles
+    driver.execute_script("""
+        if (typeof _termState !== 'undefined' &&
+            _termState.fitAddon && _termState.xterm) {
+            try { _termState.fitAddon.fit(); } catch(e) {}
+        }
+    """)
+    time.sleep(0.3)
 
 
 def _xterm_loaded(driver):
@@ -1370,38 +1375,11 @@ class TestUS34_CtrlBExactTextMatch:
 
         # Wait until all three markers are in the xterm buffer
         for marker in (LINE_A, LINE_B, LINE_C):
-            found = _wait_for_marker(driver, marker, timeout=15)
-            if not found:
-                # Debug: dump the xterm buffer so we can see what IS there
-                buf_text = driver.execute_script("""
-                    if (typeof _termState === 'undefined' || !_termState.xterm) return 'NO_XTERM';
-                    var buf = _termState.xterm.buffer.active;
-                    var lines = [];
-                    for (var i = 0; i < Math.min(buf.length, 50); i++) {
-                        var ln = buf.getLine(i);
-                        if (ln) lines.push(ln.translateToString(true));
-                    }
-                    return JSON.stringify(lines);
-                """)
-                print(f'\n[US34 debug] Marker {marker!r} NOT in xterm. '
-                      f'Buffer (up to 50 lines): {buf_text}', flush=True)
-            assert found, f'Marker {marker!r} never appeared in xterm buffer'
+            assert _wait_for_marker(driver, marker, timeout=15), \
+            f'Marker {marker!r} never appeared in xterm buffer'
 
         # Select from start of LINE_A to end of LINE_C (spanning all three)
         selection = _select_markers_range(driver, LINE_A, LINE_C)
-        if not selection.strip():
-            buf_text = driver.execute_script("""
-                if (typeof _termState === 'undefined' || !_termState.xterm) return 'NO_XTERM';
-                var buf = _termState.xterm.buffer.active;
-                var lines = [];
-                for (var i = 0; i < Math.min(buf.length, 50); i++) {
-                    var ln = buf.getLine(i);
-                    if (ln) lines.push(ln.translateToString(true));
-                }
-                return JSON.stringify(lines);
-            """)
-            print(f'\n[US34 debug] selection empty after _select_markers_range. '
-                  f'Buffer: {buf_text}', flush=True)
         assert selection.strip(), 'Multi-line selection returned empty string'
 
         # All three markers must be inside the selection
