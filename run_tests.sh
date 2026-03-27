@@ -474,7 +474,7 @@ run_pytest() {
         # Print skipped test names (deselected by -m marker don't show here)
         echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
         if [[ "$s" -gt 0 ]]; then
-            _skip_note "pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)"
+            _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)}"
         fi
     else
         print_result "$name" "fail" "$p" "$f" "$s" "$secs"
@@ -483,7 +483,7 @@ run_pytest() {
         # Print skipped test names
         echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
         if [[ "$s" -gt 0 ]]; then
-            _skip_note "pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)"
+            _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)}"
         fi
     fi
 }
@@ -650,6 +650,7 @@ if $RUN_STORIES; then
     # Match-logic tests (Group 4) run FIRST while the process queue is empty.
     # US-02/US-03 submit 6+ nmap scans that fill the fast-process queue; the
     # printf commands in the match tests would time out if those scans are running.
+    _SKIP_NOTE="pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)"
     run_pytest "user_stories - match+CSS logic" \
         tests/test_user_stories.py \
         -k "US44 or US45US46 or US31"
@@ -659,9 +660,11 @@ if $RUN_STORIES; then
 
     # Everything else (scan-heavy tests run after match tests finish)
     # Exclude live-only classes that need LEGION_TEST_TARGET (US-09, US-39).
+    _SKIP_NOTE="Live-only tests (US-09 nmap %, US-32 CVEs, US-39 screenshot) skipped — run with --all 192.168.85.11 to include them"
     run_pytest "user_stories (offline)" \
         tests/test_user_stories.py \
         -k "not NmapProgress and not ScreenshotTab and not US44 and not US45US46 and not US31"
+    unset _SKIP_NOTE
 
     # ── Live user story tests ──────────────────────────────────────────────────
     if $RUN_LIVE; then
