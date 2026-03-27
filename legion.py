@@ -61,6 +61,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--web", action="store_true", help="Start Legion web UI (Flask)")
     parser.add_argument("--port", type=int, default=5000, help="Port for the web UI (default: 5000)")
+    parser.add_argument("--no-prompt", action="store_true",
+                        help="Skip interactive startup prompts (continue alongside other instances)")
     args = parser.parse_args()
 
     if args.mcp_server:
@@ -238,6 +240,154 @@ if __name__ == "__main__":
         print("Headless Legion run complete.")
         sys.exit(0)
 
+    # ── Multi-instance helpers ────────────────────────────────────────────────
+
+    def _find_other_legion_servers(current_port):
+        """Scan /proc for other legion.py --web processes on a different port."""
+        my_pid = os.getpid()
+        found = []
+        try:
+            for entry in os.listdir('/proc'):
+                if not entry.isdigit():
+                    continue
+                pid = int(entry)
+                if pid == my_pid:
+                    continue
+                try:
+                    with open(f'/proc/{pid}/cmdline', 'rb') as _f:
+                        raw = _f.read().decode(errors='replace')
+                    parts = raw.split('\x00')
+                    is_python = any('python' in p.lower() for p in parts[:2])
+                    has_legion = any('legion.py' in p for p in parts)
+                    has_web   = '--web' in parts
+                    if not (is_python and has_legion and has_web):
+                        continue
+                    port = 5000
+                    for i, p in enumerate(parts):
+                        if p == '--port' and i + 1 < len(parts):
+                            try:
+                                port = int(parts[i + 1])
+                            except (ValueError, IndexError):
+                                pass
+                    if port == current_port:
+                        continue   # same port — will fail to bind, not our concern
+                    alive = _server_is_alive(port)
+                    found.append({'pid': pid, 'port': port, 'alive': alive})
+                except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
+                    continue
+        except (FileNotFoundError, PermissionError):
+            pass
+        return found
+
+    def _server_is_alive(port):
+        """Return True if a Legion server is responding on the given port."""
+        try:
+            import urllib.request as _ur
+            _ur.urlopen(f'http://127.0.0.1:{port}/health', timeout=1)
+            return True
+        except Exception:
+            return False
+
+    def _kill_server_tree(pid):
+        """SIGKILL a Legion server and every descendant via /proc BFS.
+
+        Mirrors _kill_all_descendants() in web_controller.py but operates on
+        an external PID rather than os.getpid().
+        """
+        import signal as _sig
+        # Build ppid→[children] map
+        children = {}
+        try:
+            for entry in os.listdir('/proc'):
+                if not entry.isdigit():
+                    continue
+                try:
+                    with open(f'/proc/{entry}/stat', 'rb') as _f:
+                        data = _f.read().decode(errors='replace')
+                    comm_end = data.rfind(')')
+                    if comm_end < 0:
+                        continue
+                    rest = data[comm_end + 2:].split()
+                    if len(rest) < 2:
+                        continue
+                    ppid = int(rest[1])
+                    children.setdefault(ppid, []).append(int(entry))
+                except (FileNotFoundError, PermissionError, ValueError):
+                    continue
+        except (FileNotFoundError, PermissionError):
+            pass
+        # BFS from target pid
+        to_kill = []
+        queue = [pid]
+        while queue:
+            p = queue.pop(0)
+            to_kill.append(p)
+            queue.extend(children.get(p, []))
+        # Kill descendants first, then the root
+        for p in reversed(to_kill):
+            try:
+                os.kill(p, _sig.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def _prompt_other_servers(servers, no_prompt):
+        """Show found servers, prompt for K/C/A.  Returns True to continue, False to abort."""
+        import time as _t
+        print()
+        print("┌──────────────────────────────────────────────────────────────────┐")
+        print("│   Other Legion web server(s) already running                     │")
+        print("├───────────┬────────┬─────────────────────────────────────────────┤")
+        print("│   PID     │  Port  │  Status                                     │")
+        print("├───────────┼────────┼─────────────────────────────────────────────┤")
+        for s in servers:
+            status = "● responding" if s['alive'] else "○ no response"
+            print(f"│  {s['pid']:<8} │  :{s['port']:<4} │  {status:<43}│")
+        print("└───────────┴────────┴─────────────────────────────────────────────┘")
+
+        if no_prompt:
+            print()
+            print("  [--no-prompt] Continuing alongside existing server(s).")
+            print("  Each instance uses its own isolated database and temp folders.")
+            print("  Scans and deduplication do not cross instances.")
+            print()
+            return True
+
+        print()
+        print("  [K]  Kill other server(s) and all their running scans, then start")
+        print("  [C]  Continue alongside  (instances share nothing — fully isolated)")
+        print("  [A]  Abort")
+        print()
+        while True:
+            try:
+                choice = input("  Choice [K/c/a]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  Aborted.")
+                return False
+            if choice in ('k', ''):
+                print()
+                for s in servers:
+                    print(f"  Stopping PID {s['pid']} on :{s['port']} ...", end=' ', flush=True)
+                    _kill_server_tree(s['pid'])
+                    print("killed")
+                _t.sleep(1.0)   # allow sockets to release
+                print()
+                return True
+            elif choice == 'c':
+                print()
+                print("  Continuing alongside. Isolation guarantees:")
+                print("  • Separate temp SQLite DB per instance  (/tmp/legion/legion-*.legion)")
+                print("  • Separate running + tool-output folders (unique mkdtemp each start)")
+                print("  • Orphan cleanup uses /proc FD scanning — skips any file held open")
+                print("    by a live instance, so this server will not delete the other's data.")
+                print("  • Dedup check only sees processes in this instance's own database.")
+                print()
+                return True
+            elif choice == 'a':
+                print("\n  Aborted.")
+                return False
+            else:
+                print("  Enter K to kill, C to continue, or A to abort.")
+
     if args.web:
         # --- WEB MODE (uses YOUR controller.py logic via WebController) ---
         from controller.web_controller import WebController
@@ -257,6 +407,12 @@ if __name__ == "__main__":
         toolCoordinator = ToolCoordinator(shell, nmapExporter)
         logic = Logic(shell, projectManager, toolCoordinator)
         logic.createNewTemporaryProject()
+
+        # ── Multi-instance detection (before wc.start() so cleanup doesn't run first) ──
+        _other = _find_other_legion_servers(args.port)
+        if _other:
+            if not _prompt_other_servers(_other, args.no_prompt):
+                sys.exit(0)
 
         # Create WebController (YOUR logic, Qt-free)
         settings = Settings(AppSettings())
