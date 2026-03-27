@@ -450,12 +450,12 @@ def test_e6_port_menu_structure():
 test("E6.4: Port menu has terminal + port actions", test_e6_port_menu_structure)
 
 def test_e6_process_menu():
-    """Process menu has Kill, Retry, Clear"""
+    """Process menu has Kill, Retry, Clear, Go to Tab"""
     data = client.get('/api/menus/process').get_json()
     items = data.get('items', [])
     labels = [i.get('label') for i in items]
-    return assert_eq(labels, ['Kill', 'Retry', 'Clear'])
-test("E6.5: Process menu is Kill/Retry/Clear", test_e6_process_menu)
+    return assert_eq(labels, ['Kill', 'Retry', 'Clear', 'Go to Tab'])
+test("E6.5: Process menu is Kill/Retry/Clear/Go to Tab", test_e6_process_menu)
 
 
 # ══════════════════════════════════════════════════════════════

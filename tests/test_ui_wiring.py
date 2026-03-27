@@ -157,7 +157,7 @@ test("C3: Port menu (GET /api/menus/port?service=http)", lambda:
     ok('port_actions' in client.get('/api/menus/port?service=http').get_json(), "port menu"))
 
 test("C4: Process menu (GET /api/menus/process)", lambda:
-    ok(len(client.get('/api/menus/process').get_json().get('items',[])) == 3, "3 items"))
+    ok(len(client.get('/api/menus/process').get_json().get('items',[])) == 4, "4 items"))
 
 test("C5: Host action dispatch (POST /api/workspace/hosts/{id}/action)", lambda:
     status_ok(client.post(f'/api/workspace/hosts/{HOST_ID}/action', json={'action':'mark-checked','ip':HOST_IP}, content_type='application/json')))
