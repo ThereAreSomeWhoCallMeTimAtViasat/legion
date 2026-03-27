@@ -2102,7 +2102,13 @@ class TestUS31_ProcMatchCSS:
 
 def _open_config_manager(driver):
     """Open Config Manager via JS click (same path as F2 keydown handler).
-    Waits for textarea content — cfgLoadProfiles() populates it async."""
+    Waits for textarea content — cfgLoadProfiles() populates it async.
+
+    Navigates to BASE_URL first if needed — US-55 tests leave the browser on
+    port 5086 and reset_state does not navigate back."""
+    if BASE_URL not in driver.current_url:
+        driver.get(BASE_URL)
+        time.sleep(1.5)
     driver.execute_script("document.getElementById('action-config').click()")
     W(driver, 5).until(
         lambda d: 'is-open' in (
@@ -2111,12 +2117,6 @@ def _open_config_manager(driver):
     W(driver, 8).until(lambda d: bool(d.execute_script(
         "var ta = document.querySelector('#config-editors textarea');"
         "return ta && ta.value.length > 0;")))
-    # Ensure the find bar starts hidden — it may have been left visible by a
-    # previous test. cfgFindHide() is a closure so not globally accessible;
-    # set the style directly instead.
-    driver.execute_script(
-        "var bar = document.getElementById('cfg-find-bar');"
-        "if (bar) bar.style.display = 'none';")
 
 
 def _close_config_manager(driver):
