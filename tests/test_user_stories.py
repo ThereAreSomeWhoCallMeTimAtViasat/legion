@@ -794,6 +794,29 @@ def _start_slow_process():
     return pid
 
 
+def _wait_for_running(pid, timeout=30):
+    """Poll the snapshot API until process pid reaches Running status.
+
+    In the full test suite, US-02/US-03 submit staged nmap scans that fill
+    the fast-process queue (max_fast_processes=5).  The slow process from
+    _start_slow_process() sits as 'Waiting' until a queue slot opens.
+    time.sleep(N) alone is not enough — we must wait for Running explicitly
+    before the test can observe live output or Growing behaviour.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        procs = api('get', '/api/snapshot').json().get('processes', [])
+        for p in procs:
+            if str(p.get('id')) == str(pid):
+                status = p.get('status', '')
+                if status == 'Running':
+                    return True
+                if status in ('Finished', 'Crashed', 'Killed'):
+                    return False   # already done — test will need to handle this
+        time.sleep(0.5)
+    return False
+
+
 def _select_host_and_process(driver, process_id, wait_for_rows=8):
     """Select the host row then click the given process row.
     Waits up to wait_for_rows seconds for the process row to appear."""
@@ -844,7 +867,10 @@ class TestUS16_LiveOutputGrows:
     def test_output_text_grows_over_time(self, driver, seed_host):
         """#plain-output text is longer 3 s after first reading."""
         pid = _start_slow_process()
-        time.sleep(1.0)   # let a few lines appear before we click
+        # Wait for process to be Running before reading output — the queue may
+        # be occupied by background nmap stages from earlier US-02/03 tests.
+        _wait_for_running(pid, timeout=30)
+        time.sleep(1.0)   # let a few lines accumulate after start
 
         _select_host_and_process(driver, pid)
 
@@ -862,9 +888,10 @@ class TestUS16_LiveOutputGrows:
         )
 
     def test_output_contains_expected_line_markers(self, driver, seed_host):
-        """After 6 s the output contains multiple LINE_N markers."""
+        """After 6 s of Running time the output contains multiple LINE_N markers."""
         pid = _start_slow_process()
-        time.sleep(6.0)   # ~17 lines produced
+        _wait_for_running(pid, timeout=30)   # wait for queue to clear
+        time.sleep(6.0)   # ~17 lines produced (0.35 s/line × 17 ≈ 6 s)
 
         _select_host_and_process(driver, pid)
         time.sleep(1.5)
@@ -880,7 +907,8 @@ class TestUS16_LiveOutputGrows:
     def test_status_shows_running_while_output_live(self, driver, seed_host):
         """Process row status column must show Running while output is active."""
         pid = _start_slow_process()
-        time.sleep(1.0)
+        _wait_for_running(pid, timeout=30)   # wait for queue to clear
+        time.sleep(0.5)   # brief pause after start
 
         _select_host_and_process(driver, pid)
 
@@ -915,6 +943,7 @@ class TestUS18_AutoScrollAtBottom:
         """After clicking a Running process from the bottom, the panel
         remains at the bottom (gap < 40 px) across two more polls."""
         pid = _start_slow_process()
+        _wait_for_running(pid, timeout=30)   # wait for queue to clear
         # Wait for enough lines to make the panel scrollable
         time.sleep(10.0)   # ~28 lines × 18 px ≈ 500 px — should overflow panel
 
