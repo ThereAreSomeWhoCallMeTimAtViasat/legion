@@ -76,7 +76,22 @@ def ui_host_ips(driver, url):
     """)
 
 
+def drain_server(port):
+    """Drain the process queue so DB write locks from running processes clear."""
+    try:
+        requests.post(f'http://127.0.0.1:{port}/api/processes/drain',
+                      json={}, timeout=30)
+        time.sleep(4)   # let killed-process threads finish their DB writes
+    except Exception:
+        pass
+
+
 def ensure_seed():
+    # Drain both servers so their DB is idle before we write to it.
+    # Background nmap/auto-tool processes from earlier reports hold DB write
+    # locks; the import will ReadTimeout if those locks aren't released first.
+    drain_server(PORT_A)
+    drain_server(PORT_B)
     if IP_A not in hosts_at(PORT_A):
         import_xml(PORT_A, XML_A); time.sleep(1)
     if IP_B not in hosts_at(PORT_B):
