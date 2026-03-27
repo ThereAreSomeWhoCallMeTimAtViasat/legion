@@ -80,7 +80,7 @@ def run_custom(cmd, port):
     return d['process_id']
 
 
-def wait_finished(pid, timeout=15):
+def wait_finished(pid, timeout=30):
     """Poll snapshot until pid is Finished/Crashed. Returns (has_match, status)."""
     deadline = time.time() + timeout
     while time.time() < deadline:

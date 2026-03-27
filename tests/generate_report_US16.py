@@ -28,7 +28,17 @@ def api(method, path, **kw):
     return getattr(requests, method)(BASE + path, **kw)
 
 
+def drain_queue():
+    """Kill all running processes so the slow process gets an immediate queue slot."""
+    try:
+        api('post', '/api/processes/drain', json={})
+        time.sleep(2)
+    except Exception:
+        pass
+
+
 def start_slow_process():
+    drain_queue()
     resp = api('post', '/api/processes/custom', json={
         'command': SLOW_CMD, 'host_ip': HOST_IP, 'port': '', 'protocol': 'tcp'})
     pid = resp.json().get('process_id')

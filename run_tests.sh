@@ -267,6 +267,13 @@ _gen_reports() {
         [[ -f "$script" ]] || continue
         local us; us=$(basename "$script" .py | sed 's/generate_report_//')
         printf "    %-32s " "$us"
+        # Drain both servers before each report — earlier reports call /api/nmap/scan
+        # whose auto-tool cascade refills the fast-process queue between reports.
+        curl -s -X POST "http://127.0.0.1:${US_PORT_A}/api/processes/drain" \
+             -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+        curl -s -X POST "http://127.0.0.1:${US_PORT_B}/api/processes/drain" \
+             -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+        sleep 1
         # US55 uses --port-a/--port-b (two-instance test); all others use --port
         local out
         if [[ "$us" == "US55" ]]; then
