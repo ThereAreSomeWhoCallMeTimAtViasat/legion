@@ -267,10 +267,13 @@ _gen_reports() {
         [[ -f "$script" ]] || continue
         local us; us=$(basename "$script" .py | sed 's/generate_report_//')
         printf "    %-32s " "$us"
-        # Only US55 accepts --port-b (two-instance test); all others take --port only
-        local extra_args=()
-        [[ "$us" == "US55" ]] && extra_args=(--port-b "$US_PORT_B")
-        local out; out=$(python3 "$script" --port "$US_PORT_A" "${extra_args[@]}" 2>&1)
+        # US55 uses --port-a/--port-b (two-instance test); all others use --port
+        local out
+        if [[ "$us" == "US55" ]]; then
+            out=$(python3 "$script" --port-a "$US_PORT_A" --port-b "$US_PORT_B" 2>&1)
+        else
+            out=$(python3 "$script" --port "$US_PORT_A" 2>&1)
+        fi
         if [[ $? -eq 0 ]]; then
             local html; html=$(echo "$out" | grep "^Report:" | tail -1 | awk '{print $2}')
             printf "${GREEN}✓${NC} %s\n" "${html##*/}"
