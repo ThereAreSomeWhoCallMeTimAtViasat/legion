@@ -56,7 +56,7 @@ def import_xml(port, xml):
         f.write(xml); path = f.name
     try:
         return requests.post(f'http://127.0.0.1:{port}/api/nmap/import-xml',
-                             json={'path': path}, timeout=20).json()
+                             json={'path': path}, timeout=60).json()
     finally:
         os.unlink(path)
 

@@ -721,6 +721,13 @@ PYEOF
         # Only generate reports when all tests passed (no point capturing failures)
         if [[ $SECTION_FAIL -eq 0 ]]; then
             pkill -f "firefox" 2>/dev/null || true; sleep 2
+            # Drain background nmap/auto-tool queue so the report generators'
+            # API calls don't block on DB locks held by running process threads.
+            curl -s -X POST "http://127.0.0.1:${US_PORT_A}/api/processes/drain" \
+                 -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+            curl -s -X POST "http://127.0.0.1:${US_PORT_B}/api/processes/drain" \
+                 -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
+            sleep 2
             _gen_reports "${LIVE_TARGET:-}"
         else
             echo -e "  ${YELLOW}Skipping HTML reports — ${SECTION_FAIL} test(s) failed${NC}"
