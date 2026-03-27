@@ -156,6 +156,7 @@ def driver(ensure_server):
     d = webdriver.Firefox(service=svc, options=opts)
     d.set_window_size(1600, 900)
     d.implicitly_wait(0)
+    d.set_script_timeout(30)   # prevent execute_script() hanging indefinitely
     d.get(BASE_URL)
     time.sleep(2)   # let initial snapshot poll render
     yield d

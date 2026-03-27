@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.58-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.63-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -156,14 +156,14 @@
 <!-- OS panel (left) — splitter: os-list | os-hosts -->
 <div class="tab-content" id="os-panel">
     <div class="os-split">
-        <div class="table-wrap">
+        <div class="table-wrap" id="os-list-wrap">
             <table id="os-list-table"><thead><tr>
                 <th style="cursor:pointer" data-sort="os">OS ▲</th>
                 <th style="cursor:pointer;width:40px" data-sort="count">#</th>
             </tr></thead>
             <tbody id="os-list-body"></tbody></table>
         </div>
-        <div class="vsplitter"></div>
+        <div class="vsplitter" id="os-vsplitter"></div>
         <div class="table-wrap">
             <table id="os-hosts-table"><thead><tr>
                 <th style="cursor:pointer" data-sort="ip">IP ▲</th>
@@ -216,14 +216,14 @@
 <!-- Scripts (right) — splitter: scripts table | script output -->
 <div class="tab-content" id="scripts-right">
     <div class="scripts-split">
-        <div class="table-wrap">
+        <div class="table-wrap" id="scripts-table-wrap">
             <table id="scripts-table"><thead><tr>
                 <th style="cursor:pointer" data-sort="script_id">Script ▲</th>
                 <th style="cursor:pointer" data-sort="port">Port</th>
             </tr></thead>
             <tbody id="host-detail-scripts"></tbody></table>
         </div>
-        <div class="vsplitter"></div>
+        <div class="vsplitter" id="scripts-vsplitter"></div>
         <div class="script-output" id="script-output-inline"></div>
     </div>
 </div>
@@ -356,7 +356,7 @@
 <!-- Tools display panel (shown instead of right-tabs when Tools left tab is active) -->
 <div id="tools-display" style="display:none;flex:1;min-height:0;overflow:hidden">
     <div style="display:flex;flex:1;min-height:0;overflow:hidden">
-        <div class="table-wrap" style="width:275px;flex-shrink:0">
+        <div class="table-wrap" id="tools-table-wrap" style="width:275px;flex-shrink:0">
             <table><thead><tr><th>Host</th><th>Port / Stage</th><th>Status</th></tr></thead>
             <tbody id="tool-hosts-body"></tbody></table>
         </div>
@@ -426,7 +426,7 @@
         <button id="process-clear-all-button" type="button">Hide All</button>
     </div>
     <div style="display:flex;flex:1;min-height:0;overflow:hidden">
-        <div class="table-wrap" style="flex:1">
+        <div class="table-wrap" id="proc-table-wrap" style="flex:1">
             <table id="processes-table"><thead><tr>
                 <th style="cursor:pointer" data-sort="id">ID ▼</th>
                 <th style="cursor:pointer" data-sort="name">Name</th>

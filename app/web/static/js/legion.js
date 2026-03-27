@@ -444,8 +444,14 @@ function initTabBar(barId) {
         bar.querySelectorAll('.tab-btn').forEach(function(t) { t.classList.remove('active'); });
         btn.classList.add('active');
         var widget = bar.closest('.tab-widget') || bar.parentElement;
-        /* Deactivate any currently-active panel (including dynamic panels nested in containers) */
-        widget.querySelectorAll('.tab-content.active').forEach(function(c) { c.classList.remove('active'); });
+        /* Deactivate panels that belong to THIS widget level only.
+           c.closest('.tab-widget') === widget stops us stripping .active from
+           tabs nested inside a child tab-widget (e.g. right-panel tabs inside
+           scan-tab).  Dynamic tab panels live in #dynamic-tabs-container which
+           is a child of right-tabs, so they still satisfy the check there. */
+        widget.querySelectorAll('.tab-content.active').forEach(function(c) {
+            if (c.closest('.tab-widget') === widget) c.classList.remove('active');
+        });
         var panel = $(btn.dataset.tab);
         if (panel) panel.classList.add('active');
     });
@@ -477,6 +483,8 @@ function initSplitter(splitterId, target, prop, min, max) {
 
     sp.addEventListener('mousedown', function(e) {
         dragging = true; startPos = isH ? e.clientY : e.clientX;
+        /* Pin flex so explicit width/height fully controls the element size */
+        if (!isH) { el.style.flexGrow = '0'; el.style.flexShrink = '0'; }
         startSize = isH ? el.offsetHeight : el.offsetWidth;
         sp.classList.add('dragging');
         document.body.style.cursor = isH ? 'ns-resize' : 'ew-resize';
@@ -1132,6 +1140,9 @@ function loadHostDetail(hostId) {
 }
 
 /* ── Dynamic tool output tabs (view.py:restoreToolTabsForHost) ── */
+/* Per-process match navigation state: {idx:N} — persists across live-output polls. */
+var _matchNavState = {};
+
 /* Per-process scroll position memory: 'bottom' | integer scrollTop.
    Survives the container.innerHTML='' wipe in renderDynamicToolTabs so the
    user's scroll position is honoured on every 1.5 s poll cycle. */
@@ -1260,7 +1271,14 @@ function loadProcessOutput(processId, targetEl) {
         var matchBanner = '';
         var proc = L.processes.find(function(p) { return String(p.id) === String(processId); });
         if (proc && proc.has_match && proc.match_text) {
-            matchBanner = '<div class="match-banner">\u2605 Matches: ' + esc(proc.match_text) + '</div>';
+            matchBanner = '<div class="match-banner">'
+                + '\u2605 Matches: ' + esc(proc.match_text)
+                + '<span class="match-nav">'
+                + '<button type="button" class="match-prev" title="Previous match">\u25b2</button>'
+                + '<span class="match-nav-counter"></span>'
+                + '<button type="button" class="match-next" title="Next match">\u25bc</button>'
+                + '</span>'
+                + '</div>';
         }
         /* Screenshooter: output is "screenshot:/path/to/file.png" — render as image */
         if (text.startsWith('screenshot:')) {
@@ -1278,6 +1296,18 @@ function loadProcessOutput(processId, targetEl) {
             }
             targetEl.innerHTML = html;
         }
+        /* Wire match navigation buttons (fresh elements created by innerHTML above) */
+        if (proc && proc.has_match) {
+            var _mprev = targetEl.querySelector('.match-prev');
+            var _mnext = targetEl.querySelector('.match-next');
+            if (_mprev) _mprev.addEventListener('click', function(e) {
+                e.stopPropagation(); _matchNav(targetEl, processId, -1);
+            });
+            if (_mnext) _mnext.addEventListener('click', function(e) {
+                e.stopPropagation(); _matchNav(targetEl, processId, +1);
+            });
+            _matchNavInit(targetEl, processId);
+        }
         /* Restore scroll position after the innerHTML reflow. */
         if (atBottom) {
             setTimeout(function() { targetEl.scrollTop = targetEl.scrollHeight; }, 0);
@@ -1288,6 +1318,45 @@ function loadProcessOutput(processId, targetEl) {
     }).catch(function() {
         targetEl.textContent = 'Error loading output';
     });
+}
+
+/* ── Match navigation helpers ──────────────────────────────────────
+   Called after every loadProcessOutput render.
+   _matchNavInit  — re-highlights current span, updates counter, no scroll.
+   _matchNav      — moves index, re-highlights, scrolls span into view.
+   ─────────────────────────────────────────────────────────────────── */
+function _matchNavInit(targetEl, processId) {
+    var spans = targetEl.querySelectorAll('.match-positive');
+    var counter = targetEl.querySelector('.match-nav-counter');
+    if (!spans.length) {
+        if (counter) counter.textContent = '0 \u2044 0';
+        return;
+    }
+    var state  = _matchNavState[processId];
+    var idx    = state ? Math.min(state.idx, spans.length - 1) : 0;
+    spans.forEach(function(s) { s.classList.remove('match-current'); });
+    spans[idx].classList.add('match-current');
+    if (counter) counter.textContent = (idx + 1) + ' \u2044 ' + spans.length;
+    _matchNavState[processId] = {idx: idx};
+}
+
+function _matchNav(targetEl, processId, dir) {
+    var spans = Array.from(targetEl.querySelectorAll('.match-positive'));
+    if (!spans.length) return;
+    var state  = _matchNavState[processId] || {idx: 0};
+    var count  = spans.length;
+    var idx    = ((state.idx + dir) % count + count) % count;
+    spans.forEach(function(s) { s.classList.remove('match-current'); });
+    spans[idx].classList.add('match-current');
+    var counter = targetEl.querySelector('.match-nav-counter');
+    if (counter) counter.textContent = (idx + 1) + ' \u2044 ' + count;
+    _matchNavState[processId] = {idx: idx};
+    /* Scroll the span into view inside targetEl, offset below the sticky banner */
+    var banner  = targetEl.querySelector('.match-banner');
+    var bannerH = banner ? banner.offsetHeight : 0;
+    var spanTop = spans[idx].getBoundingClientRect().top
+                - targetEl.getBoundingClientRect().top;
+    targetEl.scrollTop += spanTop - bannerH - 12;
 }
 
 /* ================================================================
@@ -1896,7 +1965,11 @@ document.addEventListener('DOMContentLoaded', function() {
     initTabBar('bottom-tab-bar');
     initMenuBar();
     initSplitter('main-vsplitter', 'left-panel', 'width', 120, 600);
-    initSplitter('main-hsplitter', 'bottom-section', 'height', 80, 500);
+    initSplitter('main-hsplitter', 'bottom-section', 'height', 80, 900);
+    initSplitter('proc-vsplitter', 'proc-table-wrap', 'width', 80, 900);
+    initSplitter('tools-vsplitter', 'tools-table-wrap', 'width', 80, 900);
+    initSplitter('os-vsplitter', 'os-list-wrap', 'width', 80, 900);
+    initSplitter('scripts-vsplitter', 'scripts-table-wrap', 'width', 80, 900);
     /* Column resize + width persistence (Qt6: saveColumnWidths/restoreColumnWidths) */
     initColResizers('hosts-table');
     initColResizers('processes-table');
@@ -4040,15 +4113,36 @@ document.addEventListener('DOMContentLoaded', function() {
         var saved = localStorage.getItem('legion-splitter-' + key);
         if (saved && el) el.style[prop] = saved;
     }
+    /* Restore width splitter — also pins flex so explicit width is respected */
+    function restoreSplitterWidth(key, el) {
+        var saved = localStorage.getItem('legion-splitter-' + key);
+        if (saved && el) { el.style.flexGrow = '0'; el.style.flexShrink = '0'; el.style.width = saved; }
+    }
     /* Restore on load */
     var leftPane = $('left-panel');
     if (leftPane) restoreSplitterPos('left', leftPane, 'width');
     var bottomSec = $('bottom-section');
-    if (bottomSec) restoreSplitterPos('bottom', bottomSec, 'height');
+    if (bottomSec) {
+        var _savedBottom = localStorage.getItem('legion-splitter-bottom');
+        if (_savedBottom) {
+            bottomSec.style.height = _savedBottom;
+        } else {
+            var mainArea = $('main-area');
+            if (mainArea) bottomSec.style.height = Math.round(mainArea.offsetHeight / 2) + 'px';
+        }
+    }
+    var procWrap    = $('proc-table-wrap');    if (procWrap)    restoreSplitterWidth('proc',    procWrap);
+    var toolsWrap   = $('tools-table-wrap');   if (toolsWrap)   restoreSplitterWidth('tools',   toolsWrap);
+    var osListWrap  = $('os-list-wrap');       if (osListWrap)  restoreSplitterWidth('os',      osListWrap);
+    var scriptsWrap = $('scripts-table-wrap'); if (scriptsWrap) restoreSplitterWidth('scripts', scriptsWrap);
     /* Save on mouseup after drag */
     document.addEventListener('mouseup', function() {
-        if (leftPane) saveSplitterPos('left', leftPane);
-        if (bottomSec) saveSplitterPos('bottom', bottomSec);
+        if (leftPane)    saveSplitterPos('left',    leftPane);
+        if (bottomSec)   saveSplitterPos('bottom',  bottomSec);
+        if (procWrap)    saveSplitterPos('proc',    procWrap);
+        if (toolsWrap)   saveSplitterPos('tools',   toolsWrap);
+        if (osListWrap)  saveSplitterPos('os',      osListWrap);
+        if (scriptsWrap) saveSplitterPos('scripts', scriptsWrap);
     });
 
     /* ══ AI TAB ══════════════════════════════════════════════════════════════

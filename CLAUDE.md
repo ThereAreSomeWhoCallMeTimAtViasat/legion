@@ -34,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.58-flask
-- **Static asset cache:** `?v=63` in `base.html`
+- **Current Flask version:** v10.63-flask
+- **Static asset cache:** `?v=68` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -184,6 +184,13 @@ Called automatically from `start()` on every project open/create:
 - **v10.52**: Heartbeat watchdog — `/api/heartbeat` (POST, every 5 s from JS); `hb-watchdog` daemon thread fires `killRunningProcesses()` + `os._exit(0)` when gap > `_HB_TIMEOUT` (20 s). Multi-instance safe: each Legion process has its own watchdog. Handles Firefox File→Exit and window close.
 - **v10.53**: `_kill_all_descendants()` in `web_controller.py` — scans `/proc/*/stat` BFS from `os.getpid()` to find every descendant; SIGKILL all of them. Called from `killRunningProcesses()`. Fixes shell=True grandchild orphan problem (nmap, gobuster survive shell death without this).
 - **v10.54**: Sticky processes table header — `position:sticky` moved from `th` to `thead`; `border-collapse:collapse` breaks per-cell sticky.
+- **v10.59**: Splitter centre start — bottom-section defaults to `offsetHeight/2` on first load (JS default branch in restoreSplitterPos when no localStorage entry).
+- **v10.60**: All splitters wired — proc-vsplitter, tools-vsplitter, os-vsplitter, scripts-vsplitter: IDs added to target elements, `initSplitter()` calls added, flex-pinning (`flexGrow:0; flexShrink:0`) on mousedown, localStorage save/restore. Splitter max raised to 900px.
+- **v10.61**: Tab bar scrollbar always visible — `.tab-bar` changed from `overflow-x:auto` + `height:0` hide to `overflow-x:scroll` with explicit 8px track, `#888` thumb, Firefox `scrollbar-color`. Global scrollbar thumb brightened `#454545→#777`.
+- **v10.62**: Scan tab state restoration — `initTabBar` now uses `c.closest('.tab-widget') === widget` guard so only same-level `.active` classes are stripped when switching main tabs. Previously wiped nested panels (right-panel tabs, left-panel tabs) on every Scan↔Brute switch.
+- **v10.63**: Match navigation arrows — `_matchNavState{}` (per-process idx), `_matchNavInit()` (re-highlights on poll), `_matchNav()` (scrolls to span); match banner is `position:sticky;top:0`; `.match-current` is solid yellow vs dimmer `.match-positive`. Works in both upper (dyn-output-*) and lower (plain-output) panels.
+- **Test suite**: `tests/test_ui_session_features.py` — 30 non-hollow Selenium tests (port 5072) covering all v10.59–v10.63 changes. Key patterns: `_HB_TIMEOUT=600` watchdog disable, class-scoped `match_setup` fixture (one page load for 13 match-nav tests), `_wait_proc_done_api` (Python requests, not DOM), `set_script_timeout(30)`. Integrated into `run_tests.sh --selenium`.
+- **Stories fix**: `generate_report.py` `make_driver()` and `test_user_stories.py` `driver` fixture both gain `set_script_timeout(30)`. Heartbeat keeper interval 15s→8s (was 5s margin under 20s watchdog). Drain settle sleep 2s→5s.
 - **Test additions**: test_goal2_lower_selection (port 5086), test_goal3_ansi_ctrlb (port 5087), test_goal_selection_confinement (port 5085), test_shutdown_subprocess (ports 5083/5084 — subprocess server for os._exit tests). All goal tests converted from `app.run()` daemon threads to `make_server()` + `httpd.shutdown()`.
 - **User story tests**: 56 user stories written; 37 offline + 6 live pytest tests in `tests/test_user_stories.py`; 18 generate_report_USxx.py scripts producing dated HTML reports in `testreport/`; integrated into `run_tests.sh` via `--stories` flag with auto server management and heartbeat keeper.
 - **Test fixes**: test_08 notes (storeNotes in _ensure_seeded_host); test_09 project name (check snapshot API not DOM title); test_clear retry loop (safe — Clear uses postJson, no window.confirm); NEVER add retry loops to actions that trigger window.confirm() — pending dialog blocks Selenium with UnexpectedAlertPresentException
@@ -636,6 +643,11 @@ pip install "anthropic[vertex]"
 | 17 | ANSI colour in log window — render colour codes in the Log tab output | Med | ✅ Done v10.31 | loadLog() uses ansiToHtml() instead of textContent |
 | 18 | Sticky processes table header — keep column headers visible during scroll | Low | ✅ Done v10.54 | moved sticky from `th` to `thead` — border-collapse:collapse breaks per-cell sticky |
 | 19 | Kill nmap subprocesses on exit — orphaned nmap scans survive Legion shutdown | Med | ✅ Done v10.53 | _kill_all_descendants() via /proc BFS scan; called from killRunningProcesses() |
+| 20 | Splitter centre start — bottom splitter defaults to 50% height on first load | Low | ✅ Done v10.59 | JS sets offsetHeight/2 when no localStorage value exists |
+| 21 | All splitters draggable — proc/os/scripts/tools vsplitters were wired cursor-only | Low | ✅ Done v10.60 | IDs added to targets; initSplitter calls + flex-pinning on mousedown; localStorage persistence |
+| 22 | Tab bar scrollbar always visible — right-panel tab bar scrollbar was hidden | Low | ✅ Done v10.61 | overflow-x:scroll; 8px track; #888 thumb; global thumb brightened #454545→#777 |
+| 23 | Scan tab state restoration — active right-panel tab reset to Services on Brute→Scan | Low | ✅ Done v10.62 | initTabBar: c.closest('.tab-widget')===widget guard; only same-level .active stripped |
+| 24 | Match navigation arrows — ▲/▼ in output banner to jump between match spans | Med | ✅ Done v10.63 | _matchNavState{}, _matchNavInit(), _matchNav(); sticky banner; .match-current; upper+lower panels |
 
 ### Backlog #10 — Tool Manager GUI
 Allows adding and removing tool entries (HostActions, PortActions, PortTerminalActions, SchedulerSettings) via a form instead of raw conf editing.

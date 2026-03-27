@@ -215,14 +215,14 @@ finally:
     os.unlink(path)
 PYEOF
 
-    # Heartbeat keeper — pings both servers every 15 s so the 20 s watchdog
-    # never fires between consecutive pytest runs
+    # Heartbeat keeper — pings both servers every 8 s so the 20 s watchdog
+    # never fires between consecutive pytest runs (was 15 s — only 5 s margin)
     ( while true; do
         curl -s -X POST "http://127.0.0.1:${US_PORT_A}/api/heartbeat" \
              -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
         curl -s -X POST "http://127.0.0.1:${US_PORT_B}/api/heartbeat" \
              -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
-        sleep 15
+        sleep 8
     done ) &
     US_HB_PID=$!
     echo -e "  ${GREEN}✓${NC} :${US_PORT_A} and :${US_PORT_B} ready (heartbeat PID $US_HB_PID)"
@@ -284,7 +284,7 @@ _gen_reports() {
             [[ "$_running" == "0" ]] && break
             sleep 1; _t=$(( _t + 1 ))
         done
-        sleep 2   # let killed-process threads finish their DB writes
+        sleep 5   # let killed-process threads finish their DB writes (was 2 s — too short)
         # US55 uses --port-a/--port-b (two-instance test); all others use --port
         local out
         if [[ "$us" == "US55" ]]; then

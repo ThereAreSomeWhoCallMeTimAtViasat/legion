@@ -50,6 +50,7 @@ def make_driver():
     d    = webdriver.Firefox(service=svc, options=opts)
     d.set_window_size(1600, 900)
     d.implicitly_wait(0)
+    d.set_script_timeout(30)   # prevent execute_script() hanging indefinitely
     return d
 
 

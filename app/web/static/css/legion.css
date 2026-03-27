@@ -96,9 +96,13 @@ html,body{
 .tab-bar{
   display:flex;background:var(--dark);
   border-bottom:1px solid var(--border);flex-shrink:0;
-  overflow-x:auto;overflow-y:hidden;
+  overflow-x:scroll;overflow-y:hidden;
+  scrollbar-width:thin;scrollbar-color:#888 #2a2a2a;
 }
-.tab-bar::-webkit-scrollbar{height:0}
+.tab-bar::-webkit-scrollbar{height:8px}
+.tab-bar::-webkit-scrollbar-track{background:#2a2a2a}
+.tab-bar::-webkit-scrollbar-thumb{background:#888;border:none;border-radius:0}
+.tab-bar::-webkit-scrollbar-thumb:hover{background:#aaa}
 .tab-btn{
   background:var(--tab-inactive);border:1px solid var(--border);
   border-bottom:none;color:var(--text);font:inherit;
@@ -298,8 +302,8 @@ body.black-output-bg .tool-output-area{background:#000}
 /* === SCROLLBARS (Qt-style) === */
 ::-webkit-scrollbar{width:12px;height:12px}
 ::-webkit-scrollbar-track{background:var(--dark)}
-::-webkit-scrollbar-thumb{background:var(--light);border:2px solid var(--dark)}
-::-webkit-scrollbar-thumb:hover{background:var(--border)}
+::-webkit-scrollbar-thumb{background:#777;border:2px solid var(--dark)}
+::-webkit-scrollbar-thumb:hover{background:#999}
 ::-webkit-scrollbar-corner{background:var(--dark)}
 
 /* === ANSI OUTPUT === */
@@ -446,10 +450,21 @@ input:focus,select:focus,textarea:focus{border-color:var(--highlight);outline:no
    ================================================================ */
 
 /* Qt6: QLabel 'Matches: ...' yellow banner at top of tool tab output */
-.match-banner{display:block;background:#fa0;color:#000;font-weight:700;
-  padding:3px 8px;margin-bottom:4px;border-radius:2px;font-size:9pt}
+.match-banner{display:flex;align-items:center;background:#fa0;color:#000;font-weight:700;
+  padding:3px 8px;margin-bottom:0;border-radius:2px 2px 0 0;font-size:9pt;
+  position:sticky;top:0;z-index:2;flex-shrink:0}
+/* Match navigation arrows inside the banner */
+.match-nav{margin-left:auto;display:flex;align-items:center;gap:3px;flex-shrink:0}
+.match-prev,.match-next{background:rgba(0,0,0,0.15);border:1px solid rgba(0,0,0,0.3);
+  color:#000;cursor:pointer;padding:0 6px;font-size:11px;line-height:1.5;
+  border-radius:2px;font-weight:bold}
+.match-prev:hover,.match-next:hover{background:rgba(0,0,0,0.3)}
+.match-nav-counter{font-size:8pt;min-width:38px;text-align:center;font-weight:normal}
 /* P1: Match highlighting in output and process rows */
-.match-positive{background:rgba(255,255,0,0.25);color:#ff0;font-weight:700}
+.match-positive{background:rgba(255,220,0,0.2);color:#ff0;font-weight:700}
+/* Current match (focused by nav arrows) — solid highlight, clearly distinct */
+.match-current{background:#ff0!important;color:#000!important;
+  outline:2px solid #fa0;outline-offset:0;border-radius:1px}
 .match-line{border-left:3px solid #ff0;padding-left:4px}
 /* Process row with match hit — Qt6 turns the tab orange/red */
 tr.proc-match td{color:#fa0}
