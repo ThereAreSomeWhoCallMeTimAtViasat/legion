@@ -1224,9 +1224,10 @@ class WebController:
         Maps 1:1 to controller.py:getContextMenuForProcess.
         """
         return [
-            {'label': 'Kill', 'action': 'kill'},
-            {'label': 'Retry', 'action': 'retry'},
-            {'label': 'Clear', 'action': 'clear'},
+            {'label': 'Kill',      'action': 'kill'},
+            {'label': 'Retry',     'action': 'retry'},
+            {'label': 'Clear',     'action': 'clear'},
+            {'label': 'Go to Tab', 'action': 'goto-tab'},
         ]
 
     # ──────────────────────────────────────────────────────────────

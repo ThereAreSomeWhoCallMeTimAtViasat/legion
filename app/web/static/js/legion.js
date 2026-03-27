@@ -370,14 +370,23 @@ function postJson(url, body) {
 
 /* ── ANSI parser (simplified from upstream) ── */
 function highlightMatches(html) {
-    /* P1: Apply match-positive CSS to known positive patterns in rendered output */
+    /* P1: Apply match-positive CSS to known positive patterns in rendered output.
+       Must mirror web_controller.py _pattern_matches() exactly:
+       - Always case-sensitive (no 'i' flag).
+       - If pattern has a leading space  → (?<!\w) word-boundary guard before core.
+       - If pattern has a trailing space → (?!\w)  word-boundary guard after core.
+       - Otherwise plain substring match.
+       This keeps frontend highlights in sync with backend has_match flags. */
     if (!matchPositive || matchPositive.length === 0) return html;
     var result = html;
     matchPositive.forEach(function(pattern) {
         if (!pattern) return;
-        /* Only highlight if not inside a negative context */
-        var escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        var re = new RegExp('(' + escaped + ')', 'gi');
+        var stripped = pattern.replace(/^ | $/g, '');   /* strip leading/trailing spaces only */
+        if (!stripped) return;
+        var core    = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var prefix  = (pattern[0]                    === ' ') ? '(?<![\\w])' : '';
+        var suffix  = (pattern[pattern.length - 1]   === ' ') ? '(?![\\w])'  : '';
+        var re = new RegExp('(' + prefix + core + suffix + ')', 'g'); /* no 'i' — case-sensitive */
         result = result.replace(re, '<span class="match-positive">$1</span>');
     });
     return result;
@@ -2907,8 +2916,27 @@ document.addEventListener('DOMContentLoaded', function() {
                and are silently skipped by the `if (!txt)` guard. */
             function walk(node) {
                 if (node.nodeType === 3) {
-                    var off0 = (node === range.startContainer) ? range.startOffset : 0;
-                    var off1 = (node === range.endContainer)   ? range.endOffset   : node.length;
+                    var off0, off1;
+                    if (node === range.startContainer) {
+                        off0 = range.startOffset;
+                        off1 = (node === range.endContainer) ? range.endOffset : node.length;
+                    } else if (node === range.endContainer) {
+                        off0 = 0;
+                        off1 = range.endOffset;
+                    } else {
+                        /* Neither start nor end container — verify this text node is
+                           actually within the selection.  When commonAncestorContainer
+                           is a wide container (e.g. the output div that also holds the
+                           match-banner div above the selected text), sibling text nodes
+                           that lie outside the selection are still visited by the walk.
+                           comparePoint: -1 = before range start, 0 = within, 1 = after end. */
+                        try {
+                            if (range.comparePoint(node, node.length) < 0) return; /* ends before range start */
+                            if (range.comparePoint(node, 0) > 0) return;           /* starts after range end  */
+                        } catch(e) {}
+                        off0 = 0;
+                        off1 = node.length;
+                    }
                     var txt  = node.textContent.substring(off0, off1);
                     if (!txt) return;
 
@@ -2928,8 +2956,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     result.push(esc ? esc + txt + '\x1b[0m' : txt);
 
                 } else if (node.nodeType === 1) {
+                    /* Track result length before visiting children so we can emit a
+                       newline after block elements — replicating the visual line break
+                       the browser renders for div/p/etc when they are within the
+                       selection (e.g. the match-banner div selected alongside output). */
+                    var prevLen = result.length;
                     for (var j = 0; j < node.childNodes.length; j++) {
                         walk(node.childNodes[j]);
+                    }
+                    var blockTags = {DIV:1, P:1, LI:1, H1:1, H2:1, H3:1, H4:1, H5:1, H6:1};
+                    if (blockTags[node.tagName] && result.length > prevLen) {
+                        result.push('\n');
                     }
                 }
             }
@@ -3375,6 +3412,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     postJson('/api/processes/' + pid + '/retry', {}).then(function() { pollSnapshot(); });
                 } else if (action.action === 'clear') {
                     postJson('/api/processes/' + pid + '/close', {}).then(function() { pollSnapshot(); });
+                } else if (action.action === 'goto-tab') {
+                    var tabBtn = $('right-tab-bar').querySelector('[data-tab="dyntab-' + pid + '"]');
+                    if (tabBtn) tabBtn.click();
                 }
             });
         });
