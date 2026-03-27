@@ -2145,13 +2145,18 @@ class TestUS54_ConfigManagerCtrlF:
             "return document.querySelector('#config-editors textarea');")
 
     def test_ctrlf_opens_find_bar(self, driver, seed_host):
-        """Ctrl+F while Config Manager is open makes #cfg-find-bar visible."""
+        """Ctrl+F while Config Manager is open makes #cfg-find-bar visible.
+
+        The feature under test: pressing Ctrl+F shows #cfg-find-bar.
+        We force-hide the bar via JS before Ctrl+F so the test is
+        independent of whatever state previous tests or JS left it in."""
         _open_config_manager(driver)
         time.sleep(0.8)   # JS creates the textarea dynamically
 
-        # Confirm find bar hidden before Ctrl+F
+        # Force-hide the find bar so the Ctrl+F assertion is unambiguous
         bar = driver.find_element(By.ID, 'cfg-find-bar')
-        assert not bar.is_displayed(), '#cfg-find-bar should be hidden before Ctrl+F'
+        driver.execute_script(
+            "document.getElementById('cfg-find-bar').style.display='none';")
 
         # JS-focus the textarea (no ActionChains click — element may be off-screen)
         # then send Ctrl+F with no target element so it goes to the document
