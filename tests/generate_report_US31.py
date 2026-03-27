@@ -138,7 +138,7 @@ def run_matching_process(driver):
     # Wait for Finished in DOM
     wait_dom_finished(driver, pid)
     has_match, status = wait_finished(pid)
-    time.sleep(2.0)   # two snapshot cycles to ensure proc-match class is applied
+    time.sleep(3.5)   # ensure renderDynamicToolTabs fires with updated has_match
 
     # Check process row class
     row_has_match = driver.execute_script(f"""
