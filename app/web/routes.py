@@ -793,6 +793,15 @@ def scheduler_run():
     wc.scheduler()
     return jsonify({"status": "ok"})
 
+@web_bp.post("/api/processes/drain")
+def processes_drain():
+    """Kill all running processes AND drain fastProcessQueue.
+    Used by tests to clear background auto-tool saturation before
+    creating processes that need immediate queue access."""
+    wc = _wc()
+    wc.killRunningProcesses()
+    return jsonify({"status": "ok"})
+
 @web_bp.get("/api/scheduler/preferences")
 def scheduler_prefs_get():
     return jsonify({"mode": "deterministic", "goal_profile": "internal_asset_discovery"})

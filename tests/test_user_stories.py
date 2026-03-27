@@ -795,15 +795,26 @@ def _start_slow_process():
     return pid
 
 
-def _wait_for_running(pid, timeout=120):
-    """Poll the snapshot API until process pid reaches Running status.
+def _kill_auto_tools():
+    """Kill all running processes AND drain the fastProcessQueue entirely.
 
-    In the full test suite, US-02/US-03 submit staged nmap scans that fill
-    the fast-process queue (max_fast_processes=5).  The slow process from
-    _start_slow_process() sits as 'Waiting' until a queue slot opens.
-    time.sleep(N) alone is not enough — we must wait for Running explicitly
-    before the test can observe live output or Growing behaviour.
+    Uses POST /api/processes/drain which calls wc.killRunningProcesses().
+    This is the only reliable way to clear queue saturation:
+
+      killRunningProcesses() kills active processes AND drains fastProcessQueue.
+      Individual per-process kills DON'T drain the queue — each kill triggers
+      checkProcessQueue() which immediately starts the next queued auto-tool,
+      so the queue self-heals and the slow process never gets a slot.
+
+    By the time US-16/US-18 run, all US-02/03 assertions have passed.
+    The ongoing nmap stages and auto-tools are background noise.
     """
+    api('post', '/api/processes/drain', json={})
+    time.sleep(2)   # let the drain propagate before creating new processes
+
+
+def _wait_for_running(pid, timeout=30):
+    """Poll until process pid is Running. Should return quickly after _kill_auto_tools()."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         procs = api('get', '/api/snapshot').json().get('processes', [])
@@ -867,10 +878,14 @@ class TestUS16_LiveOutputGrows:
 
     def test_output_text_grows_over_time(self, driver, seed_host):
         """#plain-output text is longer 3 s after first reading."""
+        driver.execute_script("""
+            var btn = document.querySelector('#bottom-tab-bar [data-tab="processes-panel"]');
+            if (btn) btn.click();
+        """)
+        time.sleep(0.3)
+        _kill_auto_tools()
         pid = _start_slow_process()
-        # Wait for process to be Running before reading output — the queue may
-        # be occupied by background nmap stages from earlier US-02/03 tests.
-        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
+        _wait_for_running(pid)
         time.sleep(1.0)   # let a few lines accumulate after start
 
         _select_host_and_process(driver, pid)
@@ -890,8 +905,14 @@ class TestUS16_LiveOutputGrows:
 
     def test_output_contains_expected_line_markers(self, driver, seed_host):
         """After 6 s of Running time the output contains multiple LINE_N markers."""
+        driver.execute_script("""
+            var btn = document.querySelector('#bottom-tab-bar [data-tab="processes-panel"]');
+            if (btn) btn.click();
+        """)
+        time.sleep(0.3)
+        _kill_auto_tools()
         pid = _start_slow_process()
-        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
+        _wait_for_running(pid)
         time.sleep(6.0)   # ~17 lines produced (0.35 s/line × 17 ≈ 6 s)
 
         _select_host_and_process(driver, pid)
@@ -907,8 +928,14 @@ class TestUS16_LiveOutputGrows:
 
     def test_status_shows_running_while_output_live(self, driver, seed_host):
         """Process row status column must show Running while output is active."""
+        driver.execute_script("""
+            var btn = document.querySelector('#bottom-tab-bar [data-tab="processes-panel"]');
+            if (btn) btn.click();
+        """)
+        time.sleep(0.3)
+        _kill_auto_tools()
         pid = _start_slow_process()
-        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
+        _wait_for_running(pid)
         time.sleep(0.5)   # brief pause after start
 
         _select_host_and_process(driver, pid)
@@ -951,8 +978,9 @@ class TestUS18_AutoScrollAtBottom:
         """)
         time.sleep(0.3)
 
+        _kill_auto_tools()
         pid = _start_slow_process()
-        _wait_for_running(pid, timeout=120)  # wait for queue to clear (auto-tools can run 2+ min)
+        _wait_for_running(pid)
         # Wait for enough lines to make the panel scrollable
         time.sleep(10.0)   # ~28 lines × 18 px ≈ 500 px — should overflow panel
 
