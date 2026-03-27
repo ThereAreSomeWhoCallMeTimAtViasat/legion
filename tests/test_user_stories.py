@@ -2112,9 +2112,11 @@ def _open_config_manager(driver):
         "var ta = document.querySelector('#config-editors textarea');"
         "return ta && ta.value.length > 0;")))
     # Ensure the find bar starts hidden — it may have been left visible by a
-    # previous test that didn't cleanly close the modal via the close button.
+    # previous test. cfgFindHide() is a closure so not globally accessible;
+    # set the style directly instead.
     driver.execute_script(
-        "if (typeof cfgFindHide === 'function') cfgFindHide();")
+        "var bar = document.getElementById('cfg-find-bar');"
+        "if (bar) bar.style.display = 'none';")
 
 
 def _close_config_manager(driver):
