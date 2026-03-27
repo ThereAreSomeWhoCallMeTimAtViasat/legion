@@ -269,13 +269,22 @@ _gen_reports() {
         printf "    %-32s " "$us"
         # Drain both servers before each report — earlier reports call /api/nmap/scan
         # whose auto-tool cascade refills the fast-process queue between reports.
-        # The 3 s sleep lets killed-process Python threads finish their DB writes
-        # before the next report generator makes its own DB calls.
         curl -s -X POST "http://127.0.0.1:${US_PORT_A}/api/processes/drain" \
              -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
         curl -s -X POST "http://127.0.0.1:${US_PORT_B}/api/processes/drain" \
              -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1
-        sleep 3
+        # Poll until queue empty — drain takes 10-15 s with many processes
+        local _t=0
+        while [[ $_t -lt 20 ]]; do
+            local _running
+            _running=$(curl -s "http://127.0.0.1:${US_PORT_A}/api/snapshot" \
+                | python3 -c "import sys,json; d=json.load(sys.stdin);
+                print(sum(1 for p in d.get('processes',[]) if p.get('status') in ('Running','Waiting')))" \
+                2>/dev/null || echo "0")
+            [[ "$_running" == "0" ]] && break
+            sleep 1; _t=$(( _t + 1 ))
+        done
+        sleep 2   # let killed-process threads finish their DB writes
         # US55 uses --port-a/--port-b (two-instance test); all others use --port
         local out
         if [[ "$us" == "US55" ]]; then
@@ -326,7 +335,7 @@ pkill -f "geckodriver"     2>/dev/null || true
 pkill -f "nmap"            2>/dev/null || true
 pkill -f "eyewitness"      2>/dev/null || true
 # Kill any stale test Flask servers on known test ports
-for _p in 5085 5086 5094 5096 5097 5098 5099; do free_port "$_p"; done
+for _p in 5072 5085 5086 5094 5096 5097 5098 5099; do free_port "$_p"; done
 sleep 1
 rm -rf /tmp/legion/legion-* /tmp/legion-* 2>/dev/null || true
 echo "  Cleared /tmp/legion* artefacts"
@@ -613,6 +622,7 @@ if $RUN_SELENIUM; then
     free_port 5097; run_pytest "test_selenium_multihost"     tests/test_selenium_multihost.py
     free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
     free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
+    free_port 5072; run_pytest "ui_session_features (v10.59-63)" tests/test_ui_session_features.py
 fi
 
 if $RUN_LIVE; then

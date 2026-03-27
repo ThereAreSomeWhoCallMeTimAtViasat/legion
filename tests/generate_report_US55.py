@@ -77,13 +77,33 @@ def ui_host_ips(driver, url):
 
 
 def drain_server(port):
-    """Drain the process queue so DB write locks from running processes clear."""
+    """Kill all running processes and wait until the queue is truly empty.
+
+    killRunningProcesses() takes 10-15 s with many processes (0.3 s × N for
+    SIGTERM → SIGKILL). After it returns, killed-process threads still write
+    final state to DB for several more seconds.  Sleeping a fixed time is
+    unreliable; instead we poll the snapshot until no Running/Waiting procs
+    remain, then add a short DB-settle pause.
+    """
     try:
         requests.post(f'http://127.0.0.1:{port}/api/processes/drain',
-                      json={}, timeout=30)
-        time.sleep(4)   # let killed-process threads finish their DB writes
+                      json={}, timeout=60)   # drain itself may take 15 s
     except Exception:
         pass
+    # Poll until queue is empty (Running/Waiting → Killed/Finished)
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            snap = requests.get(f'http://127.0.0.1:{port}/api/snapshot',
+                                timeout=5).json()
+            active = [p for p in snap.get('processes', [])
+                      if p.get('status') in ('Running', 'Waiting')]
+            if not active:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+    time.sleep(3)   # let killed-process Python threads finish their DB writes
 
 
 def ensure_seed():
