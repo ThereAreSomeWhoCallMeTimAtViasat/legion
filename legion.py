@@ -63,6 +63,8 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5000, help="Port for the web UI (default: 5000)")
     parser.add_argument("--no-prompt", action="store_true",
                         help="Skip interactive startup prompts (continue alongside other instances)")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Skip auto-opening Firefox (headless / CI use)")
     args = parser.parse_args()
 
     if args.mcp_server:
@@ -553,8 +555,9 @@ if __name__ == "__main__":
                     _sp.Popen(_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, env=_env)
             except Exception as _be:
                 print(f"[Legion] Could not open Firefox automatically: {_be}")
-        import threading as _threading
-        _threading.Timer(1.5, _open_browser).start()
+        if not args.no_browser:
+            import threading as _threading
+            _threading.Timer(1.5, _open_browser).start()
 
         app.run(host="127.0.0.1", port=_port, debug=False, threaded=True)
         sys.exit(0)

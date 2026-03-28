@@ -335,7 +335,7 @@ pkill -f "geckodriver"     2>/dev/null || true
 pkill -f "nmap"            2>/dev/null || true
 pkill -f "eyewitness"      2>/dev/null || true
 # Kill any stale test Flask servers on known test ports
-for _p in 5072 5085 5086 5094 5096 5097 5098 5099; do free_port "$_p"; done
+for _p in 5072 5073 5074 5085 5086 5094 5096 5097 5098 5099; do free_port "$_p"; done
 sleep 1
 rm -rf /tmp/legion/legion-* /tmp/legion-* 2>/dev/null || true
 echo "  Cleared /tmp/legion* artefacts"
@@ -623,6 +623,8 @@ if $RUN_SELENIUM; then
     free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
     free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
     free_port 5072; run_pytest "ui_session_features (v10.59-63)" tests/test_ui_session_features.py
+    free_port 5073; free_port 5074
+    run_pytest "multiinstance_detection (v10.64)" tests/test_multiinstance_detection.py
 fi
 
 if $RUN_LIVE; then
