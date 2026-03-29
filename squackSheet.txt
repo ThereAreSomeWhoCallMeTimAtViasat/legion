@@ -1,0 +1,221 @@
+when tabs at the top are clicked the output is no longer shown in the upper right pane. when the processes in the process table is clicked the output does show up in the lower right pane and that is good.  fix the output in the upper right pane.  i think the upper right pane output broke from a previous fix.
+
+tabs need to be %50 taller at top.
+ 
+the tab process names and the process table names for nmap should show what stage they are
+
+tabs are not turning orange when new info is added for services, script, information, cves, and notes, 
+
+tool tab tools list should be colored if they found a match
+
+when os tab is clicked, the os is shown, but when that os row is clicked, there is no data in the ip/hostname pane
+when a tool is clicked in the tool tab, select the first host in the middle pane so output is shown
+when services tab is clicked, select the first service name in the list
+when hosts tab is clicked, select the first host in the hosts table 
+select the first process in the process table if it was empty when it is populated
+
+upper right output window should be filled with black when data does not fill the window fully
+
+Ctrl=B behavior is not correct.  it should have the tool that it came from highlighted at the top of the data that was pasted.  check qt6 for proper behavior.
+
+
+
+i misspoke when I said the first entries must be selected.  they should be considered "clicked" not just selected.
+
+ip and hostname in middle pane is still not populated in OS tab when the OS table entry is clicked
+
+all tabs should update dynamically whenever any kind of a change occurs such as new information in a tab, a match, a new process, etc.  it seems updates are not occuring unless a host is clicked in the hosts table and that is not right.
+
+nmap stage 2 still blocks the rest of the program from running.  for example, after stage 1, the information and services populate but those tabs dont turn orange
+
+
+
+write tests for everything that we changed so far to ensure future code does not break the implemenations 
+
+add what was matched in a highlighted line at the top of any process data that has a match.  look at qt6 code for how it was done.
+
+all views with columns should be sortable
+
+only open ports in information tab flashes green.  i saw something else happen for closed ports...the green should be if anything changes in information tab.  flash anything if anything changes and queue up multiple flashes to different variables if required.
+
+os tab is causeing weird updating type behaviour?
+
+dedup the output matching line at the top or output when a match is found.  
+
+the right lower pane is no longer updating in realtime.
+=========
+
+filter on the state column (open/closed/filtered/etc)...there no need to see closed ports unless required.
+
+when editing a legion.conf file in the config manager via the f2 key, implement a find/search feature to search in large legion.conf files
+
+does it make sense to multithread the nmap stages so they all fire at the same time?  we would need to recode the logic for how nmap staging works and this adds a lot of risk but i am tired of waiting for the nmap to finish.
+
+services dont show up from nmap output on a fast tcp scan this is fixed but now running nikto from right click on port 80 does not yield a tab in the upper output area.  we need to investigate and understand why this is happening.
+
+comma wont separate multihost in add host modal but a newline will.  
+the first in the newline goes first, it should do multi processes
+
+should be able to take notes like ctrl-b in interactive terminals somehow.  how do we implement this?
+
+============
+need a way to dynamically increase the font sizes in the output windows and keep word wrap
+
+is the percent column doing anything anymore in the process table?
+
+log is not implemented.  how can that be if we did a complete py file by file audit?  we should see the log in the log tab.
+
+figure out what mcp implementation there is and how to ask an llm for advice on what to do based on gathered information in the db for the host.
+==========
+
+orange did not stay orange after changing hosts
+
+log does not have enough history...
+
+errors in logs for writing nmap to html and failing
+
+before server exit do a save
+
+============
+
+
+
+save on exit only asks if you want to leave the page.  control c just stops the server alltogether.  are all of the exit checks being completed like in the qt6 version?
+
+ensure config dialog functionality works
+
+Cannot save — 6 syntax error(s):
+
+Line 355: Invalid nmap port expression in 'stage1-ports': '"PORTS|T:80,81,443,4443,8080,8081,8082"' — only digits, commas, hyphens, colons, and wildcards are allowed
+
+Line 356: Invalid nmap port expression in 'stage3-ports': '"PORTS|T:25,135,137,139,445,1433,3306,5432,U:137,161,162,1434"' — only digits, commas, hyphens, colons, and wildcards are allowed
+
+Line 357: Invalid nmap port expression in 'stage4-ports': '"PORTS|T:23,21,22,110,111,2049,3389,8080,U:500,5060"' — only digits, commas, hyphens, colons, and wildcards are allowed
+
+Line 358: Invalid nmap port expression in 'stage2-ports': 'NSE|vulners' — only digits, commas, hyphens, colons, and wildcards are allowed
+
+Line 359: Invalid nmap port expression in 'stage5-ports': '"PORTS|T:0-20,24,26-79,81-109,112-134,136,138,140-442,444,446-1432,1434-2048,2050-3305,3307-3388,3390-5431,5433-8079,8081-29999"' — only digits, commas, hyphens, colons, and wildcards are allowed
+
+Line 360: Invalid nmap port expression in 'stage6-ports': 'PORTS|T:30000-65535' — only digits, commas, hyphens, colons, and wildcards are allowed
+ ==========
+ 
+ what is left to test or implement                                                                                                      
+
+● Let me check current state of both docs:
+
+  Searched for 3 patterns, searched memories (ctrl+o to expand)
+
+● Here's the complete picture:
+
+  ---
+  Features — remaining
+
+  ┌─────┬──────────────────────────────────────────────┬────────────────────────────────────────────────────────────────┐
+  │  #  │                     Item                     │                             Status                             │
+  ├─────┼──────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ 7   │ LLM AI tab (claude-sonnet-4-6)               │ ❌ Not started — design approved in CLAUDE.md                  │
+  ├─────┼──────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ 9   │ Auto per-service NSE scripts after discovery │ ❌ Not started — Flask only, after #7                          │
+  ├─────┼──────────────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ –   │ pyshodan-api-key wiring                      │ ❌ Not started — pass as SHODAN_API_KEY env var to pyShodan.py │
+  └─────┴──────────────────────────────────────────────┴────────────────────────────────────────────────────────────────┘
+
+  Everything else in the backlog is done.
+
+  ---
+  Tests — remaining gaps
+
+  Source-inspection tests that don't prove behavior (identified in the audit). These files check whether strings appear in JS/source
+  rather than calling code and verifying output:
+
+  ┌─────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │            File             │                                           Hollow tests                                           │
+  ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ test_phase3_sorting.py      │ All 23 tests — check '_hostSort' in JS, '_drawHosts' in JS etc. Don't verify sort actually works │
+  ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ test_phase2_interactions.py │ 14 source-inspection lines — JS keyword checks                                                   │
+  ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ test_phase4_state.py        │ 17 source-inspection lines                                                                       │
+  ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ test_gap_implementations.py │ 14 source-inspection lines                                                                       │
+  ├─────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ test_v6_v7_fixes.py         │ Partially — some still check source                                                              │
+  └─────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  What real tests would look like for these:
+  - test_phase3_sorting.py: Add two hosts in reverse IP order, call /api/snapshot, click sort, verify response order flips
+  - test_phase4_state.py: Set state (e.g. orange tab, host filter), switch away and back, verify state preserved
+
+  Other gaps noted:
+  - test_UIRegressions.py causes a segfault (Qt6 dependency) — it's in the integration directory but never runs safely; should either be
+  isolated or deleted
+  - The tests/integration/test_CriticalPaths.py now has real tests but the test_CriticalPaths.py placeholder comment in the module
+  docstring is stale
+
+  ---
+  Summary
+
+  To implement (in priority order):
+  1. LLM AI tab — the only remaining approved feature
+  2. pyshodan-api-key wiring — cheap, one route change
+  3. Auto per-service NSE (after AI tab)
+
+  To test (backlog, not blocking):
+  - Replace source-inspection tests in test_phase3_sorting, test_phase2_interactions, test_phase4_state, test_gap_implementations with
+  real behavioral tests
+
+============
+-tabs need to be taller
+-move the font control after the brute tab
+-notes from control-b need to come over in color like the terminal had it.
+-log window needs to be in color like original bash terminal output
+==========
+make the semicolon the separator for multihost
+==========
+multiple firefox opens do not abide by file exit...nothing happens.
+========
+claude --resume ebbf1c2d-19d3-42c8-8815-9f7129fa9e2a --dangerously-skip-permissions
+x-control-b paste with matches needs a newline between the match line and the selection line.
+x-testoutput is still highlighted as a match but maybe not registered as a match
+x-add a rightclick option from the processes table that in addition to the kill,retry,clear,jumpToTab
+x-start with lower panel as halfway up the window
+x-middle splitter in tools when a tool is selected does not move the splitter but the cursor changes to make the user think it is possible.  impliment the splitter movement.
+x-if there is a match, there should be up and down arrows to find the match within the data in the window.  implement in both the upper and lower output windows
+x-scan tab is not showing the last user selected place in the ui when switching from brute to scan.  on a brute click remember where the user was in the ui and on a return to the scan tab, put them back to the remembered place.  i feel like this was an issue we solved in the past.
+x-i dont like the dissapering scroll bar underneth the tool tabs on the right pane.  keep it on all the time, and make it obvious grey in color so that it stands out.  the user is inadvertantly clicking the scroll bar or moving the tabs unexpectedly
+x-there has to be a better way to ensure a clean startup of a legion server by ensuring that any orphaned processes that may be left over from other legion instances are handled properly while not killing the other legion server if it is actively using them.  before a new server is started, actively look for other legion servers, identify the processes from the other legion server, and ask the user if they want the other servers closed, and if not, ensure any other legion processes such as running nmap scans or anything else do not interfere with the current server scans or deduplication code.  maybe ensure the other processes cant affect the new server?
+
+x-unhide fhinhished and unhide all button functionality
+x-font increase needs to work on all textbased output windows like scripts far right pane
+x-if there is a tools match in the left pane with a roll up, the match needs to propgate to the middle pane when the roll up is expanded
+x-make the right click menus overflow higher if there is an entry that wont be drawn due to the list being too big
+x-right click go to tab should scroll the tool tab bar and select the tool
+x-if the wrong host is selected on go to tab tool, select and activate that host
+x-change select button in save/save as button to save button
+x-change select button in open button to open button
+x-file open of a legion save file does not populate with matching data
+x-it appears screenshots are not in the db on a save so they do not come back
+x-cant sort tools by name in the tools tab
+x-interactive data from the terminal needs to be saved to the database 
+x-nse scripts are not being run properly as the output does not show the script data
+-perform the tests with a saved db populated from my data for both single and multiple hosts
+-the impacket tests need tweaking so they stop after a set time or something...
+-increase the number of threads
+-is the timeout from sparta implemented in legion?
+-right click to show port actions needs to scroll the list 
+-host table host column needs to be truncated to 18 characters and allow hover over to show full name
+-move hide finished and hide all buttons to the left, not right
+-change queued to waiting in the filter bar
+-need to implement a process timeout with a setting in legion.conf called process-timeout.  This will stop any process from running except nmap after the value in seconds.
+-what is going on with the process queue and killing processes and why doesnt the next process immediately start on a kill of another process...there was a weird 1 minute delay of some sort where all the processes were waiting and nothing was running.
+-the middle pane is missing in the tools tab
+for the ai compare, i like the no similar hosts in history entry if there are no similar hosts, but right below that entry there was a 100% match.  i like the idea of having a select from the the list entry if there are entries as well.
+-notes only show stage 6 of the commands...where are the other commands?
+-control-b notes from the lower output should go to the proper host, not the necessarily the current host. 
+
+
+create non-hollow selenium tests to ensure the added functionality works with help from the claude skill for building tests.  do    
+  not guess.  ask me if you are unsure.  make sure to use the actual legion server for the tests.  loop until the test passes.         
+  ensure the test is checking for proper behavioral, functional, and capability based functionality.  the tests should be non-hollow.  
+  use the existing claude skill as a starting point.  ensure the tests are integrated into run_tests.sh    
+

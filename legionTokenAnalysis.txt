@@ -1,0 +1,66 @@
+ /btw based on the data in the db now with one host and some completed runs, how many tokens would an llm analysis take to determine    
+suggestions on the next steps in the pentest process for how to attack the host.  i need this to get an estimate of the cost for llm     
+analysis                                                                                                                                 
+                                                                                                                                         
+  /btwbased on the data in the db now with one host and some completed runs, how many tokens would an llm analysis take to determine     
+      suggestions on the next steps in the pentest process for how to attack the host.  i need this to get an estimate of the cost for 
+      llm analysis                                                                                                                       
+                                                                                                                                         
+    Based on what Legion stores for a typical host after a full staged scan, here's a realistic token estimate:                          
+
+    Data that would go into the prompt
+
+    ┌─────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────┬────────────┐
+    │              Data element               │                               Typical size                               │   Est.     │
+    │                                         │                                                                          │   tokens   │
+    ├─────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┼────────────┤
+    │ System prompt / instructions            │ "You are a pentesting advisor. Given this scan data, suggest next        │ ~200       │
+    │                                         │ steps..."                                                                │            │
+    ├─────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┼────────────┤
+    │ Host info (IP, hostname, OS, MAC,       │ One host, maybe 10 fields                                                │ ~50        │
+    │ status)                                 │                                                                          │            │
+    ├─────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┼────────────┤
+    │ Open ports + services                   │ 8–15 ports with service name, product, version, protocol                 │ ~150–300   │
+    ├─────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┼────────────┤
+    │ CVEs (from vulners.nse)                 │ 5–20 CVEs per port, each with ID + score + description                   │ ~500–2000  │
+    ├─────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┼────────────┤
+    │ Nmap scripts output                     │ Script names + raw output per port                                       │ ~300–800   │
+    ├─────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┼────────────┤
+    │ Notes (if any)                          │ User-written notes                                                       │ ~50–200    │
+    ├─────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┼────────────┤
+    │ Process history summary                 │ What tools have already run                                              │ ~100       │
+    └─────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────┴────────────┘
+
+    Total input tokens: roughly 1,500–4,000 for a well-scanned host with CVEs.
+
+    The response (next-step recommendations) would be 500–1,500 tokens.
+
+    Cost estimate (Claude Sonnet 4.5, current pricing)
+
+    - Input: ~3,000 tokens × $3/MTok = ~$0.009 per analysis
+    - Output: ~1,000 tokens × $15/MTok = ~$0.015 per analysis
+    - Total: ~$0.02–0.03 per host analysis
+
+    At scale
+
+    ┌─────────────┬────────────────┐
+    │    Hosts    │ Estimated cost │
+    ├─────────────┼────────────────┤
+    │ 10 hosts    │ ~$0.25         │
+    ├─────────────┼────────────────┤
+    │ 100 hosts   │ ~$2.50         │
+    ├─────────────┼────────────────┤
+    │ 1,000 hosts │ ~$25           │
+    └─────────────┴────────────────┘
+
+    Key variable: CVE output
+
+    The biggest wildcard is CVEs. A heavily vulnerable host scanned with vulners.nse can return dozens of CVEs per port with verbose
+    descriptions. If you include raw vulners output verbatim, a single host could hit 8,000–15,000 input tokens. The fix is to summarize
+    CVEs (ID + CVSS score only, drop descriptions) or cap at top 10 by severity before sending to the LLM — that keeps cost under
+    $0.05/host even for heavily vulnerable targets.
+
+    Recommendation
+
+    For the implementation, truncate/summarize the input to ~3,000 tokens max and you'll stay well under $0.03 per analysis. Use Claude
+    Haiku for bulk analysis ($0.25/MTok input) and Sonnet only when the user explicitly requests deep analysis.

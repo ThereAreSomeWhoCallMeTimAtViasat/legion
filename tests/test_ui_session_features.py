@@ -486,7 +486,8 @@ class TestScanTabStateRestoration:
         js(drv, """
             document.querySelector('#main-tab-bar [data-tab="scan-tab"]').click();
         """)
-        time.sleep(1.2)   # snapshot poll + loadHostDetail to settle
+        time.sleep(2.5)   # loadHostDetail + async fetches + snapshot poll to settle
+                          # 1.2s was insufficient on slower VMs — CVEs tab lost active
 
     def _activate_right_tab(self, drv, tab_id):
         btn = W(drv).until(EC.presence_of_element_located(
@@ -642,11 +643,11 @@ class TestMatchNavigation:
 
     def _click_next(self, drv, panel='plain-output'):
         js(drv, f"document.querySelector('#{panel} .match-next').click()")
-        time.sleep(0.15)
+        time.sleep(0.4)   # 0.15s was too short on slower VMs; counter DOM update needs time
 
     def _click_prev(self, drv, panel='plain-output'):
         js(drv, f"document.querySelector('#{panel} .match-prev').click()")
-        time.sleep(0.15)
+        time.sleep(0.4)   # 0.15s was too short on slower VMs; counter DOM update needs time
 
     # ── lower panel tests ─────────────────────────────────────────────────────
 

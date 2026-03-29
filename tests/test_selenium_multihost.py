@@ -240,8 +240,17 @@ class TestPortIsolation:
     def _load_ports(self, driver, ip):
         select_host(driver, ip)
         click_right_tab(driver, 'services-right')
+        # Wait for the port table to refresh with THIS host's data.
+        # Waiting for len(rows) > 0 is not enough — the previous host's rows
+        # satisfy that condition immediately and cause the wrong host's ports
+        # to be read.  Instead, wait until the host IP column contains our IP.
         W(driver, POLL * 3).until(
-            lambda d: len(d.find_elements(By.CSS_SELECTOR, '#host-detail-ports tr')) > 0)
+            lambda d: any(
+                ip in (td.text or '')
+                for row in d.find_elements(By.CSS_SELECTOR, '#host-detail-ports tr')
+                for td in row.find_elements(By.TAG_NAME, 'td')
+            )
+        )
         return get_port_numbers(driver)
 
     def test_host_a_shows_only_a_ports(self, mh_driver):
@@ -284,6 +293,11 @@ class TestInformationIsolation:
     def _load_info(self, driver, ip):
         select_host(driver, ip)
         click_right_tab(driver, 'info-right')
+        # Wait until the Information tab content actually shows THIS host's IP.
+        # Reading immediately after click_right_tab can return stale content
+        # from the previously-selected host.
+        W(driver, POLL * 3).until(
+            lambda d: ip in d.find_element(By.ID, 'info-right').text)
         return driver.find_element(By.ID, 'info-right').text
 
     def test_host_a_info_shows_a_ip(self, mh_driver):

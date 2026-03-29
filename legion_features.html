@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Legion Capability Matrix</title>
+<style>
+  :root {
+    --bg:       #1e1e1e;
+    --surface:  #252525;
+    --border:   #3a3a3a;
+    --header-bg:#2a2a2a;
+    --section-bg:#2d2d2d;
+    --text:     #d4d4d4;
+    --muted:    #888;
+    --accent:   #4ea6dc;
+    --check-gov:#5cb85c;
+    --check-tim:#e8a020;
+    --both:     #5cb85c;
+    --highlight:#333a33;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    padding: 32px 24px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  header h1 {
+    font-size: 26px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.04em;
+  }
+  header h1 span { color: var(--accent); }
+  header p {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 28px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .legend-item .chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .chip-gov  { background: rgba(92,184,92,0.15);  color: var(--check-gov); border: 1px solid rgba(92,184,92,0.4); }
+  .chip-tim  { background: rgba(232,160,32,0.15); color: var(--check-tim); border: 1px solid rgba(232,160,32,0.4); }
+  .chip-both { background: rgba(92,184,92,0.15);  color: var(--check-gov); border: 1px solid rgba(92,184,92,0.4); }
+
+  /* Summary bar */
+  .summary {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  .summary-card {
+    text-align: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 28px;
+  }
+  .summary-card .num {
+    font-size: 28px;
+    font-weight: 700;
+    display: block;
+  }
+  .summary-card .lbl {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .num-gov  { color: var(--check-gov); }
+  .num-tim  { color: var(--check-tim); }
+  .num-both { color: var(--accent); }
+
+  /* Table wrapper */
+  .tbl-wrap {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 560px;
+  }
+
+  /* Sticky column headers */
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--header-bg);
+    border-bottom: 2px solid var(--border);
+    padding: 12px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  thead th:first-child {
+    text-align: left;
+    color: var(--text);
+    width: 100%;
+  }
+  thead th:not(:first-child) {
+    text-align: center;
+    min-width: 130px;
+    max-width: 160px;
+  }
+  thead th.col-gov  { color: var(--check-gov); }
+  thead th.col-tim  { color: var(--check-tim); }
+
+  /* Section header rows */
+  tr.section-hdr td {
+    background: var(--section-bg);
+    border-top: 2px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 14px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  /* Feature rows */
+  tr.feat {
+    border-bottom: 1px solid rgba(58,58,58,0.6);
+    transition: background 0.12s;
+  }
+  tr.feat:hover { background: rgba(78,166,220,0.06); }
+
+  /* Both columns checked — faint green tint */
+  tr.feat.both-checked { background: rgba(92,184,92,0.04); }
+  tr.feat.both-checked:hover { background: rgba(92,184,92,0.09); }
+
+  tr.feat td {
+    padding: 7px 14px;
+    vertical-align: middle;
+  }
+  tr.feat td:first-child {
+    color: var(--text);
+    font-size: 12.5px;
+  }
+  tr.feat td:not(:first-child) {
+    text-align: center;
+  }
+
+  /* Checkmark cells */
+  .ck {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .ck-gov  { background: rgba(92,184,92,0.12);  color: var(--check-gov); }
+  .ck-tim  { background: rgba(232,160,32,0.12); color: var(--check-tim); }
+  .ck-empty { color: transparent; }
+
+  /* Retired / removed label */
+  .retired {
+    display: inline-block;
+    font-size: 10px;
+    color: #c0392b;
+    background: rgba(192,57,43,0.12);
+    border: 1px solid rgba(192,57,43,0.25);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  .new-tag {
+    display: inline-block;
+    font-size: 10px;
+    color: var(--check-tim);
+    background: rgba(232,160,32,0.1);
+    border: 1px solid rgba(232,160,32,0.25);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 28px;
+    color: var(--muted);
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>LEGION <span>Capability Matrix</span></h1>
+  <p>Feature comparison — GoVanguard legacy vs. Tim McLean (ifly53e / therearesomewhocallmetimatviasat)</p>
+</header>
+
+<div class="legend">
+  <div class="legend-item"><span class="chip chip-gov">✓</span> GoVanguard legacy (original)</div>
+  <div class="legend-item"><span class="chip chip-tim">✓</span> Tim McLean (new / enhanced)</div>
+  <div class="legend-item"><span class="chip chip-both">✓</span><span class="chip chip-tim">✓</span> Both — carried forward &amp; maintained</div>
+</div>
+
+<div class="summary">
+  <div class="summary-card"><span class="num num-gov">86</span><span class="lbl">GoVanguard features</span></div>
+  <div class="summary-card"><span class="num num-both">52</span><span class="lbl">Carried forward</span></div>
+  <div class="summary-card"><span class="num num-tim">149</span><span class="lbl">Tim McLean additions</span></div>
+</div>
+
+<div class="tbl-wrap">
+<table>
+<thead>
+  <tr>
+    <th>Capability</th>
+    <th class="col-gov">GoVanguard<br>Legacy</th>
+    <th class="col-tim">Tim McLean<br>(ifly53e / TASCMTAV)</th>
+  </tr>
+</thead>
+<tbody>
+
+<!-- ── CORE ARCHITECTURE ── -->
+<tr class="section-hdr"><td colspan="3">Core Architecture</td></tr>
+<tr class="feat"><td>PyQt6 desktop GUI</td><td><span class="ck ck-gov">✓</span></td><td></td></tr>
+<tr class="feat"><td>Flask web UI (browser-based, no Qt required) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>SQLAlchemy ORM + SQLite database</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>WAL mode for concurrent DB reads during writes <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Multi-instance detection &amp; conflict prompt at startup <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Per-instance file isolation (DB, output folders, logs) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Rotating log files (10 MB / 3 backups) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Auto-open browser on server start <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>--port argument (run multiple instances simultaneously) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── SCANNING — NMAP ── -->
+<tr class="section-hdr"><td colspan="3">Scanning — Nmap</td></tr>
+<tr class="feat both-checked"><td>Host discovery scan</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Fast TCP / full TCP / fast UDP / full UDP scans</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Staged nmap (sequential port ranges)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Parallel staged nmap — stages 1–5 run simultaneously <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>NSE/vulners stage runs last against all discovered ports <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Real-time nmap progress % and ETC (--stats-every) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Scan commands auto-recorded in host Notes tab <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>IPv6 support flag</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── AUTOMATED SCHEDULER ── -->
+<tr class="section-hdr"><td colspan="3">Automated Scheduler</td></tr>
+<tr class="feat both-checked"><td>Auto-run tools on service discovery</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Run scheduler on nmap XML import</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Configurable max concurrent fast / slow processes</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Process queue (Waiting → Running → Finished lifecycle)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Queue immediately advances on process kill <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Duplicate-run handling (skip / new tab / append / ask) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── HOST ACTIONS ── -->
+<tr class="section-hdr"><td colspan="3">Host Actions (right-click on host)</td></tr>
+<tr class="feat both-checked"><td>nmap variants — fast/full TCP/UDP, discover</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>nmap vulners NSE script</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>unicornscan full UDP <span class="retired">RETIRED</span></td><td><span class="ck ck-gov">✓</span></td><td></td></tr>
+<tr class="feat"><td>ICMP timestamp (hping3) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>PyShodan host lookup</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>masscan fast full-port sweep <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>dnsrecon DNS enumeration <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>searchsploit ExploitDB search <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>BloodHound Active Directory collection <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── PORT ACTIONS ── -->
+<tr class="section-hdr"><td colspan="3">Port Actions (right-click on port)</td></tr>
+<tr class="feat both-checked"><td>Nikto web scanner</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Nmap per-port scripts</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>SMB enumeration — sessions, shares, users, groups, policy</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>SMB null sessions (rpcclient)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>FTP / SSH / MySQL / MSSQL / Oracle / PostgreSQL defaults (Hydra)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>VNC default credentials (Hydra)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>SNMP community brute / snmpcheck</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>SMTP user enumeration (EXPN / RCPT / VRFY)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Banner grabbing (netcat)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>LDAPsearch</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>nbtscan / rpcinfo / samrdump</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>showmount (NFS shares)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>polenum (password policy extraction)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>rdp-sec-check</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>sslscan / sslyze</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>whatweb / wafw00f</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>wpscan</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Metasploit module actions (oracle, ccproxy, vsftpd)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>dirbuster <span class="retired">RETIRED</span></td><td><span class="ck ck-gov">✓</span></td><td></td></tr>
+<tr class="feat"><td>enum4linux original <span class="retired">RETIRED</span></td><td><span class="ck ck-gov">✓</span></td><td></td></tr>
+<tr class="feat"><td>wapiti / theHarvester / cloudfail / dnsmap <span class="retired">RETIRED</span></td><td><span class="ck ck-gov">✓</span></td><td></td></tr>
+<tr class="feat"><td>feroxbuster — HTTP/HTTPS directory brute <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>gobuster dir <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>nuclei vulnerability scanner <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>testssl TLS checker <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>netexec SMB (replaces crackmapexec) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>smbmap share listing <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>enum4linux-ng (modern Python 3 rewrite) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>ldapdomaindump <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>ssh-audit <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>redis-cli info / unauthenticated check <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>impacket suite — lookupsid, rpcdump, secretsdump, AS-REP, Kerberoast <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>ffuf file fuzzing / joomscan / davtest <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>onesixtyone / snmpwalk <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>dig DNS zone transfer / fierce DNS brute <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>ike-scan VPN fingerprint <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>swaks SMTP relay test <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>SMB vuln NSE — EternalBlue, SambaCry, ms08-067, ms10-054/061 <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>SSL vuln NSE — Heartbleed, POODLE, DH-params, CCS injection, cipher enum <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>RDP vuln NSE (ms12-020) / HTTP Shellshock NSE <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── TERMINAL ACTIONS ── -->
+<tr class="section-hdr"><td colspan="3">Terminal Actions</td></tr>
+<tr class="feat both-checked"><td>Open xterm terminal</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>SSH / Telnet / FTP / MySQL / PostgreSQL / MSSQL clients</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>VNC viewer / rdesktop / rlogin / rsh</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>rpcclient / psql / netcat</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>evil-winrm <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>redis-cli terminal <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>impacket-smbclient / impacket-psexec / smbclient (anonymous) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── BRUTE FORCE ── -->
+<tr class="section-hdr"><td colspan="3">Brute Force</td></tr>
+<tr class="feat both-checked"><td>Hydra integration with wordlists</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Hydra combo file support (-C flag) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Pre-fill default username / password from config <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Hide username / password fields per-service <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Store / delete cleartext passwords on exit <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Hydra credential extraction saved to DB <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── PROCESS MANAGEMENT ── -->
+<tr class="section-hdr"><td colspan="3">Process Management</td></tr>
+<tr class="feat both-checked"><td>Process table — name, target, PID, status, elapsed</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Live output streaming to UI</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Kill individual process</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Kill all running processes</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Kill grandchild processes (shell=True orphan fix) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Sort processes by any column <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Filter processes by status (All / Running / Finished / Failed / Queued) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Hide Finished / Hide All — toggles to Unhide <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Process retry <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>nmap progress % / ETC column (live real-time) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Sticky process table header <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Process output saved to DB on completion</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Interactive PTY terminal output saved on project save <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Orphaned processes marked Crashed on startup <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Scan generation counter — prevents stale thread corruption on rescan <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── KEYWORD MATCH DETECTION ── -->
+<tr class="section-hdr"><td colspan="3">Keyword Match Detection</td></tr>
+<tr class="feat both-checked"><td>Per-tool positive / negative match keywords (config)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Global positive / negative match keywords <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Match highlights process row red</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Match highlights tool entry red</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Match highlights tool-hosts middle pane row red + ★ <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Match navigation arrows ▲/▼ with N/M counter in output panel <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Match state saved and restored across project open <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── NOTES & CTRL+B ── -->
+<tr class="section-hdr"><td colspan="3">Notes &amp; Ctrl+B Selection</td></tr>
+<tr class="feat both-checked"><td>Per-host notes tab</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Ctrl+B — send selection to Notes from lower output panel</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Ctrl+B — works from upper dynamic tool tabs <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Ctrl+B — works from interactive xterm terminal <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Ctrl+B — routes note to the process's own host (not the selected host) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Ctrl+B — preserves ANSI colour codes in notes <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>ANSI colour rendered in notes panel <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Notes tab orange unread indicator when new content written</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Orange indicator persists correctly across host switches <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── HOST & SERVICE DISPLAY ── -->
+<tr class="section-hdr"><td colspan="3">Host &amp; Service Display</td></tr>
+<tr class="feat both-checked"><td>Host list — IP, hostname, OS, status, open ports</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Host list sort by any column</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Host filter — up/down/checked/port state/keywords</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Host checked / mark-as-checked</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Host delete with full data purge</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Services tab — unique service names (left panel)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Services tab sort by port or service name <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Port state filter — open / filtered / closed <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Comma / range multi-host input <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Semicolon injection protection in host input <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── SCRIPTS, CVEs, INFO ── -->
+<tr class="section-hdr"><td colspan="3">Scripts, CVEs &amp; Information Tabs</td></tr>
+<tr class="feat both-checked"><td>Scripts tab — per-host NSE script output</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>CVEs tab — vulners output sorted by CVSS score</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>CVEs tab auto-refresh when updated</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Information tab — IP, OS, ports, MAC, vendor, ASN, ISP</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Information tab blink-on-update</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Screenshot tab (eyewitness integration)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Screenshot blacklist — skip deleted hosts <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── TOOLS TAB ── -->
+<tr class="section-hdr"><td colspan="3">Tools Tab</td></tr>
+<tr class="feat both-checked"><td>Tools tab — unique tool names (left panel)</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Tools tab sort by tool name (click column header) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Tool-hosts middle pane — host/port/status per run</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Tool-hosts host column truncated to 18 chars + hover tooltip <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── OS TAB ── -->
+<tr class="section-hdr"><td colspan="3">OS Tab</td></tr>
+<tr class="feat both-checked"><td>OS tab — group hosts by OS family</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>OS tab — click OS family to see matching hosts</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── LOG TAB ── -->
+<tr class="section-hdr"><td colspan="3">Log Tab</td></tr>
+<tr class="feat both-checked"><td>In-app log viewer tab</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Filter log by INFO / DEBUG level <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>10 000-line in-memory buffer — no stdout redirect needed <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>ANSI colour rendered in log output <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── CONFIGURATION ── -->
+<tr class="section-hdr"><td colspan="3">Configuration</td></tr>
+<tr class="feat both-checked"><td>legion.conf — all tool commands configurable</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Config Manager GUI (F2) — edit config in-app</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Config Manager — multiple conf versions, activate from GUI</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Config Manager — syntax validation on save <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Config Manager — find/search bar (Ctrl+F, F2) with highlight <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Config Manager — arrow-key navigation through results <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Settings live-apply — hot-reload UI after config save <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>nmap-path / hydra-path / tool paths from conf</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>screenshooter-timeout / black-background toggle <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Tool duplication mode — skip / new tab / append / ask <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Modern tool list — retired deprecated tools, added current replacements <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── PROJECT MANAGEMENT ── -->
+<tr class="section-hdr"><td colspan="3">Project Management</td></tr>
+<tr class="feat both-checked"><td>New / Open / Save / Save As project</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Save-on-exit prompt for unsaved changes <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>File browser — Save button labelled "Save", Open labelled "Open" <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Import nmap XML</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat both-checked"><td>Import hosts from text file</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Export JSON <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Export CSV <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Nmap XML archived to project output folder <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>outputfile paths rewritten correctly on Save As <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Match state saved and restored across project open <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── UI / UX ── -->
+<tr class="section-hdr"><td colspan="3">UI / UX</td></tr>
+<tr class="feat both-checked"><td>Splitter positions saved and restored</td><td><span class="ck ck-gov">✓</span></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>All splitters genuinely draggable — proc, tools, OS, scripts <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Bottom section defaults to 50% height on first load <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Font size controls — lower panel (A+ / A-) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Font size controls — upper dynamic tabs (A+ / A-) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Font size controls resize xterm.js terminals <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Tab bar always-visible horizontal scrollbar <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Taller tab buttons for easier clicking <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Active right-panel tab preserved on Scan ↔ Brute switch <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Upper-panel scroll position preserved across snapshot polls <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Context menu "Go to Tab" — jump to a process's output tab <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── SHUTDOWN & SAFETY ── -->
+<tr class="section-hdr"><td colspan="3">Shutdown &amp; Safety</td></tr>
+<tr class="feat"><td>Browser-close heartbeat watchdog — kills server + scans <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Page-refresh shutdown flushes output only — never kills active scans <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>killRunningProcesses drains queue — prevents ghost process restarts <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>WAL checkpoint + dispose before project file deletion <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>SIGINT / SIGTERM handler with daemon-thread settle sleep <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Orphaned temp file / folder cleanup on startup <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── AI ANALYSIS ── -->
+<tr class="section-hdr"><td colspan="3">AI Analysis (LLM)</td></tr>
+<tr class="feat"><td>Vertex AI integration — Anthropic Claude, ADC auth, no stored API key <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Phase 1 Synthesizer — structured JSON findings table (severity, source, evidence) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Phase 2 Attack Planner — Markdown attack plan with specific commands <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Persistent AI history DB — survives project switches <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Jaccard fingerprint similarity — ≥ 95% match detection across sessions <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Side-by-side current vs historical host comparison <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Neutral "Select to compare" prompt when similar hosts exist <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Cost estimate before / actual tokens + cost shown after analysis <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+<!-- ── TEST SUITE ── -->
+<tr class="section-hdr"><td colspan="3">Test Suite</td></tr>
+<tr class="feat"><td>Selenium UI tests — headless Firefox (geckodriver) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Behavioral / integration / route tests <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Session isolation tests (25 tests) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>User story tests with dated HTML reports (56 stories) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>Live scan tests against real target (Metasploitable) <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+<tr class="feat"><td>run_tests.sh — colour output, spinner, timer, section subtotals <span class="new-tag">NEW</span></td><td></td><td><span class="ck ck-tim">✓</span></td></tr>
+
+</tbody>
+</table>
+</div>
+
+<footer>
+  <p>Legion Flask &nbsp;·&nbsp; v10.82 &nbsp;·&nbsp; GoVanguard original &copy; Shane Scott &nbsp;·&nbsp; Flask rewrite &amp; extensions by Tim McLean</p>
+</footer>
+
+</body>
+</html>
