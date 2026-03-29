@@ -34,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.63-flask
-- **Static asset cache:** `?v=68` in `base.html`
+- **Current Flask version:** v10.95-flask
+- **Static asset cache:** `?v=76` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -189,11 +189,31 @@ Called automatically from `start()` on every project open/create:
 - **v10.61**: Tab bar scrollbar always visible — `.tab-bar` changed from `overflow-x:auto` + `height:0` hide to `overflow-x:scroll` with explicit 8px track, `#888` thumb, Firefox `scrollbar-color`. Global scrollbar thumb brightened `#454545→#777`.
 - **v10.62**: Scan tab state restoration — `initTabBar` now uses `c.closest('.tab-widget') === widget` guard so only same-level `.active` classes are stripped when switching main tabs. Previously wiped nested panels (right-panel tabs, left-panel tabs) on every Scan↔Brute switch.
 - **v10.63**: Match navigation arrows — `_matchNavState{}` (per-process idx), `_matchNavInit()` (re-highlights on poll), `_matchNav()` (scrolls to span); match banner is `position:sticky;top:0`; `.match-current` is solid yellow vs dimmer `.match-positive`. Works in both upper (dyn-output-*) and lower (plain-output) panels.
+- **v10.66**: Scan commands saved to host notes — `runStagedNmap()` writes a dated block to each host's Notes tab at scan start (all PORTS stage commands without `-oA`; NSE template with `<discovered-ports>` note); `_launch_nse_stage()` appends the actual NSE command (with real `-p` arg, `-oA` stripped) once open ports are known. `_append_to_host_notes()` helper handles comma-separated multi-host targets, skips gracefully if host not yet in DB (first scan).
+- **v10.65**: Save/Open data completeness — four bugs fixed: (1) `ProjectManager.saveProjectAs()` rewrites all `outputfile` AND `command` paths in the saved DB from old temp prefix to new `<name>-tool-output` prefix after copytree, so screenshots, process output files, and displayed commands resolve correctly after open; (2) `process_matches` table added to DB schema (created on connect via `CREATE TABLE IF NOT EXISTS`); `saveMatchState()` writes `_matches` dict to DB on every save/shutdown; `loadMatchState()` restores it in `start()` so keyword match highlighting survives project open; (3) `saveRunningProcessOutputs()` now reads PTY buffer (`session._buf` from `_TerminalSession`) for interactive processes and saves to `process_output` table, so interactive terminal history is preserved on save; (4) on project open, Interactive processes with no live PTY session fall through JS `session_id` check and display their saved `process_output` as static text — no blank panel. Full audit confirms all other state (host/port/service/OS/CVE/NSE/notes/AI/wordlists/nmap files) is already correctly saved.
 - **Test suite**: `tests/test_ui_session_features.py` — 30 non-hollow Selenium tests (port 5072) covering all v10.59–v10.63 changes. Key patterns: `_HB_TIMEOUT=600` watchdog disable, class-scoped `match_setup` fixture (one page load for 13 match-nav tests), `_wait_proc_done_api` (Python requests, not DOM), `set_script_timeout(30)`. Integrated into `run_tests.sh --selenium`.
 - **Stories fix**: `generate_report.py` `make_driver()` and `test_user_stories.py` `driver` fixture both gain `set_script_timeout(30)`. Heartbeat keeper interval 15s→8s (was 5s margin under 20s watchdog). Drain settle sleep 2s→5s.
 - **Test additions**: test_goal2_lower_selection (port 5086), test_goal3_ansi_ctrlb (port 5087), test_goal_selection_confinement (port 5085), test_shutdown_subprocess (ports 5083/5084 — subprocess server for os._exit tests). All goal tests converted from `app.run()` daemon threads to `make_server()` + `httpd.shutdown()`.
 - **User story tests**: 56 user stories written; 37 offline + 6 live pytest tests in `tests/test_user_stories.py`; 18 generate_report_USxx.py scripts producing dated HTML reports in `testreport/`; integrated into `run_tests.sh` via `--stories` flag with auto server management and heartbeat keeper.
 - **Test fixes**: test_08 notes (storeNotes in _ensure_seeded_host); test_09 project name (check snapshot API not DOM title); test_clear retry loop (safe — Clear uses postJson, no window.confirm); NEVER add retry loops to actions that trigger window.confirm() — pending dialog blocks Selenium with UnexpectedAlertPresentException
+- **v10.69/71**: Upper font controls now apply to all right-panel text areas: `#script-output-inline`, `#notes-right`, `#tool-output-text`, AI content elements. Previously only `#dynamic-tabs-container` was covered. CSS `flex-basis` must be set alongside `width` — flex-basis always wins in flex containers.
+- **v10.72**: Context menu viewport clamping — `showContextMenu()` appends hidden, measures dimensions, clamps `left`/`top` to viewport before making visible. Prevents menus from spilling off-screen at window edges.
+- **v10.73**: Go to Tab — tab button scrolled into view via `scrollIntoView()`; cross-host navigation: `_pendingGotoTab` stores pid, host row clicked, `renderDynamicToolTabs` picks it up after async `loadHostDetail` resolves.
+- **v10.75**: Context menu scrollable — `max-height:calc(100vh - 16px);overflow-y:auto` added so long port-action lists scroll instead of overflowing.
+- **v10.77**: Process filter label "Waiting" (was "Queued"). Value attribute was already correct; only display text changed.
+- **v10.79**: All nmap stage commands in Notes for first-time scans — `_pending_scan_notes[hostIp]` dict defers the write until `_stage_completed` (after first XML import guarantees host in DB). Re-scans write immediately.
+- **v10.81**: Process timeout — `general_process_timeout` in `[GeneralSettings]` (default 300s). Watchdog daemon thread in `_capture_output` calls `_kill_subtree(proc._popen.pid)` + `proc._popen.kill()` on timeout; appends `[Legion] Process killed` to output. nmap excluded. 0 = disabled. Bug fixed: watchdog was calling `_kill_all_descendants(proc._popen.pid)` (wrong — that function takes 0 args); fixed to `_kill_subtree(proc._popen.pid)`.
+- **v10.83**: Impacket credential-requiring tools removed from `[SchedulerSettings]`: `impacket-getnpusers`, `impacket-getuserspns`, `impacket-lookupsid`, `impacket-secretsdump`. `impacket-rpcdump` kept (no credentials needed). Live `/root/.local/share/legion/legion.conf` also updated.
+- **v10.85**: Splitter snap-to-zero fix — `initSplitter` mousedown now reads `startSize = el.offsetWidth` BEFORE setting flex properties, and sets `el.style.flexBasis = startSize + 'px'` alongside flexGrow/flexShrink. Without this, CSS `flex-basis:0%` from `.table-wrap` class collapsed the element to 0 on every click. Also `mousemove` now updates `flexBasis` alongside `width`.
+- **v10.86**: Horizontal splitter direction — negated delta for `isH` case so dragging down shrinks the bottom section (expanding top) instead of growing it.
+- **v10.87**: Clearing a process also clears the lower output panel (`plain-output.textContent = ''`) if that process is currently selected.
+- **v10.88/89**: Host input validation — comma allowed only for nmap octet shorthand (e.g. `192.168.85.11,111`). After a comma, every subsequent token must be `isdigit()`. Full IPs or CIDRs after comma (e.g. `192.168.85.11,192.168.85.111`) are rejected. Error shown in dialog without closing it.
+- **v10.90/91**: All nmap scan types write commands to host Notes — Easy (discovery + list) and Hard paths now store note in `_pending_scan_notes[target]` before launching; `_capture_output` writes it after XML import (host guaranteed in DB). Staged nmap path unchanged (already had deferred write).
+- **v10.92**: Add hosts dialog error display — `postJson` resolves even on 400; `.then()` now checks `data.error`, shows message in red validation element without closing the dialog. Validation element gets `white-space:pre-wrap` for multi-line hint.
+- **v10.93**: AI tab redesigned — Phase 1 (synthesizer) and Phase 2 (attack planner) split into separate routes and calls. Phase 2 is on-demand via "Get Attack Advice" button. Running state persists when clicking away and back (`_aiRunning` + `_aiRunningHostId` flags). Re-analyze confirmation when existing analysis found. New routes: `POST /api/ai/analyze-host/<id>/phase1` and `/phase2`. New functions: `run_phase1()` and `run_phase2()` in `analyzer.py`.
+- **v10.94**: Ctrl+B most-recent-selection wins — xterm fallback reads (`_termState.xterm.getSelection()`) now guarded by `&& !_lastNonXtermSelSource`. xterm maintains its own selection state independently of `window.getSelection()`; the old code used the stale xterm selection even after the user made a fresh DOM selection in the upper panel.
+- **v10.95**: Config manager backup + validation — `_backup_conf(src, label)` helper writes to `~/.local/share/legion/backup/{label}-{YYYYMMDD_HHMMSS}.conf` (timestamped, never overwrites). All three save paths now use it: raw legion.conf save, profile save, and profile activate. Profile activate also validates with `_validate_legion_conf` before copying — broken profiles can't become active.
+- **Tests**: `tests/test_ui_v10_features.py` (port 5075, 10 tests): context menu clamping, font size all panels, goto-tab same+cross-host. `tests/test_ui_v10b_features.py` (port 5078, 14 tests): context menu scroll, filter label, notes all stages, process timeout (API+DOM+duration+output panel+nmap-exempt), scheduler no impacket. Skill registered at `~/.claude/skills/legion-selenium-test.md`.
 
 ---
 
@@ -648,6 +668,23 @@ pip install "anthropic[vertex]"
 | 22 | Tab bar scrollbar always visible — right-panel tab bar scrollbar was hidden | Low | ✅ Done v10.61 | overflow-x:scroll; 8px track; #888 thumb; global thumb brightened #454545→#777 |
 | 23 | Scan tab state restoration — active right-panel tab reset to Services on Brute→Scan | Low | ✅ Done v10.62 | initTabBar: c.closest('.tab-widget')===widget guard; only same-level .active stripped |
 | 24 | Match navigation arrows — ▲/▼ in output banner to jump between match spans | Med | ✅ Done v10.63 | _matchNavState{}, _matchNavInit(), _matchNav(); sticky banner; .match-current; upper+lower panels |
+| 25 | Font size all output panels — upper A+/A- applies to script/notes/tool/AI panels | Low | ✅ Done v10.69/71 | Added to applyFontSize() array; flex-basis must be set alongside width |
+| 26 | Context menu stays in viewport — clamped to window.innerHeight/Width | Low | ✅ Done v10.72 | Append hidden, measure, clamp, then show; submenus flip left/up if overflowing |
+| 27 | Go to Tab improvements — scrollIntoView + cross-host navigation | Med | ✅ Done v10.73 | _pendingGotoTab; renderDynamicToolTabs picks up after async loadHostDetail |
+| 28 | Context menu scrollable — port action lists no longer clip at viewport bottom | Low | ✅ Done v10.75 | max-height:calc(100vh-16px);overflow-y:auto on menu element |
+| 29 | Filter label "Waiting" not "Queued" | Low | ✅ Done v10.77 | Display text only; value="Waiting" was already correct |
+| 30 | All nmap stage commands in Notes — deferred write for first-time scans | Med | ✅ Done v10.79 | _pending_scan_notes dict; _stage_completed writes after XML import |
+| 31 | Process timeout — kill non-nmap processes after N seconds | Med | ✅ Done v10.81 | general_process_timeout in legion.conf; watchdog in _capture_output; _kill_subtree fix |
+| 32 | Remove credential-requiring impacket from scheduler | Low | ✅ Done v10.83 | getnpusers/getuserspns/lookupsid/secretsdump removed; rpcdump kept |
+| 33 | Splitter snap-to-zero fix — flex-basis must be set with width | Low | ✅ Done v10.85 | startSize read before flex pin; flexBasis set in mousedown + mousemove + restore |
+| 34 | Horizontal splitter direction — drag down expands top | Low | ✅ Done v10.86 | Negated delta for isH case |
+| 35 | Clear process clears lower output window | Low | ✅ Done v10.87 | plain-output.textContent='' when cleared process is selected |
+| 36 | Host input comma validation — octet shorthand only | Low | ✅ Done v10.88/89 | post-comma tokens must be isdigit(); error shown in dialog without closing |
+| 37 | All nmap scan types write to Notes (Easy + Hard) | Low | ✅ Done v10.90/91 | _pending_scan_notes in addHosts; written in _capture_output after XML import |
+| 38 | Add hosts dialog shows server errors | Low | ✅ Done v10.92 | .then() checks data.error; validation element shown; dialog stays open |
+| 39 | AI Phase 1/2 split — Phase 2 on-demand | Med | ✅ Done v10.93 | run_phase1/run_phase2 in analyzer.py; /phase1 /phase2 routes; _aiRunning state |
+| 40 | Ctrl+B most-recent-selection wins | Low | ✅ Done v10.94 | xterm fallbacks guarded by !_lastNonXtermSelSource |
+| 41 | Config manager timestamped backups + activation validation | Med | ✅ Done v10.95 | _backup_conf() → backup/; profile validate before activate |
 
 ### Backlog #10 — Tool Manager GUI
 Allows adding and removing tool entries (HostActions, PortActions, PortTerminalActions, SchedulerSettings) via a form instead of raw conf editing.

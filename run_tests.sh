@@ -335,7 +335,7 @@ pkill -f "geckodriver"     2>/dev/null || true
 pkill -f "nmap"            2>/dev/null || true
 pkill -f "eyewitness"      2>/dev/null || true
 # Kill any stale test Flask servers on known test ports
-for _p in 5072 5073 5074 5085 5086 5094 5096 5097 5098 5099; do free_port "$_p"; done
+for _p in 5072 5073 5074 5075 5076 5077 5078 5085 5086 5094 5096 5097 5098 5099; do free_port "$_p"; done
 sleep 1
 rm -rf /tmp/legion/legion-* /tmp/legion-* 2>/dev/null || true
 echo "  Cleared /tmp/legion* artefacts"
@@ -623,8 +623,13 @@ if $RUN_SELENIUM; then
     free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
     free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
     free_port 5072; run_pytest "ui_session_features (v10.59-63)" tests/test_ui_session_features.py
-    free_port 5073; free_port 5074
+    free_port 5073; run_pytest "save_open_data (v10.65-66)" tests/test_save_open_data.py
+    free_port 5074
     run_pytest "multiinstance_detection (v10.64)" tests/test_multiinstance_detection.py
+    free_port 5075; run_pytest "ui_v10_features (v10.69-73)" tests/test_ui_v10_features.py
+    free_port 5076; run_pytest "ui_new_features (v10.67-71)" tests/test_ui_new_features.py
+    free_port 5077; run_pytest "ui_new_features2 (v10.76-82)" tests/test_ui_new_features2.py
+    free_port 5078; run_pytest "ui_v10b_features (v10.75-83)" tests/test_ui_v10b_features.py
 fi
 
 if $RUN_LIVE; then
@@ -714,18 +719,17 @@ finally:
     os.unlink(path)
 PYEOF
 
-        local _us_live_name="user_stories (live: $LIVE_TARGET)"
-        local _us_live_t0; _us_live_t0=$(date +%s)
+        _us_live_name="user_stories (live: $LIVE_TARGET)"
+        _us_live_t0=$(date +%s)
         spinner_start "$_us_live_name"
-        local _us_live_out; _us_live_out=$(
+        _us_live_out=$(
             sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
                 python3 -m pytest tests/test_user_stories.py \
                 -k "NmapProgress or ScreenshotTab" \
                 --tb=no -q 2>&1) || true
         spinner_stop
-        local _us_live_secs=$(( $(date +%s) - _us_live_t0 ))
-        local _us_live_sl; _us_live_sl=$(echo "$_us_live_out" | grep -E "passed|failed|error" | tail -1 || true)
-        local _us_live_p _us_live_f _us_live_s
+        _us_live_secs=$(( $(date +%s) - _us_live_t0 ))
+        _us_live_sl=$(echo "$_us_live_out" | grep -E "passed|failed|error" | tail -1 || true)
         _us_live_p=$(_extract "$_us_live_sl" "passed")
         _us_live_f=$(_extract "$_us_live_sl" "failed")
         _us_live_s=$(echo "$_us_live_sl" | grep -oP '\d+(?= (skipped|deselected))' | head -1 || echo "0")

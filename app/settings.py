@@ -298,6 +298,7 @@ class AppSettings():
         self.actions.setValue('default-terminal', newSettings.general_default_terminal)
         self.actions.setValue('tool-output-black-background', newSettings.general_tool_output_black_background)
         self.actions.setValue('screenshooter-timeout', newSettings.general_screenshooter_timeout)
+        self.actions.setValue('process-timeout', newSettings.general_process_timeout)
         self.actions.setValue('web-services', newSettings.general_web_services)
         self.actions.setValue('enable-scheduler', newSettings.general_enable_scheduler)
         self.actions.setValue('enable-scheduler-on-import', newSettings.general_enable_scheduler_on_import)
@@ -456,6 +457,7 @@ class Settings():
         self.general_default_terminal = "gnome-terminal"
         self.general_tool_output_black_background = "False"
         self.general_screenshooter_timeout = "15000"
+        self.general_process_timeout = "300"
         self.general_web_services = "http,https,ssl,soap,http-proxy,http-alt,https-alt"
         self.general_enable_scheduler = "True"
         self.general_max_fast_processes = "10"
@@ -556,6 +558,7 @@ class Settings():
                 self.general_default_terminal = self.generalSettings['default-terminal']
                 self.general_tool_output_black_background = self.generalSettings['tool-output-black-background']
                 self.general_screenshooter_timeout = self.generalSettings['screenshooter-timeout']
+                self.general_process_timeout = self.generalSettings.get('process-timeout', '300')
                 self.general_web_services = self.generalSettings['web-services']
                 self.general_enable_scheduler = self.generalSettings['enable-scheduler']
                 self.general_enable_scheduler_on_import = self.generalSettings['enable-scheduler-on-import']

@@ -478,9 +478,7 @@ def process_close(process_id):
 @web_bp.post("/api/processes/clear")
 def processes_clear():
     logic = _logic()
-    repo = logic.activeProject.repositoryContainer.processRepository
     reset_all = request.get_json(silent=True) or {}
-    # Hide finished processes
     from sqlalchemy import text
     session = logic.activeProject.database.session()
     try:
@@ -488,6 +486,24 @@ def processes_clear():
             session.execute(text("UPDATE process SET closed = 'True' WHERE status != 'Running'"))
         else:
             session.execute(text("UPDATE process SET closed = 'True' WHERE status IN ('Finished','Crashed','Cancelled','Killed')"))
+        session.commit()
+    finally:
+        session.close()
+    return jsonify({"status": "ok"})
+
+
+@web_bp.post("/api/processes/restore")
+def processes_restore():
+    """Reverse of /api/processes/clear — set closed='False' to bring processes back."""
+    logic = _logic()
+    reset_all = request.get_json(silent=True) or {}
+    from sqlalchemy import text
+    session = logic.activeProject.database.session()
+    try:
+        if reset_all.get("reset_all"):
+            session.execute(text("UPDATE process SET closed = 'False'"))
+        else:
+            session.execute(text("UPDATE process SET closed = 'False' WHERE status IN ('Finished','Crashed','Cancelled','Killed')"))
         session.commit()
     finally:
         session.close()
@@ -909,12 +925,9 @@ def settings_save():
         return _err("text required")
     s = AppSettings()
     path = str(s.actions.fileName() or "")
-    # Qt6: saveSettings(saveBackup=True) — write .bak before overwriting
+    # Timestamped backup before overwriting (replaces single .bak — no version loss)
     if os.path.isfile(path):
-        try:
-            shutil.copy2(path, path + '.bak')
-        except Exception:
-            pass
+        _backup_conf(path, label='legion.conf')
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     # Qt6: applySettings() — hot-reload running WebController state from new file
@@ -1212,8 +1225,22 @@ def files_browse():
 # ═══════════════════════════════════════════
 
 _PROFILES_DIR = os.path.expanduser('~/.local/share/legion/profiles')
-_ACTIVE_FILE = os.path.expanduser('~/.local/share/legion/active_profile.txt')
+_ACTIVE_FILE  = os.path.expanduser('~/.local/share/legion/active_profile.txt')
 _WORKING_CONF = os.path.expanduser('~/.local/share/legion/legion.conf')
+_BACKUP_DIR   = os.path.expanduser('~/.local/share/legion/backup')
+
+def _backup_conf(src_path, label='legion'):
+    """Copy src_path to ~/.local/share/legion/backup/{label}-{timestamp}.conf.
+    Silent on error — backup failure must never block a save operation."""
+    try:
+        os.makedirs(_BACKUP_DIR, exist_ok=True)
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime('%Y%m%d_%H%M%S')
+        dest = os.path.join(_BACKUP_DIR, f'{label}-{ts}.conf')
+        shutil.copy2(src_path, dest)
+        log.debug(f"[Config] backed up {src_path} → {dest}")
+    except Exception as _be:
+        log.warning(f"[Config] backup failed for {src_path}: {_be}")
 
 def _ensure_profiles():
     os.makedirs(_PROFILES_DIR, exist_ok=True)
@@ -1252,7 +1279,7 @@ def _validate_legion_conf(config_text):
     # Fixed valid keys per section (Qt6: valid_settings)
     fixed_section_keys = {
         'GeneralSettings': {'log-directory','default-terminal','tool-output-black-background',
-                            'screenshooter-timeout','web-services','enable-scheduler',
+                            'screenshooter-timeout','process-timeout','web-services','enable-scheduler',
                             'enable-scheduler-on-import','max-fast-processes','max-slow-processes','tool-duplication'},
         'BruteSettings': {'store-cleartext-passwords-on-exit','username-wordlist-path','password-wordlist-path',
                           'default-username','default-password','services','no-username-services','no-password-services'},
@@ -1366,6 +1393,8 @@ def config_save(name):
     if errors:
         return jsonify({"status": "error", "errors": errors}), 400
 
+    # Backup existing profile before overwriting
+    _backup_conf(path, label=f'profile-{name}')
     open(path, 'w', encoding='utf-8').write(text)
 
     # If saving the active profile, hot-reload settings immediately
@@ -1386,6 +1415,23 @@ def config_activate(name):
     _ensure_profiles()
     path = os.path.join(_PROFILES_DIR, f'{name}.conf')
     if not os.path.exists(path): return _err(f"Profile '{name}' not found", 404)
+
+    # Validate the profile before making it active — prevents a broken
+    # profile from replacing the working conf and breaking the server.
+    try:
+        profile_text = open(path, 'r', encoding='utf-8').read()
+    except Exception as _re:
+        return _err(f"Could not read profile '{name}': {_re}", 500)
+    errors = _validate_legion_conf(profile_text)
+    if errors:
+        return jsonify({"status": "error",
+                        "errors": errors,
+                        "message": f"Profile '{name}' has validation errors — not activated"}), 400
+
+    # Backup the current working conf before replacing it
+    if os.path.isfile(_WORKING_CONF):
+        _backup_conf(_WORKING_CONF, label='pre-activate')
+
     shutil.copy(path, _WORKING_CONF)
     open(_ACTIVE_FILE, 'w').write(name)
     _wc().applySettings()
@@ -1744,7 +1790,7 @@ def ai_history_similar(host_id):
 
 @web_bp.post("/api/ai/analyze-host/<int:host_id>")
 def ai_analyze_host(host_id):
-    """Run Phase 1 + Phase 2 analysis. Blocks until complete (spinner on client)."""
+    """Run Phase 1 + Phase 2 analysis (legacy combined endpoint)."""
     logic = _logic()
     from app.ai.analyzer import run_analysis
     try:
@@ -1754,6 +1800,34 @@ def ai_analyze_host(host_id):
         import logging
         logging.getLogger('legion').error(f"[AI] analyze-host error: {e}")
         return _err(f"AI analysis failed: {e}", 500)
+
+
+@web_bp.post("/api/ai/analyze-host/<int:host_id>/phase1")
+def ai_analyze_phase1(host_id):
+    """Run Phase 1 (synthesizer) only. Phase 2 saved as null until requested."""
+    logic = _logic()
+    from app.ai.analyzer import run_phase1
+    try:
+        result = run_phase1(logic, host_id)
+        return jsonify({'status': 'ok', **result})
+    except Exception as e:
+        import logging
+        logging.getLogger('legion').error(f"[AI] phase1 error: {e}")
+        return _err(f"Phase 1 failed: {e}", 500)
+
+
+@web_bp.post("/api/ai/analyze-host/<int:host_id>/phase2")
+def ai_analyze_phase2(host_id):
+    """Run Phase 2 (attack planner) using the most recent Phase 1 from project DB."""
+    logic = _logic()
+    from app.ai.analyzer import run_phase2
+    try:
+        result = run_phase2(logic, host_id)
+        return jsonify({'status': 'ok', **result})
+    except Exception as e:
+        import logging
+        logging.getLogger('legion').error(f"[AI] phase2 error: {e}")
+        return _err(f"Phase 2 failed: {e}", 500)
 
 
 @web_bp.get("/api/ai/host/<int:host_id>/latest")

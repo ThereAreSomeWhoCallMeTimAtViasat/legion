@@ -21,12 +21,17 @@ import re
 def validateNmapInput(text):
     """Validate nmap input entered in Add Hosts dialog.
     Allowed: letters, digits, colon, dot, slash, hyphen, comma.
-    Spaces are intentionally excluded — no valid nmap target (IP, CIDR,
-    hostname, range) contains a space.  Permitting spaces allows shell
-    command sequences like 'rm -rf /' to pass character validation after
-    semicolon-splitting (T12)."""
+    Spaces excluded (T12 — shell injection).
+    Comma is allowed only for nmap octet-shorthand (e.g. 192.168.85.11,111)
+    where every post-comma token is digits-only.  A comma followed by a dot
+    or slash (i.e. a full IP or CIDR) is rejected."""
     if re.search(r'[^a-zA-Z0-9:.\/\-,]', text) is not None:
         return False
+    if ',' in text:
+        parts = text.split(',')
+        for part in parts[1:]:
+            if not part.isdigit():
+                return False
     return True
 
 def validateCommandFormat(text):

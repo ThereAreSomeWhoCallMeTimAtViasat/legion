@@ -211,6 +211,36 @@ class ProjectManager:
                 self.logger.info(f"Merging tool output into existing folder {toolOutputFolder}")
         shutil.copytree(project.properties.outputFolder, toolOutputFolder, dirs_exist_ok=True)
 
+        # Rewrite outputfile paths in the saved DB so they point to the new tool-output
+        # folder instead of the original temp directory.  The DB was backed up before the
+        # copytree so paths are still the old temp prefix — update them in the new copy only.
+        old_prefix = project.properties.outputFolder.rstrip('/')
+        new_prefix = toolOutputFolder.rstrip('/')
+        if old_prefix != new_prefix:
+            try:
+                import sqlite3 as _sqlite3
+                _conn = _sqlite3.connect(normalizedFileName)
+                try:
+                    _conn.execute(
+                        "UPDATE process SET outputfile = REPLACE(outputfile, ?, ?) "
+                        "WHERE outputfile LIKE ?",
+                        (old_prefix, new_prefix, old_prefix + '%')
+                    )
+                    # Also rewrite the command column — nmap/tool commands embed -oA/-o
+                    # paths using the original temp directory.  Not re-executed after open
+                    # but displayed in the UI, so stale paths are confusing.
+                    _conn.execute(
+                        "UPDATE process SET command = REPLACE(command, ?, ?) "
+                        "WHERE command LIKE ?",
+                        (old_prefix, new_prefix, '%' + old_prefix + '%')
+                    )
+                    _conn.commit()
+                finally:
+                    _conn.close()
+                self.logger.info(f"Rewrote outputfile/command paths: {old_prefix} → {new_prefix}")
+            except Exception as _exc:
+                self.logger.warning(f"Could not rewrite outputfile paths in saved DB: {_exc}")
+
         if project.properties.isTemporary:
             self.shell.remove_file(project.properties.projectName)
             self.shell.remove_directory(project.properties.outputFolder)

@@ -94,6 +94,22 @@ class Database:
             self.dispose()
             raise DatabaseIntegrityError(f"Failed to initialise SQLite database: {exc}") from exc
 
+        # Create supplemental tables not managed by the ORM (added after initial release)
+        try:
+            from sqlalchemy import text as _text
+            with self.engine.connect() as _conn:
+                _conn.execute(_text(
+                    "CREATE TABLE IF NOT EXISTS process_matches ("
+                    "  id       INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "  hostIp   TEXT NOT NULL,"
+                    "  tabTitle TEXT NOT NULL,"
+                    "  matchStr TEXT NOT NULL"
+                    ")"
+                ))
+                _conn.commit()
+        except Exception as _exc:
+            self.log.warning(f"Could not create process_matches table: {_exc}")
+
         self.metadata.echo = True
         self.metadata.bind = self.engine
         self.log.info(f"Established SQLite connection on file '{dbFileName}'")

@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.64-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.95-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -148,7 +148,7 @@
 <!-- Tools panel (left) -->
 <div class="tab-content" id="tools-panel-left">
     <div class="table-wrap">
-        <table><thead><tr><th>Tool</th></tr></thead>
+        <table id="tools-table"><thead><tr><th data-sort="label" style="cursor:pointer">Tool ▲</th></tr></thead>
         <tbody id="tools-body"></tbody></table>
     </div>
 </div>
@@ -272,12 +272,12 @@
     </div>
     <div id="ai-running" style="padding:12px;display:none">
         <span class="spinner"></span>
-        <span style="color:var(--disabled);margin-left:8px">Running AI analysis…</span>
+        <span id="ai-running-text" style="color:var(--disabled);margin-left:8px">Running Phase 1 analysis…</span>
     </div>
     <div id="ai-results" style="display:none;height:100%;overflow:auto">
         <!-- Cost banner -->
         <div id="ai-cost-bar" style="padding:4px 10px;font-size:9pt;color:var(--disabled);
-             border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0">
+             border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;flex-wrap:wrap">
             <span id="ai-cost-text"></span>
             <span id="ai-compare-wrap">
                 Compare with:
@@ -285,6 +285,7 @@
                     <option value="">— No similar hosts in history —</option>
                 </select>
             </span>
+            <button id="ai-reanalyze-btn" type="button" style="font-size:8pt;padding:1px 8px;margin-left:auto">Re-analyze</button>
         </div>
         <!-- Side-by-side panels -->
         <div id="ai-panels" style="display:flex;flex:1;min-height:0;overflow:hidden;height:calc(100% - 28px)">
@@ -310,10 +311,21 @@
                 </div>
                 <pre id="ai-p1-json" style="display:none;font-size:8pt;overflow:auto;max-height:280px;
                      background:var(--dark);padding:6px;border:1px solid var(--border);margin-bottom:8px"></pre>
-                <!-- Phase 2 markdown -->
-                <strong style="font-size:9pt">Attack Plan</strong>
-                <div id="ai-p2-markdown" style="font-size:9pt;line-height:1.6;margin-top:4px;
-                     overflow:auto;max-height:400px"></div>
+                <!-- Phase 2 — on demand -->
+                <div id="ai-p2-section" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+                    <div id="ai-p2-request" style="display:none">
+                        <button id="ai-phase2-btn" type="button" style="font-size:10pt;padding:4px 14px">Get Attack Advice</button>
+                        <span style="font-size:8pt;color:var(--disabled);margin-left:8px">Asks the AI for exploitation recommendations based on the findings above.</span>
+                    </div>
+                    <div id="ai-p2-running" style="display:none">
+                        <span class="spinner"></span>
+                        <span style="color:var(--disabled);margin-left:8px">Running attack planner…</span>
+                    </div>
+                    <div id="ai-p2-result" style="display:none">
+                        <strong style="font-size:9pt">Attack Plan</strong>
+                        <div id="ai-p2-markdown" style="font-size:9pt;line-height:1.6;margin-top:4px;overflow:auto;max-height:400px"></div>
+                    </div>
+                </div>
             </div>
             <!-- Right: historical comparison (hidden until user picks one) -->
             <div id="ai-right-compare" style="flex:1;min-width:0;overflow:auto;padding:8px;display:none">
@@ -419,11 +431,11 @@
             <option value="Running">Running</option>
             <option value="Finished">Finished</option>
             <option value="Crashed">Failed</option>
-            <option value="Waiting">Queued</option>
+            <option value="Waiting">Waiting</option>
         </select>
-        <div style="flex:1"></div>
         <button id="process-clear-finished-button" type="button">Hide Finished</button>
         <button id="process-clear-all-button" type="button">Hide All</button>
+        <div style="flex:1"></div>
     </div>
     <div style="display:flex;flex:1;min-height:0;overflow:hidden">
         <div class="table-wrap" id="proc-table-wrap" style="flex:1">
@@ -513,7 +525,7 @@
             <span id="fb-filter-display" style="font-size:9pt;color:var(--disabled,#808080)"></span>
             <div style="flex:1"></div>
             <input id="fb-filename" type="text" style="width:220px" placeholder="filename">
-            <button id="fb-select" type="button" style="font-weight:600">Select</button>
+            <button id="fb-select" type="button" style="font-weight:600">Open</button>
             <button id="fb-cancel" type="button">Cancel</button>
         </div>
     </div>
@@ -532,7 +544,7 @@
             <textarea id="add-hosts-targets" rows="3" style="flex:1" placeholder="192.168.1.0/24; 10.10.10.10-20"></textarea>
         </div>
         <p class="meta-note" style="text-align:right;margin-bottom:8px">Ex: 192.168.1.0/24; 10.10.10.10-20; 2001:db8::/64; bing.com</p>
-        <p id="add-hosts-validation" class="meta-note" style="color:#f44;display:none">Invalid input. Please try again!</p>
+        <p id="add-hosts-validation" class="meta-note" style="color:#f44;display:none;white-space:pre-wrap">Target is required.</p>
 
         <label class="checkbox" style="margin-bottom:4px"><input id="add-hosts-resolve" type="checkbox" checked> Resolve hostnames (DNS)</label>
         <label class="checkbox" style="margin-bottom:8px"><input id="add-hosts-ipv6" type="checkbox"> Enable IPv6 (-6)</label>

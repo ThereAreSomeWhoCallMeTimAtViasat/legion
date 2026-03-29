@@ -27,7 +27,11 @@ _CHARS_PER_TOKEN      = 4      # rough approximation
 
 def _read_vertex_config():
     """Read project_id, region, and model from ~/.claude/settings.json."""
-    settings_path = os.path.expanduser('~/.claude/settings.json')
+    sudo_user = os.environ.get('SUDO_USER')
+    if sudo_user:
+        settings_path = f'/home/{sudo_user}/.claude/settings.json'
+    else:
+        settings_path = os.path.expanduser('~/.claude/settings.json')
     try:
         with open(settings_path) as f:
             s = json.load(f)
@@ -44,6 +48,17 @@ def _read_vertex_config():
 def _get_client():
     from anthropic import AnthropicVertex
     proj, region, _ = _read_vertex_config()
+
+    # When running as root via sudo, ADC credentials live under the original
+    # user's home, not /root.  Point the Google auth library there explicitly.
+    if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
+        sudo_user = os.environ.get('SUDO_USER')
+        if sudo_user:
+            adc_path = f'/home/{sudo_user}/.config/gcloud/application_default_credentials.json'
+            if os.path.exists(adc_path):
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = adc_path
+                log.debug(f"[AI] Using ADC from {adc_path}")
+
     return AnthropicVertex(project_id=proj, region=region)
 
 
@@ -346,4 +361,166 @@ def run_analysis(logic, host_id):
         'history_id':      history_id,
         'project_analysis_id': project_analysis_id,
         'timestamp':       ts,
+    }
+
+
+def run_phase1(logic, host_id):
+    """Run Phase 1 (synthesizer) only and save the result to the project DB.
+    Phase 2 (attack planner) is left null — call run_phase2() separately."""
+    result = _assemble_host_data(logic, host_id)
+    if result is None:
+        raise ValueError(f"Host {host_id} not found in project DB")
+    (host_obj, host_ip, os_family, ports, cves, scripts,
+     note_text, processes, fingerprint) = result
+
+    rc = logic.activeProject.repositoryContainer
+    enriched_procs = []
+    for proc in processes:
+        pid = proc.get('id') or proc.get('pid')
+        output = ''
+        if pid:
+            try:
+                row = rc.processRepository.getProcessById(str(pid))
+                if row:
+                    output = row.get('output', '') or ''
+            except Exception:
+                pass
+        enriched_procs.append({**proc, 'output': output})
+
+    prompt_text = _build_phase1_prompt(
+        host_obj, host_ip, os_family, ports, cves, scripts,
+        note_text, enriched_procs)
+
+    _, model = _read_vertex_config()[1], _read_vertex_config()[2]
+    client = _get_client()
+
+    log.info(f"[AI] Phase 1 starting for host {host_ip} (~{len(prompt_text)} chars)")
+    p1_resp = client.messages.create(
+        model=model, max_tokens=8192,
+        system=_PHASE1_SYSTEM,
+        messages=[{'role': 'user', 'content': prompt_text}]
+    )
+    p1_text = p1_resp.content[0].text.strip()
+    tin, tout, _ = _actual_cost(p1_resp.usage)
+    cost = round(tin / 1_000_000 * _INPUT_COST_PER_MTOK +
+                 tout / 1_000_000 * _OUTPUT_COST_PER_MTOK, 4)
+
+    # Parse JSON (tolerant of markdown fences)
+    phase1_json_str = p1_text
+    if '```' in phase1_json_str:
+        import re as _re
+        m = _re.search(r'```(?:json)?\s*([\s\S]*?)```', phase1_json_str)
+        if m:
+            phase1_json_str = m.group(1).strip()
+    try:
+        phase1_findings = json.loads(phase1_json_str)
+    except json.JSONDecodeError:
+        phase1_findings = [{'source': 'raw', 'port': None, 'severity': 'info',
+                            'finding': p1_text[:500], 'evidence': ''}]
+    phase1_json = json.dumps(phase1_findings, indent=2)
+
+    # Persist Phase 1 to project DB (phase2_markdown=None until user requests it)
+    ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    session = rc.hostRepository.dbAdapter.session()
+    project_analysis_id = None
+    try:
+        from db.entities.ai_analysis import AiAnalysis
+        entry = AiAnalysis(
+            host_id=int(host_id), timestamp=ts,
+            phase1_json=phase1_json, phase2_markdown=None,
+            tokens_input=tin, tokens_output=tout, cost_usd=cost,
+            history_session_id=None,
+        )
+        session.add(entry)
+        session.commit()
+        project_analysis_id = entry.id
+    except Exception as e:
+        session.rollback()
+        log.error(f"[AI] Phase 1 project-DB save failed: {e}")
+    finally:
+        session.close()
+
+    log.info(f"[AI] Phase 1 complete — host={host_ip} cost=${cost:.4f} "
+             f"tokens={tin}+{tout}")
+    return {
+        'host_ip':             host_ip,
+        'fingerprint':         fingerprint,
+        'phase1_json':         phase1_json,
+        'phase2_markdown':     None,
+        'tokens_input':        tin,
+        'tokens_output':       tout,
+        'cost_usd':            cost,
+        'project_analysis_id': project_analysis_id,
+        'timestamp':           ts,
+    }
+
+
+def run_phase2(logic, host_id):
+    """Run Phase 2 (attack planner) using the most recent Phase 1 result
+    stored in the project DB for this host.  Updates the DB entry in place."""
+    rc = logic.activeProject.repositoryContainer
+
+    # Fetch most recent Phase 1 result
+    session = rc.hostRepository.dbAdapter.session()
+    try:
+        from db.entities.ai_analysis import AiAnalysis
+        entry = (session.query(AiAnalysis)
+                 .filter_by(host_id=int(host_id))
+                 .order_by(AiAnalysis.id.desc())
+                 .first())
+        if not entry or not entry.phase1_json:
+            raise ValueError("No Phase 1 result found — run Phase 1 first")
+        phase1_json = entry.phase1_json
+        entry_id    = entry.id
+        prev_tin    = entry.tokens_input  or 0
+        prev_tout   = entry.tokens_output or 0
+        prev_cost   = entry.cost_usd      or 0.0
+    finally:
+        session.close()
+
+    # Need host IP for the Phase 2 prompt
+    result = _assemble_host_data(logic, host_id)
+    if result is None:
+        raise ValueError(f"Host {host_id} not found in project DB")
+    host_ip = result[1]
+
+    _, model = _read_vertex_config()[1], _read_vertex_config()[2]
+    client = _get_client()
+
+    log.info(f"[AI] Phase 2 starting for host {host_ip}")
+    p2_resp = client.messages.create(
+        model=model, max_tokens=8192,
+        system=_PHASE2_SYSTEM,
+        messages=[{'role': 'user',
+                   'content': f"Host: {host_ip}\n\nFindings:\n{phase1_json}"}]
+    )
+    phase2_markdown = p2_resp.content[0].text.strip()
+    tin, tout, _ = _actual_cost(p2_resp.usage)
+    cost2 = round(tin / 1_000_000 * _INPUT_COST_PER_MTOK +
+                  tout / 1_000_000 * _OUTPUT_COST_PER_MTOK, 4)
+
+    # Update the project DB entry with Phase 2 results
+    session2 = rc.hostRepository.dbAdapter.session()
+    try:
+        from db.entities.ai_analysis import AiAnalysis
+        entry2 = session2.query(AiAnalysis).filter_by(id=entry_id).first()
+        if entry2:
+            entry2.phase2_markdown = phase2_markdown
+            entry2.tokens_input    = prev_tin  + tin
+            entry2.tokens_output   = prev_tout + tout
+            entry2.cost_usd        = round(prev_cost + cost2, 4)
+            session2.commit()
+    except Exception as e:
+        session2.rollback()
+        log.error(f"[AI] Phase 2 project-DB update failed: {e}")
+    finally:
+        session2.close()
+
+    log.info(f"[AI] Phase 2 complete — host={host_ip} cost=${cost2:.4f} "
+             f"tokens={tin}+{tout}")
+    return {
+        'phase2_markdown': phase2_markdown,
+        'tokens_input':    tin,
+        'tokens_output':   tout,
+        'cost_usd':        cost2,
     }

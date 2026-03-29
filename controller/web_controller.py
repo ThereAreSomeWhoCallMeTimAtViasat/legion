@@ -92,6 +92,61 @@ def _kill_all_descendants():
         log.error(f"[WebController] _kill_all_descendants error: {e}")
 
 
+def _kill_subtree(root_pid):
+    """Kill all descendants of root_pid (NOT root_pid itself).
+
+    Used by killProcess() to kill the actual tool (nmap, nikto, etc.) after
+    killing its parent shell.  shell=True means proc._popen.pid is /bin/sh;
+    the real tool is a child of that shell.  Killing only the shell leaves the
+    tool running as an orphan, holding the write end of the stdout pipe open —
+    which keeps _capture_output blocked on readline() indefinitely.
+
+    Scoped to root_pid's subtree rather than all of Legion's descendants so
+    that killing one process doesn't accidentally kill other tool processes.
+    """
+    try:
+        parent_map: dict = {}
+        for entry in os.listdir('/proc'):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f'/proc/{entry}/stat', 'r') as f:
+                    data = f.read()
+                comm_end = data.rfind(')')
+                if comm_end < 0:
+                    continue
+                rest = data[comm_end + 2:].split()
+                child_pid = int(entry)
+                ppid = int(rest[1])
+                parent_map.setdefault(ppid, []).append(child_pid)
+            except Exception:
+                pass
+
+        to_kill = []
+        queue: list = [root_pid]
+        seen = {root_pid}
+        while queue:
+            p = queue.pop(0)
+            for child in parent_map.get(p, []):
+                if child not in seen:
+                    seen.add(child)
+                    to_kill.append(child)
+                    queue.append(child)
+
+        killed = 0
+        for pid in to_kill:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+            except (ProcessLookupError, OSError):
+                pass
+
+        if killed:
+            log.info(f"[WebController] _kill_subtree({root_pid}): sent SIGKILL to {killed} child process(es)")
+    except Exception as e:
+        log.warning(f"[WebController] _kill_subtree({root_pid}) error: {e}")
+
+
 class WebProcessStub:
     """
     Qt-free stand-in for MyQProcess.
@@ -144,6 +199,7 @@ class WebController:
         self._pending_ports_stages = {}    # hostIp -> set of stage nums still running
         self._pending_stages_lock = threading.Lock()
         self._scan_generation = {}         # hostIp -> int; bumped each new scan so stale threads self-cancel
+        self._pending_scan_notes = {}      # hostIp -> note text deferred until host exists in DB
         self._state_changed = False
         self._matches = {}
         self._deleted_hosts = set()   # Qt6: screenshooter blacklist for deleted hosts
@@ -208,6 +264,8 @@ class WebController:
             log.debug(f"[WebController] Could not write session PID file: {_pe}")
         # Defensive startup: clean up any state left by an unclean previous shutdown
         self._startup_check()
+        # Restore keyword match state saved by the previous session
+        self.loadMatchState()
 
     def _startup_check(self):
         """Clean up state left by an unclean previous shutdown (SIGKILL, power loss, etc.).
@@ -454,6 +512,28 @@ class WebController:
             self.logic.activeProject.repositoryContainer.noteRepository.storeNotes(hostId, notes)
         except Exception as e:
             log.error(f"[WebController] saveProject error: {e}")
+
+    def _append_to_host_notes(self, host_arg, text):
+        """Append text to the notes of each host in host_arg (comma-separated IPs).
+        Skips silently if a host is not yet in the DB (e.g. first-time scan)."""
+        ips = [ip.strip() for ip in str(host_arg).split(',') if ip.strip()]
+        try:
+            repo = self.logic.activeProject.repositoryContainer
+            for ip in ips:
+                try:
+                    host = repo.hostRepository.getHostByIP(ip)
+                    if not host:
+                        log.debug(f"[WebController] _append_to_host_notes: {ip} not in DB yet — skipping")
+                        continue
+                    note = repo.noteRepository.getNoteByHostId(host.id)
+                    existing = (getattr(note, 'text', '') or '') if note else ''
+                    new_text = (existing.rstrip('\n') + '\n\n' + text).lstrip('\n')
+                    repo.noteRepository.storeNotes(host.id, new_text)
+                    log.debug(f"[WebController] Appended scan commands to notes for {ip}")
+                except Exception as _ne:
+                    log.warning(f"[WebController] Could not append notes for {ip}: {_ne}")
+        except Exception as e:
+            log.error(f"[WebController] _append_to_host_notes error: {e}")
 
     def saveProjectAs(self, filename, replace=0):
         """controller.py:390 — save project to file."""
@@ -751,9 +831,9 @@ class WebController:
 
     def saveRunningProcessOutputs(self):
         """controller.py:2305 — flush active process output to DB before save/shutdown.
-        Reads the .live_output temp file for each still-running process and writes
-        whatever has been captured so far to SQLite (preserve_status=True so the
-        process stays 'Running' — it's being killed anyway)."""
+        Reads the .live_output temp file for each still-running non-interactive process,
+        and reads the PTY buffer for interactive processes, then writes to SQLite
+        (preserve_status=True so status stays 'Running'/'Interactive')."""
         processRepo = self.logic.activeProject.repositoryContainer.processRepository
         saved = 0
         for proc in list(self._active_processes.values()):
@@ -762,21 +842,85 @@ class WebController:
                     live_path = getattr(proc, '_live_output_path', None)
                     content = ''
                     if live_path and os.path.isfile(live_path):
+                        # Non-interactive: read .live_output temp file
                         try:
                             with open(live_path, 'r', encoding='ISO-8859-1', errors='replace') as f:
                                 content = f.read()
                         except Exception as read_err:
                             log.warning(f"[WebController] Could not read live output for {proc.id}: {read_err}")
+                    elif getattr(proc, 'isInteractive', False):
+                        # Interactive PTY: read accumulated buffer from _TerminalSession._buf
+                        try:
+                            from app.web.routes import _terminal_sessions, _terminal_process_sessions
+                            sid = _terminal_process_sessions.get(int(proc.id))
+                            if sid:
+                                session = _terminal_sessions.get(sid)
+                                if session:
+                                    content = bytes(session._buf).decode('ISO-8859-1', errors='replace')
+                        except Exception as _ie:
+                            log.warning(f"[WebController] Could not read PTY buffer for {proc.id}: {_ie}")
                     if content:
                         processRepo.storeProcessOutput(proc.id, content, preserve_status=True)
-                        log.info(f"[WebController] Flushed {len(content)} bytes for running process {proc.id}")
+                        log.info(f"[WebController] Flushed {len(content)} bytes for process {proc.id}")
                     else:
-                        log.info(f"[WebController] No live output to flush for process {proc.id}")
+                        log.info(f"[WebController] No output to flush for process {proc.id}")
                     saved += 1
             except Exception as e:
                 log.error(f"[WebController] saveRunningProcessOutputs error: {e}")
         if saved:
             log.info(f"[WebController] Flushed output for {saved} running processes")
+        self.saveMatchState()
+
+    def saveMatchState(self):
+        """Persist _matches dict to process_matches table so it survives save/open."""
+        if not hasattr(self, '_matches'):
+            return
+        try:
+            from sqlalchemy import text as _t
+            db = self.logic.activeProject.database
+            session = db.session()
+            try:
+                session.execute(_t("DELETE FROM process_matches"))
+                for key, match_set in self._matches.items():
+                    parts = key.split(':', 1)
+                    hostIp = parts[0]
+                    tabTitle = parts[1] if len(parts) > 1 else ''
+                    for matchStr in match_set:
+                        session.execute(_t(
+                            "INSERT INTO process_matches (hostIp, tabTitle, matchStr) "
+                            "VALUES (:h, :t, :m)"
+                        ), {'h': hostIp, 't': tabTitle, 'm': str(matchStr)})
+                session.commit()
+                total = sum(len(v) for v in self._matches.values())
+                log.info(f"[WebController] Saved {total} match entries to DB")
+            finally:
+                session.close()
+        except Exception as e:
+            log.error(f"[WebController] saveMatchState error: {e}")
+
+    def loadMatchState(self):
+        """Restore _matches dict from process_matches table after project open."""
+        self._matches = {}
+        try:
+            from sqlalchemy import text as _t
+            db = self.logic.activeProject.database
+            session = db.session()
+            try:
+                rows = session.execute(
+                    _t("SELECT hostIp, tabTitle, matchStr FROM process_matches")
+                ).fetchall()
+                for row in rows:
+                    hostIp, tabTitle, matchStr = str(row[0]), str(row[1]), str(row[2])
+                    key = f"{hostIp}:{tabTitle}"
+                    if key not in self._matches:
+                        self._matches[key] = set()
+                    self._matches[key].add(matchStr)
+                if rows:
+                    log.info(f"[WebController] Loaded {len(rows)} match entries from DB")
+            finally:
+                session.close()
+        except Exception as e:
+            log.debug(f"[WebController] loadMatchState (no saved matches or old DB): {e}")
 
     def killRunningProcesses(self):
         """controller.py:1700 — kill all active subprocesses.
@@ -1454,6 +1598,36 @@ class WebController:
             import threading as _thr
             log.info(f"[Capture:{dbId}] STARTED reading output for {toolName} ({tabTitle}) thread={_thr.current_thread().name}")
 
+            # ── Process timeout watchdog ──────────────────────────────────────────
+            # Kill any non-nmap process that runs longer than process-timeout seconds.
+            # nmap is excluded because staged scans can legitimately run for hours.
+            # Set to 0 in legion.conf to disable.
+            _timeout_secs = int(getattr(self.settings, 'general_process_timeout', '300') or '300')
+            _is_nmap = 'nmap' in str(toolName).lower()
+            _timed_out = _thr.Event()
+
+            if _timeout_secs > 0 and not _is_nmap:
+                def _timeout_watchdog():
+                    time.sleep(_timeout_secs)
+                    if proc._popen and proc._popen.poll() is None:
+                        _timed_out.set()
+                        log.warning(f"[Capture:{dbId}] {toolName} exceeded {_timeout_secs}s timeout — killing")
+                        try:
+                            processRepo.storeProcessKillStatus(dbId)
+                        except Exception:
+                            pass
+                        try:
+                            _kill_subtree(proc._popen.pid)
+                        except Exception:
+                            pass
+                        try:
+                            proc._popen.kill()
+                        except Exception:
+                            pass
+                _tw = _thr.Thread(target=_timeout_watchdog, daemon=True,
+                                  name=f"timeout-{dbId}-{toolName}")
+                _tw.start()
+
             for line in iter(proc._popen.stdout.readline, b''):
                 now = time.monotonic()
                 gap = now - last_line_time
@@ -1499,6 +1673,16 @@ class WebController:
                     except Exception:
                         pass
 
+            # Append timeout notice to output if the watchdog killed this process
+            if _timed_out.is_set():
+                _tmsg = f'\n\n[Legion] Process killed: exceeded {_timeout_secs}s timeout\n'
+                output_parts.append(_tmsg)
+                if live_file:
+                    try:
+                        live_file.write(_tmsg)
+                    except Exception:
+                        pass
+
             # Process finished — close temp file and write final output to SQLite once
             if live_file:
                 try:
@@ -1513,7 +1697,16 @@ class WebController:
             log.info(f"[Capture:{dbId}] FINISHED reading. lines={line_count} writing {sum(len(p) for p in output_parts)} bytes to SQLite...")
             _write_t0 = time.monotonic()
             combined = ''.join(output_parts)
-            processRepo.storeProcessOutput(dbId, combined, preserve_status=False)
+            # If the timeout watchdog (or an explicit kill) already set status=Killed
+            # in its own thread/session, storeProcessOutput must NOT overwrite it to
+            # Finished.  storeProcessOutput reads proc.status from the current thread's
+            # SQLAlchemy session identity-map cache which may still show 'Running'
+            # (the watchdog committed in a different session).  Use isKilledProcess()
+            # which opens a fresh session, sees the committed value, and returns the
+            # definitive answer.  preserve_status=True skips the status→Finished write.
+            _already_killed = processRepo.isKilledProcess(str(dbId))
+            processRepo.storeProcessOutput(dbId, combined,
+                                           preserve_status=_already_killed)
             log.info(f"[Capture:{dbId}] SQLite write done in {int((time.monotonic()-_write_t0)*1000)}ms")
 
             # Store elapsed time in seconds (controller.py:handleProcStop)
@@ -1579,6 +1772,13 @@ class WebController:
                         run_actions = getattr(proc, '_run_actions', True)
                         if run_actions:
                             self.scheduler(isNmapImport=False)
+                        # Write deferred scan note — host is now in DB after import
+                        _deferred = self._pending_scan_notes.pop(hostIp, None)
+                        if _deferred:
+                            try:
+                                self._append_to_host_notes(hostIp, _deferred)
+                            except Exception as _nn:
+                                log.warning(f"[WebController] Could not write deferred scan note for {hostIp}: {_nn}")
                     except Exception as e:
                         log.error(f"[WebController] Nmap XML import failed: {e}")
                 else:
@@ -1616,16 +1816,21 @@ class WebController:
         proc = self._active_processes.get(int(process_id)) if hasattr(self, '_active_processes') else None
 
         if proc and proc._popen and proc._popen.poll() is None:
+            shell_pid = proc._popen.pid
             try:
-                os.kill(proc._popen.pid, signal.SIGTERM)
-                time.sleep(0.5)
+                os.kill(shell_pid, signal.SIGTERM)
+                time.sleep(0.1)
                 if proc._popen.poll() is None:
-                    os.kill(proc._popen.pid, signal.SIGKILL)
-                log.info(f"[WebController] Killed process {process_id} (pid {proc._popen.pid})")
+                    os.kill(shell_pid, signal.SIGKILL)
+                log.info(f"[WebController] Killed process {process_id} (pid {shell_pid})")
             except ProcessLookupError:
                 pass
             except Exception as e:
                 log.error(f"[WebController] Error killing process: {e}")
+            # Kill grandchildren (the actual tool: nmap, nikto, etc.) so that
+            # _capture_output's readline() loop unblocks immediately instead of
+            # waiting for the orphaned tool to finish on its own (can be minutes).
+            _kill_subtree(shell_pid)
 
         # Clean up terminal session if this was an Interactive process
         try:
@@ -1640,6 +1845,16 @@ class WebController:
             log.error(f"[WebController] Error cleaning up terminal session: {e}")
 
         processRepo.storeProcessKillStatus(str(process_id))
+
+        # Immediately check the queue — a slot has freed up.
+        # checkProcessQueue() uses p._popen.poll() is None to count running
+        # processes, so the now-dead process is not counted as a running slot.
+        # Without this call, the queue only advances when _capture_output's
+        # readline() finally unblocks (which required the tool to finish naturally).
+        try:
+            self.checkProcessQueue()
+        except Exception:
+            pass
 
     # ──────────────────────────────────────────────────────────────
     # GROUP B: Process execution methods
@@ -1662,20 +1877,35 @@ class WebController:
 
         nmap_bin = getattr(self.settings, 'tools_path_nmap', '').strip() or 'nmap'
 
+        def _store_scan_note(label, cmd):
+            """Store a dated scan note in _pending_scan_notes[target].
+            Written to the host's Notes tab after the XML import guarantees the
+            host exists in the DB — see _capture_output nmap-import block."""
+            try:
+                from datetime import datetime as _dt
+                _ts = _dt.now().strftime('%Y-%m-%d %H:%M')
+                _cmd_clean = cmd.replace(f' -oA {outputfile}', '')
+                self._pending_scan_notes[target] = f'=== Scan {_ts} ===\n  {label}: {_cmd_clean}'
+            except Exception as _ne:
+                log.warning(f"[WebController] Could not prepare scan note: {_ne}")
+
         if scanMode == 'Easy':
             if runStagedNmap:
                 return self.runStagedNmap(target, discovery=runHostDiscovery, enable_ipv6=enableIPv6)
             elif runHostDiscovery:
                 command = f"{nmap_bin} -sV -O --version-light -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
+                _store_scan_note('Easy (discovery)', command)
                 return self.runCommand(command=command, name='nmap', tabTitle='nmap (discovery)',
                                        hostIp=target, outputfile=outputfile)
             else:
                 command = f"{nmap_bin} -sL -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
+                _store_scan_note('Easy (list)', command)
                 return self.runCommand(command=command, name='nmap', tabTitle='nmap (list)',
                                        hostIp=target, outputfile=outputfile)
         elif scanMode == 'Hard':
             opts = ' '.join(nmapOptions or [])
             command = f"{nmap_bin} {opts} -T{nmapSpeed} {target} --stats-every 5s -oA {outputfile}"
+            _store_scan_note('Hard (custom)', command)
             return self.runCommand(command=command, name='nmap', tabTitle=f'nmap (custom {opts})',
                                    hostIp=target, outputfile=outputfile)
 
@@ -1964,6 +2194,56 @@ class WebController:
             log.info(f"[WebController] No stage data configured for {host_arg}")
             return
 
+        # Record scan commands in host notes so they can be reproduced later.
+        # Build each PORTS command using the same logic as _launch_ports_stage
+        # but without the timestamped -oA path (user would supply their own).
+        try:
+            from datetime import datetime as _dt
+            _ts = _dt.now().strftime('%Y-%m-%d %H:%M')
+            _lines = [f'=== Scan {_ts} ===']
+            for (_s, _vals) in ports_stages:
+                _tok = [nmap_bin]
+                if enable_ipv6:
+                    _tok.append('-6')
+                if discovery:
+                    _tok.extend(['-T4', '-sV', '-sSU', '-O'])
+                else:
+                    _tok.extend(['-Pn', '-sS', '-O'])
+                _pv = _vals.strip()
+                if _pv:
+                    _tok.extend(['-p', _pv])
+                _tok.extend(['-vvvv', host_arg, '--stats-every', '5s'])
+                _lines.append(f'  S{_s} (PORTS): ' + ' '.join(t for t in _tok if t))
+            if nse_stage:
+                _ns, _nv = nse_stage
+                _ntok = [nmap_bin]
+                if enable_ipv6:
+                    _ntok.append('-6')
+                _ntok.extend(['-Pn', '-sV', f'--script={_nv.strip()}', '-vvvv',
+                               '--min-parallelism', '20', '--max-parallelism', '50',
+                               '--script-timeout', '60s',
+                               host_arg, '--stats-every', '5s'])
+                _lines.append(f'  S{_ns} (NSE template, -p from discovered): '
+                               + ' '.join(t for t in _ntok if t))
+            _note_text = '\n'.join(_lines)
+            # On a first-time scan the host doesn't exist in the DB yet — writing
+            # immediately would silently skip.  Check first; if any target host is
+            # absent, defer the write to the first _stage_completed callback where
+            # the XML import guarantees the host is present.  On re-scans every
+            # host is already in the DB so we write immediately as before.
+            try:
+                _ips = [ip.strip() for ip in str(host_arg).split(',') if ip.strip()]
+                _repo = self.logic.activeProject.repositoryContainer
+                _all_in_db = all(_repo.hostRepository.getHostByIP(ip) for ip in _ips)
+            except Exception:
+                _all_in_db = False
+            if _all_in_db:
+                self._append_to_host_notes(host_arg, _note_text)
+            else:
+                self._pending_scan_notes[host_arg] = _note_text
+        except Exception as _ne:
+            log.warning(f"[WebController] Could not record scan commands in notes: {_ne}")
+
         if ports_stages:
             # Bump generation BEFORE registering pending stages so any still-running
             # _wait_and_import threads from a previous scan on the same host see a
@@ -2104,7 +2384,16 @@ class WebController:
             pending.discard(stage)
             self._pending_ports_stages[host_arg] = pending
             all_done = len(pending) == 0
+            # Pop deferred note inside the lock so only the first completing stage
+            # writes it (the other parallel stages get None and skip the write).
+            _deferred_note = self._pending_scan_notes.pop(host_arg, None)
         log.info(f"[WebController] Stage {stage} done for {host_arg}, remaining={pending}")
+        # Write scan commands for first-time scans — host is now in DB after import.
+        if _deferred_note:
+            try:
+                self._append_to_host_notes(host_arg, _deferred_note)
+            except Exception as _ne:
+                log.warning(f"[WebController] Could not write deferred scan notes for {host_arg}: {_ne}")
         if all_done and nse_stage:
             nse_stage_num, nse_values = nse_stage
             self._launch_nse_stage(host_arg, nse_stage_num, nse_values,
@@ -2171,18 +2460,29 @@ class WebController:
         tokens = [nmap_bin]
         if enable_ipv6:
             tokens.append('-6')
+        # -Pn: skip host discovery — the PORTS stages already confirmed the host
+        # is up (they found open ports). Without -Pn, nmap re-pings the host and
+        # if ICMP is blocked it marks it "down" and runs no scripts at all.
         # --min-parallelism: run multiple NSE script instances concurrently so
         # scripts like vulners (which make external HTTP calls) don't block each
         # other sequentially. --script-timeout caps any single script that hangs.
-        tokens.extend(['-sV', f'--script={nse_values.strip()}', '-vvvv',
+        tokens.extend(['-Pn', '-sV', f'--script={nse_values.strip()}', '-vvvv',
                        '--min-parallelism', '20', '--max-parallelism', '50',
-                       '--script-timeout', '30s'])
+                       '--script-timeout', '60s'])
         if port_list:
             tokens.extend(['-p', port_list])
         tokens.extend([host_arg, '--stats-every', '5s', '-oA', outputfile])
 
         command = ' '.join(t for t in tokens if t)
         log.info(f"[WebController] NSE command: {command}")
+
+        # Append the actual NSE command (real -p arg now known) to host notes
+        try:
+            import re as _re
+            _cmd_clean = _re.sub(r'\s+-oA\s+\S+', '', command)
+            self._append_to_host_notes(host_arg, f'  S{stage} (NSE actual):   {_cmd_clean}')
+        except Exception as _nne:
+            log.warning(f"[WebController] Could not append NSE command to notes: {_nne}")
 
         script_name = nse_values.strip().split(',')[0]  # e.g. 'vulners'
         result = self.runCommand(command=command, name='nmap', tabTitle=f'nmap ({script_name})',

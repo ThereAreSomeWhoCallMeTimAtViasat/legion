@@ -119,6 +119,7 @@ var L = {
     _pollCount: 0,
     _hostSort: {col: 'ip', dir: 1},   /* Qt6: sort(3, Descending) = by Host/IP */
     _procSort: {col: 'id', dir: -1},  /* Qt6: sort(15, Descending) = newest first */
+    _toolSort: {dir: 1},              /* 1 = A→Z, -1 = Z→A */
     /* Qt6: Filters.apply(up,down,checked,portopen,portfiltered,portclosed,tcp,udp,keywords) */
     _filters: {up:true, down:false, checked:true, portopen:true, portfiltered:false,
                portclosed:false, tcp:true, udp:true, keywords:[]},
@@ -483,9 +484,11 @@ function initSplitter(splitterId, target, prop, min, max) {
 
     sp.addEventListener('mousedown', function(e) {
         dragging = true; startPos = isH ? e.clientY : e.clientX;
-        /* Pin flex so explicit width/height fully controls the element size */
-        if (!isH) { el.style.flexGrow = '0'; el.style.flexShrink = '0'; }
         startSize = isH ? el.offsetHeight : el.offsetWidth;
+        /* Pin flex so explicit width/height fully controls the element size.
+           Also set flex-basis to the current pixel size — without this, a CSS
+           class with flex-basis:0% collapses the element to 0 on mousedown. */
+        if (!isH) { el.style.flexGrow = '0'; el.style.flexShrink = '0'; el.style.flexBasis = startSize + 'px'; }
         sp.classList.add('dragging');
         document.body.style.cursor = isH ? 'ns-resize' : 'ew-resize';
         document.body.style.userSelect = 'none';
@@ -494,8 +497,9 @@ function initSplitter(splitterId, target, prop, min, max) {
     document.addEventListener('mousemove', function(e) {
         if (!dragging) return;
         var delta = (isH ? e.clientY : e.clientX) - startPos;
-        var newSize = Math.max(min||80, Math.min(max||800, startSize + (isH ? delta : delta)));
+        var newSize = Math.max(min||80, Math.min(max||800, startSize + (isH ? -delta : delta)));
         el.style[prop] = newSize + 'px';
+        if (!isH) el.style.flexBasis = newSize + 'px';
     });
     document.addEventListener('mouseup', function() {
         if (!dragging) return;
@@ -672,8 +676,21 @@ function renderTools(tools) {
     L.tools = tools || [];
     var body = $('tools-body');
     if (!body) return;
+
+    /* Sort by label A→Z or Z→A */
+    var dir = L._toolSort.dir;
+    var sorted = L.tools.slice().sort(function(a, b) {
+        var av = (a.label || a.tool_id || '').toLowerCase();
+        var bv = (b.label || b.tool_id || '').toLowerCase();
+        return av < bv ? -dir : av > bv ? dir : 0;
+    });
+
+    /* Update header arrow */
+    var toolsTh = $('tools-table') && $('tools-table').querySelector('th[data-sort]');
+    if (toolsTh) toolsTh.textContent = 'Tool ' + (dir === 1 ? '▲' : '▼');
+
     body.innerHTML = '';
-    L.tools.forEach(function(t) {
+    sorted.forEach(function(t) {
         var tr = document.createElement('tr');
         tr.dataset.toolId = t.tool_id || '';
         tr.style.cursor = 'pointer';
@@ -1148,6 +1165,11 @@ var _matchNavState = {};
    user's scroll position is honoured on every 1.5 s poll cycle. */
 var _procScrollPos = {};
 
+/* pid (string) to activate in renderDynamicToolTabs after a cross-host goto-tab.
+   Set by the goto-tab handler before clicking the new host row; cleared by
+   renderDynamicToolTabs once the tab button exists and is activated. */
+var _pendingGotoTab = null;
+
 /* True while the user has text selected inside #dynamic-tabs-container
    (set on mousedown, maintained by selectionchange, cleared when selection
    goes away).  Both renderDynamicToolTabs and loadProcessOutput check this
@@ -1213,8 +1235,16 @@ function renderDynamicToolTabs(hostIp) {
         container.appendChild(panel);
     });
 
-    /* Restore the previously active dynamic tab so the user's view is preserved */
-    if (prevActiveTabId) {
+    /* Restore the previously active dynamic tab so the user's view is preserved.
+       If a goto-tab request is pending (cross-host navigation), it takes priority. */
+    if (_pendingGotoTab) {
+        var gotoBtn = bar.querySelector('[data-tab="dyntab-' + _pendingGotoTab + '"]');
+        _pendingGotoTab = null;
+        if (gotoBtn) {
+            gotoBtn.click();
+            gotoBtn.scrollIntoView({behavior:'smooth', block:'nearest', inline:'nearest'});
+        }
+    } else if (prevActiveTabId) {
         var restoredBtn = bar.querySelector('[data-tab="' + prevActiveTabId + '"]');
         if (restoredBtn) {
             restoredBtn.click();  /* re-activates tab and reloads its output */
@@ -1480,6 +1510,15 @@ function initInteractions() {
     _wireSort('cves-table',     _cvesSort,     _drawCves);
     _wireSort('os-list-table',  _osSort,       renderOsList);
     _wireSort('os-hosts-table', _osHostsSort,  _drawOsHosts);
+
+    /* ── Tools table header click → sort ── */
+    var toolsTable = $('tools-table');
+    if (toolsTable) toolsTable.querySelector('thead').addEventListener('click', function(e) {
+        var th = e.target.closest('th[data-sort]');
+        if (!th) return;
+        L._toolSort.dir *= -1;
+        renderTools(L.tools);
+    });
 
     /* ── Service click (left) (view.py:serviceNamesTableClick) ── */
     $('services-body').addEventListener('click', function(e) {
@@ -1860,8 +1899,13 @@ function updateToolHosts(toolId) {
         /* Show tabTitle in port column if port is empty (e.g. staged nmap shows stage info) */
         var portCol = p.port || p.tabTitle || '';
         var statusClass = p.status === 'Running' ? 'proc-running' : p.status === 'Finished' ? '' : 'proc-crashed';
-        tr.innerHTML = '<td>' + esc(p.hostIp||'') + '</td>' +
-                       '<td>' + esc(portCol) + '</td>' +
+        var matchStyle = p.has_match ? ' style="color:#f44;font-weight:700"' : '';
+        var matchStar  = p.has_match ? '<span title="Match found">★ </span>' : '';
+        var fullHost   = p.hostIp || '';
+        var dispHost   = fullHost.length > 18 ? fullHost.slice(0, 18) + '…' : fullHost;
+        var hostTitle  = fullHost.length > 18 ? ' title="' + esc(fullHost) + '"' : '';
+        tr.innerHTML = '<td' + matchStyle + hostTitle + '>' + matchStar + esc(dispHost) + '</td>' +
+                       '<td' + matchStyle + '>' + esc(portCol) + '</td>' +
                        '<td class="' + statusClass + '">' + esc(p.status||'') + '</td>';
         body.appendChild(tr);
     });
@@ -2167,8 +2211,22 @@ document.addEventListener('DOMContentLoaded', function() {
             nmap_options: nmapOptions,
             enable_ipv6: ipv6
         }).then(function(data) {
-            setText('add-hosts-status', 'Scan started!');
             addStart.disabled = false;
+            if (data && data.error) {
+                /* Server rejected the input — show the error in the dialog,
+                   keep the dialog open so the user can fix the target. */
+                var msg = data.error;
+                if (targets.indexOf(',') !== -1) {
+                    msg += '\n\nComma is only valid for nmap octet shorthand (e.g. 192.168.1.10,11). To scan multiple separate hosts, enter one per line.';
+                }
+                var ve = $('add-hosts-validation');
+                if (ve) { ve.textContent = msg; ve.style.display = ''; }
+                setText('add-hosts-status', '');
+                return;   /* keep dialog open */
+            }
+            var ve2 = $('add-hosts-validation');
+            if (ve2) ve2.style.display = 'none';
+            setText('add-hosts-status', 'Scan started!');
             setTimeout(function() { closeModal('add-hosts-modal'); }, 1500);
             pollSnapshot();
         }).catch(function(err) {
@@ -2564,11 +2622,19 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Process management buttons ── */
     var clearFinished = $('process-clear-finished-button');
     if (clearFinished) clearFinished.addEventListener('click', function() {
-        postJson('/api/processes/clear', { reset_all: false }).then(function() { pollSnapshot(); });
+        var hiding = this.dataset.hidden !== '1';
+        var url = hiding ? '/api/processes/clear' : '/api/processes/restore';
+        postJson(url, { reset_all: false }).then(function() { pollSnapshot(); });
+        this.textContent = hiding ? 'Unhide Finished' : 'Hide Finished';
+        this.dataset.hidden = hiding ? '1' : '0';
     });
     var clearAll = $('process-clear-all-button');
     if (clearAll) clearAll.addEventListener('click', function() {
-        postJson('/api/processes/clear', { reset_all: true }).then(function() { pollSnapshot(); });
+        var hiding = this.dataset.hidden !== '1';
+        var url = hiding ? '/api/processes/clear' : '/api/processes/restore';
+        postJson(url, { reset_all: true }).then(function() { pollSnapshot(); });
+        this.textContent = hiding ? 'Unhide All' : 'Hide All';
+        this.dataset.hidden = hiding ? '1' : '0';
     });
 
     /* ── Notes save button ── */
@@ -2634,6 +2700,7 @@ document.addEventListener('DOMContentLoaded', function() {
             fb.mode = mode || 'open';
             fb.filter = filter || '';
             setText('fb-title', title || (mode === 'save' ? 'Save File' : 'Open File'));
+            setText('fb-select', mode === 'save' ? 'Save' : 'Open');
             $('fb-filter-display').textContent = filter ? 'Filter: *' + filter : 'All files';
             var fnInput = $('fb-filename');
             if (fnInput) {
@@ -3084,9 +3151,15 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        /* Fallback: re-read getSelection() in case capture phase didn't save
-           (e.g. button click rather than keyboard shortcut). */
-        if (!text && _termState.xterm && typeof _termState.xterm.getSelection === 'function') {
+        /* Fallback: re-read xterm getSelection() in case capture phase didn't save
+           (e.g. button click rather than keyboard shortcut).
+           ONLY use xterm selection if the user's most recent mousedown was inside
+           an xterm area (_lastNonXtermSelSource === null).  If the user last clicked
+           in a DOM output panel, xterm may still hold a stale internal selection from
+           an earlier interaction — using it here would silently override the fresher
+           DOM selection the user just made. */
+        if (!text && !_lastNonXtermSelSource &&
+                _termState.xterm && typeof _termState.xterm.getSelection === 'function') {
             var xtSel = _termState.xterm.getSelection();
             if (xtSel) {
                 text = xtSel;
@@ -3096,7 +3169,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 sourceEl = $('terminal-output');
             }
         }
-        if (!text && _dynTermState.xterm && typeof _dynTermState.xterm.getSelection === 'function') {
+        if (!text && !_lastNonXtermSelSource &&
+                _dynTermState.xterm && typeof _dynTermState.xterm.getSelection === 'function') {
             var dynSel = _dynTermState.xterm.getSelection();
             if (dynSel) {
                 text = dynSel;
@@ -3207,15 +3281,46 @@ document.addEventListener('DOMContentLoaded', function() {
 
         /* Build formatted block: orange header + selection + spacing */
         var header = '=== Selection from ' + title + ' ===';
+
+        /* Determine the correct target host.  For the lower panel (plain-output)
+           the displayed process may belong to a different host than the one
+           currently selected in the host list — save to the process's own host. */
+        var _targetHostId = L.selectedHostId;
+        if (_lastNonXtermSelSource === 'plain-output' && L.selectedProcessId) {
+            var _selProc = L.processes.find(function(p) {
+                return parseInt(p.id) === L.selectedProcessId;
+            });
+            if (_selProc && _selProc.hostIp) {
+                var _selHost = L.hosts.find(function(h) { return h.ip === _selProc.hostIp; });
+                if (_selHost && _selHost.id) _targetHostId = _selHost.id;
+            }
+        }
+
         var notesEl = $('notes-text');
-        if (notesEl) {
+        if (!notesEl) return;
+
+        if (_targetHostId === L.selectedHostId) {
+            /* Same host — update the visible textarea and display in place */
             var existing = notesEl.value;
             var newText = existing + (existing ? '\n' : '') + header + '\n' + text + '\n\n';
             notesEl.value = newText;
             _showNotesDisplay(newText);
-            /* Save to DB and mark Notes tab unread — stay on current tab */
-            postJson('/api/workspace/hosts/' + L.selectedHostId + '/note', { note: newText });
+            postJson('/api/workspace/hosts/' + _targetHostId + '/note', { note: newText });
             markTabUnread('notes-right');
+        } else {
+            /* Different host — fetch that host's current notes, append, save.
+               Don't update the current textarea (it belongs to the selected host).
+               Mark the other host's Notes tab unread so the orange dot appears
+               when the user navigates to it. */
+            fetchJson('/api/workspace/hosts/' + _targetHostId).then(function(d) {
+                var existingOther = d.note || '';
+                var newTextOther = existingOther + (existingOther ? '\n' : '') + header + '\n' + text + '\n\n';
+                postJson('/api/workspace/hosts/' + _targetHostId + '/note', { note: newTextOther });
+                /* Mark Notes tab unread for the other host so the indicator is
+                   visible when the user next clicks that host row */
+                L._hostUnreadTabs[_targetHostId] = L._hostUnreadTabs[_targetHostId] || {};
+                L._hostUnreadTabs[_targetHostId]['notes-right'] = true;
+            }).catch(function() {});
         }
     }
 
@@ -3331,7 +3436,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (old) old.remove();
         var menu = document.createElement('div');
         menu.id = 'ctx-menu';
-        menu.style.cssText = 'position:fixed;left:'+x+'px;top:'+y+'px;z-index:300;background:var(--midlight);border:1px solid var(--border);box-shadow:2px 4px 8px rgba(0,0,0,.5);min-width:180px;padding:2px 0;';
+        /* Start hidden so we can measure before showing */
+        menu.style.cssText = 'position:fixed;z-index:300;background:var(--midlight);border:1px solid var(--border);box-shadow:2px 4px 8px rgba(0,0,0,.5);min-width:180px;padding:2px 0;visibility:hidden;max-height:calc(100vh - 16px);overflow-y:auto;';
         items.forEach(function(item) {
             if (item.separator) {
                 var sep = document.createElement('div');
@@ -3343,17 +3449,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 var btn = document.createElement('button');
                 btn.textContent = item.label + ' ▸';
                 btn.style.cssText = 'display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);font:inherit;padding:4px 12px;cursor:pointer;';
-                btn.addEventListener('mouseenter', function() {
-                    var subMenu = sub.querySelector('.ctx-sub');
-                    if (subMenu) subMenu.style.display = 'block';
-                });
-                sub.addEventListener('mouseleave', function() {
-                    var subMenu = sub.querySelector('.ctx-sub');
-                    if (subMenu) subMenu.style.display = 'none';
-                });
                 var subDiv = document.createElement('div');
                 subDiv.className = 'ctx-sub';
                 subDiv.style.cssText = 'display:none;position:absolute;left:100%;top:0;background:var(--midlight);border:1px solid var(--border);min-width:180px;box-shadow:2px 4px 8px rgba(0,0,0,.5);';
+                btn.addEventListener('mouseenter', function() {
+                    subDiv.style.display = 'block';
+                    /* Flip submenu left if it would overflow right edge */
+                    var r = subDiv.getBoundingClientRect();
+                    subDiv.style.left = (r.right > window.innerWidth) ? 'auto' : '100%';
+                    subDiv.style.right = (r.right > window.innerWidth) ? '100%' : 'auto';
+                    /* Flip submenu up if it would overflow bottom edge */
+                    subDiv.style.top = (r.bottom > window.innerHeight) ? 'auto' : '0';
+                    subDiv.style.bottom = (r.bottom > window.innerHeight) ? '0' : 'auto';
+                });
+                sub.addEventListener('mouseleave', function() {
+                    subDiv.style.display = 'none';
+                });
                 item.submenu.forEach(function(si) {
                     var sbtn = document.createElement('button');
                     sbtn.textContent = si.label;
@@ -3377,6 +3488,14 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
         document.body.appendChild(menu);
+        /* Clamp position so menu stays within viewport */
+        var mw = menu.offsetWidth, mh = menu.offsetHeight;
+        var vw = window.innerWidth,  vh = window.innerHeight;
+        var left = (x + mw > vw) ? Math.max(0, vw - mw) : x;
+        var top  = (y + mh > vh) ? Math.max(0, vh - mh) : y;
+        menu.style.left = left + 'px';
+        menu.style.top  = top  + 'px';
+        menu.style.visibility = '';
         document.addEventListener('click', function rm() { menu.remove(); document.removeEventListener('click', rm); }, {once: true});
     }
 
@@ -3484,10 +3603,45 @@ document.addEventListener('DOMContentLoaded', function() {
                 } else if (action.action === 'retry') {
                     postJson('/api/processes/' + pid + '/retry', {}).then(function() { pollSnapshot(); });
                 } else if (action.action === 'clear') {
-                    postJson('/api/processes/' + pid + '/close', {}).then(function() { pollSnapshot(); });
+                    postJson('/api/processes/' + pid + '/close', {}).then(function() {
+                        if (String(L.selectedProcessId) === String(pid)) {
+                            var po = $('plain-output');
+                            if (po) po.textContent = '';
+                            L.selectedProcessId = null;
+                        }
+                        pollSnapshot();
+                    });
                 } else if (action.action === 'goto-tab') {
-                    var tabBtn = $('right-tab-bar').querySelector('[data-tab="dyntab-' + pid + '"]');
-                    if (tabBtn) tabBtn.click();
+                    var gotoProc = L.processes.find(function(p) { return String(p.id) === String(pid); });
+                    var gotoHostIp = gotoProc ? gotoProc.hostIp : null;
+
+                    function activateDynTab() {
+                        /* Ensure right-panel tabs are visible (not tools-display) */
+                        $('right-tabs').style.display = '';
+                        $('tools-display').style.display = 'none';
+                        var tabBtn = $('right-tab-bar').querySelector('[data-tab="dyntab-' + pid + '"]');
+                        if (tabBtn) {
+                            tabBtn.click();
+                            tabBtn.scrollIntoView({behavior:'smooth', block:'nearest', inline:'nearest'});
+                        }
+                    }
+
+                    if (gotoHostIp && gotoHostIp !== L.selectedHostIp) {
+                        /* Different host — select it first; renderDynamicToolTabs will
+                           pick up _pendingGotoTab and activate the tab after it renders. */
+                        var gotoHost = L.hosts.find(function(h) { return h.ip === gotoHostIp; });
+                        var gotoRow = gotoHost
+                            ? $('hosts-body').querySelector('tr[data-host-id="' + gotoHost.id + '"]')
+                            : null;
+                        if (gotoRow) {
+                            _pendingGotoTab = String(pid);
+                            gotoRow.click();
+                        } else {
+                            activateDynTab();  /* fallback: host row not in DOM */
+                        }
+                    } else {
+                        activateDynTab();
+                    }
                 }
             });
         });
@@ -3909,7 +4063,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (lfinc) lfinc.addEventListener('click', function() { changeFontSize(+1); });
     })();
 
-    /* ── Font size control — upper panel (dynamic tool output tabs) ── */
+    /* ── Font size control — upper panel (dynamic tool output + scripts + notes + tools + AI) ── */
     (function() {
         var MIN_PT = 7, MAX_PT = 24;
         var LS_KEY = 'legion_upper_font_pt';
@@ -3917,8 +4071,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function applyFontSize() {
             var px = _pt + 'pt';
-            var el = $('dynamic-tabs-container');
-            if (el) el.style.fontSize = px;
+            /* Stable container elements — children with font:inherit cascade automatically */
+            ['dynamic-tabs-container', 'script-output-inline', 'notes-right', 'tool-output-text'].forEach(function(id) {
+                var el = $(id);
+                if (el) el.style.fontSize = px;
+            });
+            /* AI content elements have hardcoded inline font-size — must override explicitly */
+            ['ai-p1-json', 'ai-p2-markdown', 'ai-p1h-json', 'ai-p2h-markdown',
+             'ai-p1-table', 'ai-p1h-table'].forEach(function(id) {
+                var el = $(id);
+                if (el) el.style.fontSize = px;
+            });
             var lbl = $('upper-font-label');
             if (lbl) lbl.textContent = _pt;
             localStorage.setItem(LS_KEY, _pt);
@@ -4116,7 +4279,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* Restore width splitter — also pins flex so explicit width is respected */
     function restoreSplitterWidth(key, el) {
         var saved = localStorage.getItem('legion-splitter-' + key);
-        if (saved && el) { el.style.flexGrow = '0'; el.style.flexShrink = '0'; el.style.width = saved; }
+        if (saved && el) { el.style.flexGrow = '0'; el.style.flexShrink = '0'; el.style.flexBasis = saved; el.style.width = saved; }
     }
     /* Restore on load */
     var leftPane = $('left-panel');
@@ -4149,8 +4312,10 @@ document.addEventListener('DOMContentLoaded', function() {
        Backlog #7 — LLM host analysis via Vertex AI (two-phase pipeline).
        Blocking conditions → ready state → spinner → results → side-by-side.
     ══════════════════════════════════════════════════════════════════════════ */
-    var _aiHostId   = null;   // host_id currently shown in AI tab
-    var _aiResults  = null;   // most recent analysis result
+    var _aiHostId        = null;   // host_id currently shown in AI tab
+    var _aiResults       = null;   // most recent Phase 1 result
+    var _aiRunning       = false;  // true while a Phase 1 call is in flight
+    var _aiRunningHostId = null;   // host_id the in-flight call is for
 
     /* Severity colour for Phase 1 findings table */
     var _aiSevColour = {
@@ -4241,15 +4406,35 @@ document.addEventListener('DOMContentLoaded', function() {
         }).catch(function() { _aiLoadStatus(hostId); });
     }
 
+    /* Show Phase 2 UI elements based on whether Phase 2 data exists */
+    function _aiUpdatePhase2UI(phase2_markdown) {
+        var p2req = $('ai-p2-request');
+        var p2run = $('ai-p2-running');
+        var p2res = $('ai-p2-result');
+        var p2md  = $('ai-p2-markdown');
+        if (phase2_markdown) {
+            if (p2req) p2req.style.display = 'none';
+            if (p2run) p2run.style.display = 'none';
+            if (p2res) p2res.style.display = '';
+            if (p2md)  p2md.innerHTML = _aiMd(phase2_markdown);
+        } else {
+            /* Phase 2 not yet run — show the request button */
+            if (p2req) p2req.style.display = '';
+            if (p2run) p2run.style.display = 'none';
+            if (p2res) p2res.style.display = 'none';
+        }
+    }
+
     function _aiShowResults(result, histResult) {
         _aiShowState('ai-results');
         /* Cost bar */
         var costText = $('ai-cost-text');
         if (costText) {
             var cached = !result.tokens_input;
+            var p2extra = result.phase2_markdown ? ' (Phase 1+2)' : ' (Phase 1)';
             costText.textContent = cached
                 ? 'Previously cost $' + (result.cost_usd || 0).toFixed(4) + ' — no charge for this view'
-                : 'Cost: $' + (result.cost_usd || 0).toFixed(4) +
+                : 'Cost: $' + (result.cost_usd || 0).toFixed(4) + p2extra +
                   ' | ' + ((result.tokens_input || 0) + (result.tokens_output || 0)).toLocaleString() + ' tokens';
         }
         /* Phase 1 table + JSON */
@@ -4259,9 +4444,8 @@ document.addEventListener('DOMContentLoaded', function() {
             try { p1json.textContent = JSON.stringify(JSON.parse(result.phase1_json), null, 2); }
             catch(e) { p1json.textContent = result.phase1_json || ''; }
         }
-        /* Phase 2 markdown */
-        var p2 = $('ai-p2-markdown');
-        if (p2) p2.innerHTML = _aiMd(result.phase2_markdown || '');
+        /* Phase 2 — show button or results depending on whether it's been run */
+        _aiUpdatePhase2UI(result.phase2_markdown);
 
         /* Historical comparison */
         if (histResult) {
@@ -4287,13 +4471,44 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    /* Start Phase 1 analysis */
+    function _aiRunPhase1() {
+        _aiRunning       = true;
+        _aiRunningHostId = _aiHostId;
+        var rt = $('ai-running-text');
+        if (rt) rt.textContent = 'Running Phase 1 — synthesising findings…';
+        _aiShowState('ai-running');
+        postJson('/api/ai/analyze-host/' + _aiHostId + '/phase1', {})
+            .then(function(r) {
+                _aiRunning = false;
+                if (r.error) {
+                    _aiShowState('ai-ready');
+                    alert('Phase 1 failed: ' + r.error);
+                    return;
+                }
+                _aiResults = r;
+                _aiShowResults(r, null);
+                _aiLoadSimilar(_aiHostId);
+            })
+            .catch(function(e) {
+                _aiRunning = false;
+                _aiShowState('ai-ready');
+                alert('Phase 1 failed: ' + (e.message || e));
+            });
+    }
+
     /* Populate comparison dropdown from history matches */
     function _aiLoadSimilar(hostId) {
         var sel = $('ai-compare-select');
         if (!sel) return;
         sel.innerHTML = '<option value="">— No similar hosts in history —</option>';
         fetchJson('/api/ai/history/similar/' + hostId).then(function(r) {
-            (r.matches || []).forEach(function(m) {
+            var matches = r.matches || [];
+            if (matches.length === 0) return;   /* keep the "No similar hosts" placeholder */
+            /* Matches exist — replace placeholder with a neutral prompt so the user
+               can choose not to compare, then list all matches below it. */
+            sel.innerHTML = '<option value="">— Select a host to compare —</option>';
+            matches.forEach(function(m) {
                 var opt = document.createElement('option');
                 opt.value = m.id;
                 opt.textContent = m.host_ip + ' — ' + (m.timestamp || '').substring(0, 10) +
@@ -4304,31 +4519,87 @@ document.addEventListener('DOMContentLoaded', function() {
         }).catch(function() {});
     }
 
-    /* AI tab click → load status or latest results */
+    /* AI tab click → restore running state or load latest/status */
     var _aiTabBtn = $('ai-tab-btn');
     if (_aiTabBtn) {
         _aiTabBtn.addEventListener('click', function() {
             if (!L.selectedHostId) { _aiShowState('ai-no-host'); return; }
+            /* If Phase 1 is currently running for this host, stay in running state */
+            if (_aiRunning && _aiRunningHostId === L.selectedHostId) {
+                _aiHostId = L.selectedHostId;
+                var rt = $('ai-running-text');
+                if (rt) rt.textContent = 'Running Phase 1 — synthesising findings…';
+                _aiShowState('ai-running');
+                return;
+            }
+            _aiHostId = L.selectedHostId;
             _aiLoadLatest(L.selectedHostId);
             _aiLoadSimilar(L.selectedHostId);
         });
     }
 
-    /* Analyze button */
+    /* Analyze button — confirm if existing analysis found */
     var _aiAnalyzeBtn = $('ai-analyze-btn');
     if (_aiAnalyzeBtn) {
         _aiAnalyzeBtn.addEventListener('click', function() {
             if (!_aiHostId) return;
-            _aiShowState('ai-running');
-            postJson('/api/ai/analyze-host/' + _aiHostId, {})
+            /* Check for existing analysis; confirm before overwriting */
+            fetchJson('/api/ai/host/' + _aiHostId + '/latest').then(function(r) {
+                if (r.found) {
+                    var ts = (r.timestamp || '').substring(0, 16).replace('T', ' ');
+                    if (!confirm('This host already has an analysis from ' + ts +
+                                 '.\n\nRun a new Phase 1 analysis? This will incur AI API costs.')) {
+                        return;
+                    }
+                }
+                _aiRunPhase1();
+            }).catch(function() { _aiRunPhase1(); });
+        });
+    }
+
+    /* Re-analyze button (inside results view) */
+    var _aiReanalyzeBtn = $('ai-reanalyze-btn');
+    if (_aiReanalyzeBtn) {
+        _aiReanalyzeBtn.addEventListener('click', function() {
+            if (!_aiHostId) return;
+            var ts = (_aiResults && _aiResults.timestamp || '').substring(0, 16).replace('T', ' ');
+            var msg = ts
+                ? 'This host was last analysed on ' + ts + '.\n\nRun a new Phase 1 analysis? This will incur AI API costs.'
+                : 'Run a new Phase 1 analysis for this host? This will incur AI API costs.';
+            if (!confirm(msg)) return;
+            _aiRunPhase1();
+        });
+    }
+
+    /* Phase 2 button — get attack advice on demand */
+    var _aiPhase2Btn = $('ai-phase2-btn');
+    if (_aiPhase2Btn) {
+        _aiPhase2Btn.addEventListener('click', function() {
+            if (!_aiHostId) return;
+            var p2req = $('ai-p2-request'); if (p2req) p2req.style.display = 'none';
+            var p2run = $('ai-p2-running'); if (p2run) p2run.style.display = '';
+            postJson('/api/ai/analyze-host/' + _aiHostId + '/phase2', {})
                 .then(function(r) {
-                    _aiResults = r;
-                    _aiShowResults(r, null);
-                    _aiLoadSimilar(_aiHostId);
+                    var p2run2 = $('ai-p2-running'); if (p2run2) p2run2.style.display = 'none';
+                    if (r.error) {
+                        var p2req2 = $('ai-p2-request'); if (p2req2) p2req2.style.display = '';
+                        alert('Phase 2 failed: ' + r.error);
+                        return;
+                    }
+                    _aiUpdatePhase2UI(r.phase2_markdown);
+                    /* Update cost banner */
+                    var costText = $('ai-cost-text');
+                    if (costText && _aiResults) {
+                        var total = ((_aiResults.cost_usd || 0) + (r.cost_usd || 0)).toFixed(4);
+                        costText.textContent = 'Cost: $' + total + ' (Phase 1+2) | ' +
+                            ((_aiResults.tokens_input||0) + (_aiResults.tokens_output||0) +
+                             (r.tokens_input||0) + (r.tokens_output||0)).toLocaleString() + ' tokens';
+                    }
                 })
                 .catch(function(e) {
-                    _aiShowState('ai-ready');
-                    alert('AI analysis failed: ' + (e.message || e));
+                    var p2run3 = $('ai-p2-running'); if (p2run3) p2run3.style.display = 'none';
+                    var p2req3 = $('ai-p2-request'); if (p2req3) p2req3.style.display = '';
+                    alert('Phase 2 failed: ' + (e.message || e));
                 });
         });
     }
