@@ -504,9 +504,15 @@ if __name__ == "__main__":
             # Dedicated Legion profile so Firefox never conflicts with an
             # existing session (--no-remote skips IPC with the running instance;
             # --profile points at an isolated directory).
-            # Always reuse the single canonical 'legion-profile' regardless of
-            # port — per-port profiles bloat ~/.mozilla at ~100 MB each and
-            # --no-remote already prevents cross-instance IPC conflicts.
+            #
+            # Single shared profile 'legion-profile' — per-port profiles
+            # (legion-profile-5085, etc.) bloat ~/.mozilla at ~100 MB each.
+            # When two Legion instances run simultaneously, Firefox locks the
+            # profile dir and the second open would fail.  Instead: check
+            # whether the profile is already locked by another Firefox instance
+            # (lock symlink or .parentlock file).  If locked, skip auto-open —
+            # the user already has a Legion browser window from the first
+            # instance.  If free, proceed normally.
             _home = f'/home/{_sudo_user}' if _sudo_user else _os.path.expanduser('~')
             _profile = _os.path.join(_home, '.mozilla', 'firefox', 'legion-profile')
             if not _os.path.isdir(_profile):
@@ -520,6 +526,17 @@ if __name__ == "__main__":
                         _os.chown(_os.path.dirname(_profile), _pi.pw_uid, _pi.pw_gid)
                     except Exception:
                         pass
+
+            # Check Firefox profile lock — present when a Firefox process
+            # already holds the profile open.  On Linux this is a symlink
+            # named 'lock'; Firefox also writes '.parentlock'.
+            _lock   = _os.path.join(_profile, 'lock')
+            _plock  = _os.path.join(_profile, '.parentlock')
+            _locked = _os.path.lexists(_lock) or _os.path.exists(_plock)
+            if _locked:
+                print(f"[Legion] legion-profile already open — skipping auto-browser "
+                      f"(another Legion instance has it).  Navigate to {_url} manually.")
+                return
 
             # Write user.js on every launch — Firefox reads it at startup and
             # it overrides prefs.js, so session-restore is always suppressed
