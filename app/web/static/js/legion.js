@@ -4376,9 +4376,13 @@ document.addEventListener('DOMContentLoaded', function() {
             var key = line.substring(0, eq).trim();
             var val = line.substring(eq+1).trim().replace(/^"|"$/g, '');
             if (key.endsWith('-positive')) {
-                val.split(',').forEach(function(v) { if (v.trim()) matchPositive.push(v.trim()); });
+                /* Preserve leading/trailing spaces — space-padded keywords like " PUT "
+                   are intentional: highlightMatches() uses them as word-boundary guards
+                   so " PUT " never matches inside "INPUT" or "OUTPUT".
+                   Only use v.trim() for the non-empty check, not for what is stored. */
+                val.split(',').forEach(function(v) { if (v.trim()) matchPositive.push(v); });
             } else if (key.endsWith('-negative')) {
-                val.split(',').forEach(function(v) { if (v.trim()) matchNegative.push(v.trim()); });
+                val.split(',').forEach(function(v) { if (v.trim()) matchNegative.push(v); });
             }
         });
     }).catch(function() {});

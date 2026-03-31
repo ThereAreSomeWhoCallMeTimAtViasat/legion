@@ -504,8 +504,11 @@ if __name__ == "__main__":
             # Dedicated Legion profile so Firefox never conflicts with an
             # existing session (--no-remote skips IPC with the running instance;
             # --profile points at an isolated directory).
+            # Always reuse the single canonical 'legion-profile' regardless of
+            # port — per-port profiles bloat ~/.mozilla at ~100 MB each and
+            # --no-remote already prevents cross-instance IPC conflicts.
             _home = f'/home/{_sudo_user}' if _sudo_user else _os.path.expanduser('~')
-            _profile = _os.path.join(_home, '.mozilla', 'firefox', f'legion-profile-{_port}')
+            _profile = _os.path.join(_home, '.mozilla', 'firefox', 'legion-profile')
             if not _os.path.isdir(_profile):
                 _os.makedirs(_profile, exist_ok=True)
                 # Profile dir must be owned by the user, not root
