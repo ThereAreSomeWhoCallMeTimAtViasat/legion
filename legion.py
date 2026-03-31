@@ -527,15 +527,38 @@ if __name__ == "__main__":
                     except Exception:
                         pass
 
-            # Check Firefox profile lock — present when a Firefox process
-            # already holds the profile open.  On Linux this is a symlink
-            # named 'lock'; Firefox also writes '.parentlock'.
-            _lock   = _os.path.join(_profile, 'lock')
-            _plock  = _os.path.join(_profile, '.parentlock')
-            _locked = _os.path.lexists(_lock) or _os.path.exists(_plock)
-            if _locked:
-                print(f"[Legion] legion-profile already open — skipping auto-browser "
-                      f"(another Legion instance has it).  Navigate to {_url} manually.")
+            # Check whether Firefox actually has the profile open.
+            # The 'lock' file is a symlink whose target encodes the PID of the
+            # locking Firefox process as "127.0.0.1:+PID" (e.g. "127.0.0.1:+98765").
+            # Stale locks (from crashes or kills) have the same symlink but the
+            # PID no longer exists — we must check /proc rather than just the file.
+            def _profile_in_use(profile_dir):
+                lock_path = _os.path.join(profile_dir, 'lock')
+                if not _os.path.lexists(lock_path):
+                    return False
+                try:
+                    target = _os.readlink(lock_path)   # e.g. "127.0.0.1:+98765"
+                    pid_str = target.split(':+')[-1]   # extract PID portion
+                    pid = int(pid_str)
+                    # Check if the PID is actually alive
+                    _os.kill(pid, 0)
+                    return True   # process exists → profile genuinely locked
+                except (OSError, ValueError, IndexError):
+                    # PID dead or lock format unexpected → stale lock, clean it up
+                    try:
+                        _os.unlink(lock_path)
+                    except OSError:
+                        pass
+                    plock = _os.path.join(profile_dir, '.parentlock')
+                    try:
+                        _os.unlink(plock)
+                    except OSError:
+                        pass
+                    return False
+
+            if _profile_in_use(_profile):
+                print(f"[Legion] Firefox already open with legion-profile — "
+                      f"navigate to {_url} in the existing window.")
                 return
 
             # Write user.js on every launch — Firefox reads it at startup and
