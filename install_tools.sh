@@ -6,7 +6,21 @@
 #   feroxbuster, gobuster, ffuf, nuclei, testssl, netexec, smbmap,
 #   enum4linux-ng, ldapdomaindump, evil-winrm, redis-cli, masscan,
 #   amass, dnsrecon, dnsenum, wpscan, nikto, whatweb, wafw00f,
-#   sslyze, sslscan, sqlmap, seclists
+#   sslyze, sslscan, sqlmap, seclists, wig (apt)
+#
+# New tools added (installed by this script):
+#   pd-httpx  — ProjectDiscovery httpx (tech-detect HTTP probe)
+#   katana    — ProjectDiscovery web crawler
+#   gau       — GetAllURLs passive URL collection
+#   waybackurls — Wayback Machine historical URL fetcher
+#   nomore403 — 403 bypass checker
+#   jexboss   — JBoss/Java app server vulnerability scanner (/opt/jexboss)
+#   LeakSearch — Credential leak search tool (/opt/LeakSearch)
+#
+# Not added (unavailable / deprecated):
+#   arachni   — Officially discontinued in 2016; use nuclei templates instead
+#   dirdar    — Superseded by nomore403 and nuclei fuzzing templates
+#   servicelens — Sn1per-internal tool, no standalone release
 
 set -euo pipefail
 
@@ -151,12 +165,104 @@ for tool in ssh-audit kerbrute rdp-sec-check nuclei; do
     fi
 done
 
+# ---------------------------------------------------------------------------
+# Go-based tools — ProjectDiscovery httpx, katana, gau, waybackurls, nomore403
+# These are installed via 'go install' then copied to /usr/local/bin.
+# pd-httpx is used instead of 'httpx' to avoid overwriting /usr/bin/httpx
+# (the Python kaeferjaeger httpx already present on Kali).
+# ---------------------------------------------------------------------------
+_go_install_and_link() {
+    local pkg="$1" bin_name="$2" dest_name="${3:-$2}"
+    if command -v "$dest_name" &>/dev/null; then
+        skip "$dest_name already at $(command -v "$dest_name")"
+        return
+    fi
+    info "go install $pkg ..."
+    # Install to a temp GOPATH under /tmp so we don't need write access to system dirs during build
+    local tmp_gopath; tmp_gopath=$(mktemp -d)
+    if GOPATH="$tmp_gopath" HOME=/root go install "$pkg" 2>/dev/null; then
+        if [[ -f "$tmp_gopath/bin/$bin_name" ]]; then
+            cp "$tmp_gopath/bin/$bin_name" "/usr/local/bin/$dest_name"
+            chmod +x "/usr/local/bin/$dest_name"
+            ok "$dest_name installed at /usr/local/bin/$dest_name"
+        else
+            warn "$bin_name binary not found after go install"
+            NEWLY_MISSING+=("$dest_name")
+        fi
+    else
+        warn "go install failed for $pkg"
+        NEWLY_MISSING+=("$dest_name")
+    fi
+    rm -rf "$tmp_gopath"
+}
+
+_go_install_and_link "github.com/projectdiscovery/httpx/cmd/httpx@latest" "httpx" "pd-httpx"
+_go_install_and_link "github.com/projectdiscovery/katana/cmd/katana@latest" "katana" "katana"
+_go_install_and_link "github.com/lc/gau/v2/cmd/gau@latest"                "gau"    "gau"
+_go_install_and_link "github.com/tomnomnom/waybackurls@latest"             "waybackurls" "waybackurls"
+_go_install_and_link "github.com/devploit/nomore403@latest"                "nomore403"   "nomore403"
+
+# ---------------------------------------------------------------------------
+# jexboss — JBoss / Java app server vulnerability scanner (Python, GitHub)
+# ---------------------------------------------------------------------------
+JEXBOSS_DIR=/opt/jexboss
+if [[ -f "$JEXBOSS_DIR/jexboss.py" ]]; then
+    skip "jexboss already at $JEXBOSS_DIR"
+else
+    info "Cloning jexboss from GitHub..."
+    if git clone --depth 1 https://github.com/joaomatosf/jexboss.git "$JEXBOSS_DIR" 2>/dev/null; then
+        if [[ -f "$JEXBOSS_DIR/requires.txt" ]]; then
+            pip3 install --break-system-packages -r "$JEXBOSS_DIR/requires.txt" -q 2>/dev/null || true
+        fi
+        ok "jexboss installed at $JEXBOSS_DIR/jexboss.py"
+    else
+        warn "jexboss clone failed — install manually:"
+        warn "  git clone https://github.com/joaomatosf/jexboss.git /opt/jexboss"
+        NEWLY_MISSING+=("jexboss")
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# LeakSearch — Credential leak search (Python, GitHub)
+# ---------------------------------------------------------------------------
+LEAKSEARCH_DIR=/opt/LeakSearch
+if [[ -f "$LEAKSEARCH_DIR/LeakSearch.py" ]]; then
+    skip "LeakSearch already at $LEAKSEARCH_DIR"
+else
+    info "Cloning LeakSearch from GitHub..."
+    if git clone --depth 1 https://github.com/JoelGMSec/LeakSearch.git "$LEAKSEARCH_DIR" 2>/dev/null; then
+        if [[ -f "$LEAKSEARCH_DIR/requirements.txt" ]]; then
+            pip3 install --break-system-packages -r "$LEAKSEARCH_DIR/requirements.txt" -q 2>/dev/null || true
+        fi
+        ok "LeakSearch installed at $LEAKSEARCH_DIR/LeakSearch.py"
+    else
+        warn "LeakSearch clone failed — install manually:"
+        warn "  git clone https://github.com/JoelGMSec/LeakSearch.git /opt/LeakSearch"
+        NEWLY_MISSING+=("LeakSearch")
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# wig — WebApp Information Gatherer (apt, already on Kali by default)
+# ---------------------------------------------------------------------------
+if command -v wig &>/dev/null; then
+    skip "wig already installed at $(command -v wig)"
+else
+    info "apt install wig..."
+    if apt-get install -y wig 2>/dev/null; then
+        ok "wig installed"
+    else
+        warn "wig not available via apt — try: pip3 install --break-system-packages wig"
+        NEWLY_MISSING+=("wig")
+    fi
+fi
+
 echo ""
 echo "Pre-existing tools confirmed present:"
 ALL_TOOLS=(feroxbuster gobuster ffuf nuclei testssl netexec smbmap
            enum4linux-ng ldapdomaindump evil-winrm redis-cli masscan
            amass dnsrecon dnsenum wpscan nikto whatweb wafw00f
-           sslyze sslscan sqlmap)
+           sslyze sslscan sqlmap wig)
 for tool in "${ALL_TOOLS[@]}"; do
     if command -v "$tool" &>/dev/null; then
         echo -e "  ${GREEN}✓${NC} $tool"
@@ -164,6 +270,19 @@ for tool in "${ALL_TOOLS[@]}"; do
         echo -e "  ${RED}✗${NC} $tool — MISSING (unexpected)"
     fi
 done
+
+echo ""
+echo "New tools installed by this script:"
+NEW_TOOLS=(pd-httpx katana gau waybackurls nomore403)
+for tool in "${NEW_TOOLS[@]}"; do
+    if command -v "$tool" &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} $tool"
+    else
+        echo -e "  ${RED}✗${NC} $tool — not found in PATH"
+    fi
+done
+[[ -f /opt/jexboss/jexboss.py ]]   && echo -e "  ${GREEN}✓${NC} jexboss (/opt/jexboss/jexboss.py)"    || echo -e "  ${RED}✗${NC} jexboss — missing"
+[[ -f /opt/LeakSearch/LeakSearch.py ]] && echo -e "  ${GREEN}✓${NC} LeakSearch (/opt/LeakSearch/LeakSearch.py)" || echo -e "  ${RED}✗${NC} LeakSearch — missing"
 
 if [[ ${#NEWLY_MISSING[@]} -gt 0 ]]; then
     echo ""
