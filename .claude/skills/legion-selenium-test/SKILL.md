@@ -364,6 +364,33 @@ def test_async_feature(self):
 
 ---
 
+## Testing context menu scroll arrows without viewport resize
+
+`set_window_size(1600, 200)` fails because browser chrome consumes space and the
+content area can be only ~85px — smaller than the host-row y-position.
+Instead, force overflow programmatically and fire the scroll event listener:
+
+```python
+result = js(drv, """
+    var m = document.getElementById('ctx-menu');
+    var list = m.children[1];          // inner scrollable list (2nd child of menu)
+    var botArrow = m.lastElementChild; // bottom arrow is last child of menu
+    var orig = list.style.maxHeight;
+    list.style.maxHeight = '50px';     // force overflow
+    list.dispatchEvent(new Event('scroll'));  // trigger _updateArrows
+    var display = botArrow.style.display;
+    list.style.maxHeight = orig;       // restore
+    list.dispatchEvent(new Event('scroll'));
+    return display;
+""")
+assert result != 'none'  # bottom arrow visible when list overflows
+```
+
+Context menu structure: `menu → [topArrow(first), list(middle), botArrow(last)]`.
+`m.firstElementChild` = top arrow, `m.lastElementChild` = bottom arrow.
+
+---
+
 ## Output
 
 Write the complete test file.  Include:

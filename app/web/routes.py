@@ -160,15 +160,27 @@ def snapshot():
 
         if status == "Running":
             running += 1
-            start_str = str(proc.get('startTime', '') or '')
-            start_ts = None
-            for fmt in ('%d %b %Y %H:%M:%S.%f', '%Y%m%d%H%M%S%f'):
-                try:
-                    start_ts = _dt.strptime(start_str, fmt).timestamp()
-                    break
-                except Exception:
-                    pass
-            proc['elapsed_secs'] = int(_time.time() - start_ts) if start_ts else 0
+            # Use _start_wall (set in checkProcessQueue when the process actually
+            # begins executing) so elapsed reflects only execution time, not queue
+            # wait time.  Fall back to parsed startTime for processes started before
+            # this attribute was added.
+            proc_obj = None
+            try:
+                proc_obj = wc._active_processes.get(int(proc.get('id', -1)))
+            except Exception:
+                pass
+            if proc_obj and hasattr(proc_obj, '_start_wall'):
+                proc['elapsed_secs'] = int(_time.time() - proc_obj._start_wall)
+            else:
+                start_str = str(proc.get('startTime', '') or '')
+                start_ts = None
+                for fmt in ('%d %b %Y %H:%M:%S.%f', '%Y%m%d%H%M%S%f'):
+                    try:
+                        start_ts = _dt.strptime(start_str, fmt).timestamp()
+                        break
+                    except Exception:
+                        pass
+                proc['elapsed_secs'] = int(_time.time() - start_ts) if start_ts else 0
         else:
             finished += 1
             proc['elapsed_secs'] = None
@@ -196,6 +208,9 @@ def snapshot():
         f"running={running} tools={len(tool_list)}"
     )
 
+    _uptime_start = getattr(wc, '_scan_uptime_start', None)
+    _uptime_end   = getattr(wc, '_scan_uptime_end',   None)
+
     return jsonify({
         "hosts": hosts,
         "services": services,
@@ -208,6 +223,11 @@ def snapshot():
                      "output_folder": getattr(logic.activeProject.properties, "outputFolder", ""),
                      "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True),
                      "exit_requested": getattr(wc, '_exit_requested', False)},
+        "scan_uptime": {
+            "start": _uptime_start,
+            "end":   _uptime_end,
+            "active": _uptime_start is not None and _uptime_end is None,
+        },
         "os_groups": os_groups,
         "scheduler_decisions": [],
         "scheduler_approvals": [],
@@ -1232,15 +1252,16 @@ _BACKUP_DIR   = os.path.expanduser('~/.local/share/legion/backup')
 def _backup_conf(src_path, label='legion'):
     """Copy src_path to ~/.local/share/legion/backup/{label}-{timestamp}.conf.
     Silent on error — backup failure must never block a save operation."""
+    _log = _logging.getLogger('legion')
     try:
         os.makedirs(_BACKUP_DIR, exist_ok=True)
         from datetime import datetime as _dt
         ts = _dt.now().strftime('%Y%m%d_%H%M%S')
         dest = os.path.join(_BACKUP_DIR, f'{label}-{ts}.conf')
         shutil.copy2(src_path, dest)
-        log.debug(f"[Config] backed up {src_path} → {dest}")
+        _log.debug(f"[Config] backed up {src_path} → {dest}")
     except Exception as _be:
-        log.warning(f"[Config] backup failed for {src_path}: {_be}")
+        _log.warning(f"[Config] backup failed for {src_path}: {_be}")
 
 def _ensure_profiles():
     os.makedirs(_PROFILES_DIR, exist_ok=True)

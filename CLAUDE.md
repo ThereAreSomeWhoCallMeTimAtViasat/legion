@@ -685,6 +685,71 @@ pip install "anthropic[vertex]"
 | 39 | AI Phase 1/2 split — Phase 2 on-demand | Med | ✅ Done v10.93 | run_phase1/run_phase2 in analyzer.py; /phase1 /phase2 routes; _aiRunning state |
 | 40 | Ctrl+B most-recent-selection wins | Low | ✅ Done v10.94 | xterm fallbacks guarded by !_lastNonXtermSelSource |
 | 41 | Config manager timestamped backups + activation validation | Med | ✅ Done v10.95 | _backup_conf() → backup/; profile validate before activate |
+| 42 | Professional README.md — full feature docs, install, usage, architecture | Med | ❌ Not started | Replace the GoVanguard stub; cover Flask web UI, all major features, screenshots |
+| 43 | Animated GIF demos — screen-captured walkthroughs of key workflows | Med | ❌ Not started | Suggest: scan→results, AI analysis, Ctrl+B, match navigation, Tools tab, config manager |
+| 44 | Capability difference tables — GoVanguard legacy vs Tim McLean additions | Low | ❌ Not started | HTML + Markdown versions; three-tier value ranking; already drafted in legion_features.html and legion_value_ranking.html |
+
+### Backlog #42 — Professional README.md
+
+**Goal:** Replace the current minimal GoVanguard stub with a complete, professional README that a new user can follow to install, run, and understand Legion.
+
+**Sections to include:**
+- Hero section: what Legion is, who it is for, key differentiators from upstream
+- Screenshot / GIF banner (placeholder until #43 is done)
+- Features list — link to the capability table from #44
+- Requirements (Python 3.10+, Kali Linux recommended, geckodriver for tests)
+- Installation: `git clone`, `pip install -r requirements.txt`, `sudo python3 legion.py --web`
+- Quick-start walkthrough (add host → scan → view results → AI analysis)
+- Configuration: legion.conf sections, key settings, profiles
+- Architecture overview: Flask web server, WebController, staged nmap, scheduler
+- Test suite: `sudo bash run_tests.sh` options
+- Credits: GoVanguard / Sparta upstream, ifly53e Qt5 work, Tim McLean Flask rewrite
+
+**Key files:**
+- `README.md` (rewrite entirely)
+- `docs/` folder for screenshots if needed
+
+---
+
+### Backlog #43 — Animated GIF Demos
+
+**Goal:** Short (15–30 second) screen-captured GIFs embedded in README.md showing the most visually compelling workflows.
+
+**Suggested demos:**
+1. **Scan workflow** — Add host → nmap stages run with progress % → ports/services appear → vulners CVEs populate → AI analysis
+2. **AI tab** — Click Analyze → Phase 1 findings table → Get Attack Advice → Phase 2 attack plan
+3. **Match detection** — feroxbuster finds /proof → red highlight in tool list → navigation arrows jump to match
+4. **Ctrl+B notes** — Select terminal output → Ctrl+B → note appears in correct host's Notes tab with ANSI colour
+5. **Config manager** — Open F2 → edit profile → save → live-apply confirms settings hot-reloaded
+6. **Tools tab** — Click Tools → auto-selects first tool → all three panes populate → scroll host list
+
+**Tooling:** `peek` or `byzanz-record` on Kali, crop to relevant region, keep < 5 MB each.
+
+**Key files:**
+- `docs/demos/` — GIF files
+- `README.md` — embed with `![demo](docs/demos/scan-workflow.gif)`
+
+---
+
+### Backlog #44 — Capability Difference Tables
+
+**Goal:** Formal Markdown and HTML tables comparing GoVanguard legacy Legion to Tim McLean's Flask rewrite, suitable for README and standalone reference.
+
+**Already drafted:**
+- `legion_features.html` — full capability matrix (GoVanguard vs Tim McLean columns, ✓ marks, NEW/RETIRED badges, dark-themed HTML)
+- `legion_value_ranking.html` — three-tier value ranking (High / Medium / Low) with category badges
+
+**Remaining work:**
+- Convert HTML tables to clean Markdown for README embed
+- Add a concise summary card (e.g. "86 legacy features carried forward, 149 new additions")
+- Publish to a `docs/` folder alongside the GIFs
+- Link from README features section
+
+**Key files:**
+- `docs/capabilities.md` — Markdown version
+- `legion_features.html` / `legion_value_ranking.html` — existing HTML (already complete)
+
+---
 
 ### Backlog #10 — Tool Manager GUI
 Allows adding and removing tool entries (HostActions, PortActions, PortTerminalActions, SchedulerSettings) via a form instead of raw conf editing.

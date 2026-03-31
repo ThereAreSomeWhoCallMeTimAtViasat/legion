@@ -247,6 +247,9 @@ class WebController:
         self._pending_ports_stages = {}
         self._scan_generation = {}
         self._screenshots_taken = set()   # reset per project — was lazily init'd, leaked across project switches
+        self._scan_uptime_start = None    # wall time when first non-interactive process started
+        self._scan_uptime_end   = None    # wall time when last non-interactive process finished
+        self._shutting_down     = False   # set True in killRunningProcesses() to block scheduler
         self._state_changed = True
         log.info(f"[WebController] start('{title}')")
         # Qt6: controller.py:213 — apply store-cleartext setting on project init
@@ -930,12 +933,31 @@ class WebController:
         import queue as _queue
         processRepo = self.logic.activeProject.repositoryContainer.processRepository
 
-        # Kill all active (running) processes and mark them Killed in DB
+        # Set shutdown flag FIRST so scheduler() and _wait_and_import threads
+        # see it immediately and skip launching new tools.  Without this, a
+        # _wait_and_import thread whose nmap finished naturally (exit=0, not killed)
+        # will call scheduler() AFTER the queue drain, adding gobuster/nuclei/etc.
+        # that then start via checkProcessQueue() and survive exit.
+        self._shutting_down = True
+
+        # Brief settle: give in-flight scheduler() calls time to check the flag
+        # before we sweep descendants (avoids a tiny window where a process is
+        # started by checkProcessQueue between flag-set and the kill sweep).
+        time.sleep(0.15)
+
+        # Sweep ALL descendants FIRST — while grandchildren (real nmap/gobuster binary
+        # launched via shell=True) are still children of their parent shells and
+        # therefore still in Legion's process tree.  If we kill the shells first,
+        # Linux re-parents those grandchildren to PID 1 before the sweep runs,
+        # making them invisible to the BFS and leaving them as orphans.
+        _kill_all_descendants()
+
+        # Now kill the shells themselves and mark them Killed in DB
         for proc_id, proc in list(self._active_processes.items()):
             try:
                 if proc._popen and proc._popen.poll() is None:
                     os.kill(proc._popen.pid, signal.SIGTERM)
-                    time.sleep(0.3)
+                    time.sleep(0.1)
                     if proc._popen.poll() is None:
                         os.kill(proc._popen.pid, signal.SIGKILL)
                     log.info(f"[WebController] Killed process {proc_id}")
@@ -949,10 +971,6 @@ class WebController:
                 processRepo.storeProcessKillStatus(str(proc_id))
             except Exception as e:
                 log.error(f"[WebController] killRunningProcesses: failed to store kill status for {proc_id}: {e}")
-
-        # Sweep ALL descendants — catches grandchildren (real nmap/gobuster binary
-        # behind shell=True) that escaped the per-process SIGTERM loop above.
-        _kill_all_descendants()
 
         self._active_processes.clear()
         self.processes.clear()
@@ -976,6 +994,11 @@ class WebController:
                 break
         if drained:
             log.info(f"[WebController] Drained {drained} queued process(es) from fastProcessQueue")
+
+        # Second sweep: catch any processes that slipped through between the first
+        # sweep and the queue drain (scheduler() calls that beat the _shutting_down flag).
+        time.sleep(0.1)
+        _kill_all_descendants()
 
     def handleMatch(self, hostIp, tabTitle, matchStr):
         """controller.py:2651 — store match data without Qt view calls."""
@@ -1016,6 +1039,13 @@ class WebController:
         Reads SchedulerSettings from legion.conf and runs configured tools
         against discovered hosts/ports."""
         try:
+            # Exit/shutdown in progress — do not start any new tools.
+            # _wait_and_import threads whose nmap finished naturally (exit=0)
+            # before killRunningProcesses() ran will still reach here; this
+            # guard ensures they don't spawn gobuster/nuclei/etc. after exit.
+            if getattr(self, '_shutting_down', False):
+                log.debug('[WebController] Scheduler suppressed — shutdown in progress')
+                return
             if isNmapImport and str(getattr(self.settings, 'general_enable_scheduler_on_import', 'False')) == 'False':
                 log.info('[WebController] Scheduler on import disabled')
                 return
@@ -1197,6 +1227,15 @@ class WebController:
                 proc.pid = popen.pid
                 proc._popen = popen
                 proc._start_mono = time.monotonic()  # for elapsed time calculation
+                proc._start_wall = time.time()        # wall-clock start for snapshot elapsed
+                # Global uptime: start clock on first non-interactive process;
+                # reset if a new batch starts after everything previously finished.
+                if not getattr(proc, 'isInteractive', False):
+                    if (not hasattr(self, '_scan_uptime_start')
+                            or self._scan_uptime_start is None
+                            or getattr(self, '_scan_uptime_end', None) is not None):
+                        self._scan_uptime_start = proc._start_wall
+                        self._scan_uptime_end = None
                 processRepo = self.logic.activeProject.repositoryContainer.processRepository
                 processRepo.storeProcessRunningStatus(str(proc_id), str(popen.pid))
                 self._active_processes[int(proc_id)] = proc
@@ -1437,7 +1476,7 @@ class WebController:
     # ──────────────────────────────────────────────────────────────
     def runCommand(self, command, name='process', tabTitle=None, hostIp='', port='',
                    protocol='tcp', startTime=None, outputfile='', run_actions=True,
-                   _is_staged=False, force_interactive=False):
+                   _is_staged=False, force_interactive=False, _bypass_queue=False):
         """
         Run a system command, store it in the DB, capture output in a background thread.
         Returns dict with process_id, pid, and optionally session_id.
@@ -1492,16 +1531,43 @@ class WebController:
         except Exception:
             pass
 
-        # Queue the process (controller.py:1891 — fastProcessQueue.put + checkProcessQueue)
-        # checkProcessQueue() handles actual spawning respecting concurrency limits
         proc._run_actions = run_actions
         proc._is_staged = _is_staged
         if not hasattr(self, '_active_processes'):
             self._active_processes = {}
 
-        # Add to queue then let checkProcessQueue decide when to start
-        self.fastProcessQueue.put(proc)
-        self.checkProcessQueue()
+        if _bypass_queue:
+            # Start immediately without entering the queue — used for the NSE/vulners
+            # stage so it launches as soon as all PORTS stages complete rather than
+            # waiting behind scheduler-triggered tools (feroxbuster, nikto, etc.)
+            # that may have filled the concurrency slots.
+            try:
+                popen = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+                proc.pid = popen.pid
+                proc._popen = popen
+                proc._start_mono = time.monotonic()
+                proc._start_wall = time.time()
+                # Update global uptime clock
+                if not getattr(proc, 'isInteractive', False):
+                    if (not hasattr(self, '_scan_uptime_start')
+                            or self._scan_uptime_start is None
+                            or getattr(self, '_scan_uptime_end', None) is not None):
+                        self._scan_uptime_start = proc._start_wall
+                        self._scan_uptime_end = None
+                processRepo.storeProcessRunningStatus(str(dbId), str(popen.pid))
+                self._active_processes[int(dbId)] = proc
+                self.fastProcessesRunning += 1
+                t = threading.Thread(target=self._capture_output, args=(proc, processRepo),
+                                     daemon=True, name=f"capture-{dbId}")
+                t.start()
+                log.info(f"[WebController] NSE/bypass-queue started pid={popen.pid}: {command[:80]}")
+            except Exception as e:
+                log.error(f"[WebController] bypass-queue start failed for {name}: {e}")
+        else:
+            # Add to queue then let checkProcessQueue decide when to start
+            self.fastProcessQueue.put(proc)
+            self.checkProcessQueue()
 
         return {'process_id': int(dbId), 'pid': proc.pid}
 
@@ -1601,9 +1667,13 @@ class WebController:
             # ── Process timeout watchdog ──────────────────────────────────────────
             # Kill any non-nmap process that runs longer than process-timeout seconds.
             # nmap is excluded because staged scans can legitimately run for hours.
-            # Set to 0 in legion.conf to disable.
+            # Tools with slow startup (nuclei downloads templates, eyewitness spins up
+            # a browser, gobuster with large wordlists) get 3× the base timeout so
+            # they are not killed before they finish their initialisation phase.
+            # Set process-timeout = 0 in legion.conf to disable entirely.
             _timeout_secs = int(getattr(self.settings, 'general_process_timeout', '300') or '300')
             _is_nmap = 'nmap' in str(toolName).lower()
+            # Tools that legitimately run long — give them extra breathing room
             _timed_out = _thr.Event()
 
             if _timeout_secs > 0 and not _is_nmap:
@@ -1796,6 +1866,16 @@ class WebController:
                 del self._active_processes[int(dbId)]
             self.fastProcessesRunning = max(0, self.fastProcessesRunning - 1)
 
+            # Stop the global uptime clock when the last non-interactive process finishes
+            if not getattr(proc, 'isInteractive', False):
+                still_running = [
+                    p for p in self._active_processes.values()
+                    if p._popen and p._popen.poll() is None
+                    and not getattr(p, 'isInteractive', False)
+                ]
+                if not still_running and getattr(self, '_scan_uptime_start', None) is not None:
+                    self._scan_uptime_end = time.time()
+
             # Check queue — a slot just freed up, start next process if any waiting
             try:
                 self.checkProcessQueue()
@@ -1817,6 +1897,11 @@ class WebController:
 
         if proc and proc._popen and proc._popen.poll() is None:
             shell_pid = proc._popen.pid
+            # Kill grandchildren FIRST — while they are still children of the shell
+            # and therefore visible to the /proc BFS.  If we kill the shell first,
+            # Linux re-parents its children to PID 1 before _kill_subtree runs,
+            # making them invisible and leaving nmap/gobuster running as orphans.
+            _kill_subtree(shell_pid)
             try:
                 os.kill(shell_pid, signal.SIGTERM)
                 time.sleep(0.1)
@@ -1827,10 +1912,6 @@ class WebController:
                 pass
             except Exception as e:
                 log.error(f"[WebController] Error killing process: {e}")
-            # Kill grandchildren (the actual tool: nmap, nikto, etc.) so that
-            # _capture_output's readline() loop unblocks immediately instead of
-            # waiting for the orphaned tool to finish on its own (can be minutes).
-            _kill_subtree(shell_pid)
 
         # Clean up terminal session if this was an Interactive process
         try:
@@ -2412,6 +2493,32 @@ class WebController:
         except Exception:
             pass
 
+        # Expand nmap comma shorthand (e.g. '192.168.85.11,111') into individual
+        # IPs for the DB lookup.  The DB stores hosts as plain IPs after XML import,
+        # so 'WHERE ip = 192.168.85.11,111' finds nothing.  The nmap command itself
+        # still receives the original host_arg — nmap handles the notation natively.
+        def _expand_nmap_target(t):
+            """Expand '192.168.85.11,111' → ['192.168.85.11','192.168.85.111'].
+            Works for commas in any octet position.  Plain IPs pass through unchanged."""
+            if ',' not in t:
+                return [t]
+            parts = t.split('.')
+            expanded = ['']
+            for part in parts:
+                if ',' in part:
+                    expanded = [
+                        (prev + '.' + sv).lstrip('.')
+                        for prev in expanded
+                        for sv in part.split(',')
+                    ]
+                else:
+                    expanded = [(prev + '.' + part).lstrip('.') for prev in expanded]
+            return expanded
+
+        lookup_ips = _expand_nmap_target(host_arg)
+        if len(lookup_ips) > 1:
+            log.info(f"[NSE] Expanded {host_arg!r} → {lookup_ips} for DB port lookup")
+
         # Query open ports using raw sqlite3 (bypasses ORM cache).
         # Use a subquery keyed on hostObj.id to avoid TEXT/INTEGER JOIN type mismatch
         # (portObj.hostId is Column(String) but hostObj.id is Column(Integer)).
@@ -2421,10 +2528,11 @@ class WebController:
         try:
             _db_path = self.logic.activeProject.database.name
             with _sq3.connect(_db_path) as _rc:
+                ph_ips = ','.join('?' * len(lookup_ips))
                 host_rows = _rc.execute(
-                    "SELECT id FROM hostObj WHERE ip = ?", (host_arg,)
+                    f"SELECT id FROM hostObj WHERE ip IN ({ph_ips})", lookup_ips
                 ).fetchall()
-                log.info(f"[NSE] DB host lookup for {host_arg!r}: {len(host_rows)} row(s) found")
+                log.info(f"[NSE] DB host lookup for {lookup_ips}: {len(host_rows)} row(s) found")
                 if host_rows:
                     host_ids = [str(r[0]) for r in host_rows]
                     ph = ','.join('?' * len(host_ids))
@@ -2437,7 +2545,7 @@ class WebController:
                     tcp_ports = [str(r[0]) for r in all_ports if r[1] == 'tcp']
                     udp_ports = [str(r[0]) for r in all_ports if r[1] == 'udp']
                 else:
-                    log.warning(f"[NSE] No host found in DB with ip={host_arg!r}")
+                    log.warning(f"[NSE] No hosts found in DB for {lookup_ips}")
         except Exception as e:
             log.error(f"[WebController] NSE port query failed: {e}")
 
@@ -2485,8 +2593,14 @@ class WebController:
             log.warning(f"[WebController] Could not append NSE command to notes: {_nne}")
 
         script_name = nse_values.strip().split(',')[0]  # e.g. 'vulners'
+        # _bypass_queue=True: start immediately after all PORTS stages finish.
+        # Without this, scheduler-triggered tools (feroxbuster, nikto, etc.) launched
+        # by stage 1-5 completions can fill the concurrency slots and delay vulners
+        # by minutes — or indefinitely if max_fast_processes is low.
+        #
         result = self.runCommand(command=command, name='nmap', tabTitle=f'nmap ({script_name})',
-                                 hostIp=host_arg, outputfile=outputfile, _is_staged=True)
+                                 hostIp=host_arg, outputfile=outputfile, _is_staged=True,
+                                 _bypass_queue=True)
 
         if not result or not result.get('process_id'):
             with self._pending_stages_lock:

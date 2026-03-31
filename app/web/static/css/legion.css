@@ -452,7 +452,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--highlight);outline:no
 /* Qt6: QLabel 'Matches: ...' yellow banner at top of tool tab output */
 .match-banner{display:flex;align-items:center;background:#fa0;color:#000;font-weight:700;
   padding:3px 8px;margin-bottom:0;border-radius:2px 2px 0 0;font-size:9pt;
-  position:sticky;top:0;z-index:2;flex-shrink:0}
+  position:sticky;top:0;z-index:2;flex-shrink:0;user-select:none}
 /* Match navigation arrows inside the banner */
 .match-nav{margin-left:auto;display:flex;align-items:center;gap:3px;flex-shrink:0}
 .match-prev,.match-next{background:rgba(0,0,0,0.15);border:1px solid rgba(0,0,0,0.3);

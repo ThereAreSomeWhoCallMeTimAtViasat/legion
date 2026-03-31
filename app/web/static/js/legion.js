@@ -1274,7 +1274,17 @@ function loadProcessOutput(processId, targetEl) {
     } else {
         atBottom = true;   /* first load — default to follow */
     }
-    fetchJson('/api/processes/' + processId + '/output?max_chars=50000').then(function(data) {
+    /* When a process has a keyword match, load the full output so the matched
+       spans are guaranteed to be in the rendered text.  Without this, a match
+       deep in a large output (e.g. feroxbuster with 200 k chars) lands beyond
+       the 50 000-char window and the navigation arrows show 0/0 even though the
+       match is real.  For Running processes keep the 50 000-char limit to avoid
+       loading huge in-progress outputs on every poll cycle. */
+    var _proc = L.processes.find(function(p) { return String(p.id) === String(processId); });
+    var _maxChars = (_proc && _proc.has_match && _proc.status !== 'Running')
+        ? 2000000   /* effectively unlimited for matched, finished processes */
+        : 50000;
+    fetchJson('/api/processes/' + processId + '/output?max_chars=' + _maxChars).then(function(data) {
         /* For dynamic-tab output (dyn-output-*): honour the container-level lock.
            _dynSelLocked is set on mousedown in the container and maintained by
            selectionchange, so it is already true before the first DOM rebuild
@@ -1561,7 +1571,35 @@ function initInteractions() {
         $('tool-hosts-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
         });
-        loadProcessOutput(tr.dataset.processId, $('tool-output-text'));
+
+        /* Interactive processes: the PTY buffer is not in a .live_output file so
+           loadProcessOutput returns empty content while the session is alive.
+           Read directly from the terminal buffer API instead, exactly as the
+           processes-table handler does.  If the session is finished (no session_id)
+           the DB fallback in loadProcessOutput already has the saved content. */
+        var _proc = L.processes.find(function(p) {
+            return String(p.id) === tr.dataset.processId;
+        });
+        var _sid = _proc ? _proc.session_id : null;
+
+        if (_sid && _proc && _proc.status === 'Interactive') {
+            /* Active PTY session — pull the raw buffer and render as ANSI text */
+            fetchJson('/api/terminal/' + _sid + '/output').then(function(d) {
+                var out = $('tool-output-text');
+                if (!out) return;
+                var text = d.data || '';
+                out.innerHTML = ansiToHtml(text)
+                    + '<div style="color:var(--disabled);font-style:italic;'
+                    + 'margin-top:10px;font-size:9pt">'
+                    + '&#9000; Interactive terminal — full session in the Processes tab</div>';
+            }).catch(function() {
+                var out = $('tool-output-text');
+                if (out) out.textContent = '(terminal session output unavailable)';
+            });
+        } else {
+            /* Regular process or finished interactive — DB / live-file path */
+            loadProcessOutput(tr.dataset.processId, $('tool-output-text'));
+        }
     });
 
     /* ── OS list click ── */
@@ -1600,11 +1638,21 @@ function initInteractions() {
         if (!btn) return;
         var tab = btn.dataset.tab;
         if (tab === 'tools-panel-left' || tab === 'tools-panel') {
-            /* Show tools display instead of right tabs */
-            if (L.selectedTool) {
-                $('right-tabs').style.display = 'none';
-                $('tools-display').style.display = 'flex';
+            /* Always show the tools display area when the Tools tab is active */
+            $('right-tabs').style.display = 'none';
+            $('tools-display').style.display = 'flex';
+
+            if (!L.selectedTool) {
+                /* First visit — auto-select the first tool which triggers the full
+                   chain: updateToolHosts → middle pane populated → firstHostRow.click()
+                   → right pane output loaded.  Deferred so the panel is visible first. */
+                setTimeout(function() {
+                    var firstTool = $('tools-body').querySelector('tr[data-tool-id]');
+                    if (firstTool) firstTool.click();
+                }, 0);
             }
+            /* Return visit: L.selectedTool is already set, tool-hosts-body rows and
+               tool-output-text content are preserved from the last visit — nothing extra. */
         } else {
             /* Show normal right tabs */
             $('right-tabs').style.display = '';
@@ -1914,9 +1962,37 @@ function updateToolHosts(toolId) {
 /* ================================================================
    SNAPSHOT POLLING (mirrors processTableUiUpdateTimer)
    ================================================================ */
+
+/* ── Scan uptime clock ── */
+function _fmtUptime(secs) {
+    secs = Math.max(0, Math.round(secs));
+    var h = Math.floor(secs / 3600);
+    var m = Math.floor((secs % 3600) / 60);
+    var s = secs % 60;
+    if (h) return h + 'h ' + m + 'm ' + s + 's';
+    if (m) return m + 'm ' + s + 's';
+    return s + 's';
+}
+function _renderUptime() {
+    var el  = $('scan-uptime');
+    var val = $('scan-uptime-value');
+    if (!el || !val) return;
+    if (!L._uptimeStart) { el.style.display = 'none'; return; }
+    var endTs   = L._uptimeEnd   ? L._uptimeEnd   : (Date.now() / 1000);
+    var elapsed = endTs - L._uptimeStart;
+    val.textContent = _fmtUptime(elapsed);
+    el.style.display = '';
+    /* Colour: amber while active, muted when finished */
+    el.style.color = L._uptimeActive ? 'var(--match-positive, #e8a020)' : 'var(--muted)';
+}
+
 function pollSnapshot() {
     fetchJson('/api/snapshot').then(function(snap) {
         L.snapshot = snap;
+        var _su = snap.scan_uptime || {};
+        L._uptimeStart  = _su.start  || null;
+        L._uptimeEnd    = _su.end    || null;
+        L._uptimeActive = !!_su.active;
         renderHosts(snap.hosts || []);
         renderServiceNames(snap.services || []);
         renderTools(snap.tools || []);
@@ -2114,6 +2190,9 @@ document.addEventListener('DOMContentLoaded', function() {
         setText('project-output-folder', (snap.project||{}).output_folder || '');
         setText('stat-open-ports', (snap.summary||{}).open_ports || 0);
     } catch(e) { console.error('Initial snapshot parse error:', e); }
+
+    /* Uptime clock ticks every second (smooth display without waiting for snapshot) */
+    setInterval(_renderUptime, 1000);
 
     /* Start polling every 1.5 seconds */
     L.pollTimer = setInterval(pollSnapshot, 1500);
@@ -3434,15 +3513,36 @@ document.addEventListener('DOMContentLoaded', function() {
     function showContextMenu(items, x, y, onAction) {
         var old = $('ctx-menu');
         if (old) old.remove();
+
+        /* Outer wrapper: flex-column, max-height capped to viewport.
+           Scroll arrows sit outside the scrollable list so they never
+           scroll away — they stay pinned at the top and bottom of the menu. */
         var menu = document.createElement('div');
         menu.id = 'ctx-menu';
-        /* Start hidden so we can measure before showing */
-        menu.style.cssText = 'position:fixed;z-index:300;background:var(--midlight);border:1px solid var(--border);box-shadow:2px 4px 8px rgba(0,0,0,.5);min-width:180px;padding:2px 0;visibility:hidden;max-height:calc(100vh - 16px);overflow-y:auto;';
+        menu.style.cssText = 'position:fixed;z-index:300;background:var(--midlight);' +
+            'border:1px solid var(--border);box-shadow:2px 4px 8px rgba(0,0,0,.5);' +
+            'min-width:180px;visibility:hidden;' +
+            'max-height:calc(100vh - 16px);display:flex;flex-direction:column;';
+
+        /* ── Top scroll arrow ── */
+        var _ARROW_CSS = 'flex-shrink:0;display:none;text-align:center;padding:3px 0;' +
+            'cursor:pointer;font-size:11px;color:var(--muted);user-select:none;' +
+            'background:var(--midlight);';
+        var topArrow = document.createElement('div');
+        topArrow.style.cssText = _ARROW_CSS + 'border-bottom:1px solid var(--border);';
+        topArrow.textContent = '▲  more above';
+        menu.appendChild(topArrow);
+
+        /* ── Scrollable item list ── */
+        var list = document.createElement('div');
+        list.style.cssText = 'overflow-y:auto;flex:1;padding:2px 0;';
+
+        /* Build items into the list (unchanged logic, target is now list not menu) */
         items.forEach(function(item) {
             if (item.separator) {
                 var sep = document.createElement('div');
                 sep.style.cssText = 'height:1px;background:var(--border);margin:2px 6px;';
-                menu.appendChild(sep);
+                list.appendChild(sep);
             } else if (item.submenu) {
                 var sub = document.createElement('div');
                 sub.style.cssText = 'position:relative;';
@@ -3454,17 +3554,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 subDiv.style.cssText = 'display:none;position:absolute;left:100%;top:0;background:var(--midlight);border:1px solid var(--border);min-width:180px;box-shadow:2px 4px 8px rgba(0,0,0,.5);';
                 btn.addEventListener('mouseenter', function() {
                     subDiv.style.display = 'block';
-                    /* Flip submenu left if it would overflow right edge */
                     var r = subDiv.getBoundingClientRect();
-                    subDiv.style.left = (r.right > window.innerWidth) ? 'auto' : '100%';
-                    subDiv.style.right = (r.right > window.innerWidth) ? '100%' : 'auto';
-                    /* Flip submenu up if it would overflow bottom edge */
-                    subDiv.style.top = (r.bottom > window.innerHeight) ? 'auto' : '0';
-                    subDiv.style.bottom = (r.bottom > window.innerHeight) ? '0' : 'auto';
+                    subDiv.style.left  = (r.right  > window.innerWidth)  ? 'auto' : '100%';
+                    subDiv.style.right = (r.right  > window.innerWidth)  ? '100%' : 'auto';
+                    subDiv.style.top   = (r.bottom > window.innerHeight) ? 'auto' : '0';
+                    subDiv.style.bottom= (r.bottom > window.innerHeight) ? '0'    : 'auto';
                 });
-                sub.addEventListener('mouseleave', function() {
-                    subDiv.style.display = 'none';
-                });
+                sub.addEventListener('mouseleave', function() { subDiv.style.display = 'none'; });
                 item.submenu.forEach(function(si) {
                     var sbtn = document.createElement('button');
                     sbtn.textContent = si.label;
@@ -3476,7 +3572,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
                 sub.appendChild(btn);
                 sub.appendChild(subDiv);
-                menu.appendChild(sub);
+                list.appendChild(sub);
             } else {
                 var btn2 = document.createElement('button');
                 btn2.textContent = item.label;
@@ -3484,19 +3580,66 @@ document.addEventListener('DOMContentLoaded', function() {
                 btn2.addEventListener('click', function() { menu.remove(); onAction(item); });
                 btn2.addEventListener('mouseenter', function() { this.style.background='var(--highlight)'; this.style.color='#fff'; });
                 btn2.addEventListener('mouseleave', function() { this.style.background='none'; this.style.color='var(--text)'; });
-                menu.appendChild(btn2);
+                list.appendChild(btn2);
             }
         });
+        menu.appendChild(list);
+
+        /* ── Bottom scroll arrow ── */
+        var botArrow = document.createElement('div');
+        botArrow.style.cssText = _ARROW_CSS + 'border-top:1px solid var(--border);';
+        botArrow.textContent = '▼  more below';
+        menu.appendChild(botArrow);
+
+        /* ── Arrow visibility — updated on every scroll event ── */
+        function _updateArrows() {
+            var atTop    = list.scrollTop <= 0;
+            var atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
+            topArrow.style.display = atTop    ? 'none' : 'block';
+            botArrow.style.display = atBottom ? 'none' : 'block';
+        }
+
+        /* ── Arrow click: scroll ~3 rows (≈72 px per click) ── */
+        var _STEP = 72;
+        topArrow.addEventListener('click', function(e) {
+            e.stopPropagation();
+            list.scrollBy({ top: -_STEP, behavior: 'smooth' });
+        });
+        botArrow.addEventListener('click', function(e) {
+            e.stopPropagation();
+            list.scrollBy({ top: _STEP, behavior: 'smooth' });
+        });
+
+        /* Hover highlight on arrows */
+        [topArrow, botArrow].forEach(function(a) {
+            a.addEventListener('mouseenter', function() { this.style.color = 'var(--text)'; this.style.background = 'var(--dark)'; });
+            a.addEventListener('mouseleave', function() { this.style.color = 'var(--muted)'; this.style.background = 'var(--midlight)'; });
+            /* Mouse wheel over an arrow scrolls the list, not the page */
+            a.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                list.scrollBy({ top: e.deltaY, behavior: 'auto' });
+            }, { passive: false });
+        });
+
+        list.addEventListener('scroll', _updateArrows);
+
         document.body.appendChild(menu);
+
         /* Clamp position so menu stays within viewport */
         var mw = menu.offsetWidth, mh = menu.offsetHeight;
-        var vw = window.innerWidth,  vh = window.innerHeight;
-        var left = (x + mw > vw) ? Math.max(0, vw - mw) : x;
-        var top  = (y + mh > vh) ? Math.max(0, vh - mh) : y;
+        var left = (x + mw > window.innerWidth)  ? Math.max(0, window.innerWidth  - mw) : x;
+        var top  = (y + mh > window.innerHeight) ? Math.max(0, window.innerHeight - mh) : y;
         menu.style.left = left + 'px';
         menu.style.top  = top  + 'px';
         menu.style.visibility = '';
-        document.addEventListener('click', function rm() { menu.remove(); document.removeEventListener('click', rm); }, {once: true});
+
+        /* Check initial scroll state after layout is computed */
+        requestAnimationFrame(_updateArrows);
+
+        document.addEventListener('click', function rm() {
+            menu.remove();
+            document.removeEventListener('click', rm);
+        }, { once: true });
     }
 
 
@@ -4412,18 +4555,134 @@ document.addEventListener('DOMContentLoaded', function() {
         var p2run = $('ai-p2-running');
         var p2res = $('ai-p2-result');
         var p2md  = $('ai-p2-markdown');
+        var exportBtn = $('ai-export-html-btn');
         if (phase2_markdown) {
             if (p2req) p2req.style.display = 'none';
             if (p2run) p2run.style.display = 'none';
             if (p2res) p2res.style.display = '';
             if (p2md)  p2md.innerHTML = _aiMd(phase2_markdown);
+            /* Both phases complete — show export button */
+            if (exportBtn) exportBtn.style.display = '';
         } else {
-            /* Phase 2 not yet run — show the request button */
+            /* Phase 2 not yet run — show the request button, hide export */
             if (p2req) p2req.style.display = '';
             if (p2run) p2run.style.display = 'none';
             if (p2res) p2res.style.display = 'none';
+            if (exportBtn) exportBtn.style.display = 'none';
         }
     }
+
+    /* ── AI HTML report export ── */
+    function _aiExportHtml() {
+        if (!_aiResults) return;
+        var r = _aiResults;
+
+        /* Gather host context */
+        var host = L.hosts.find(function(h) { return h.id === _aiHostId; }) || {};
+        var hostIp       = host.ip       || r.host_ip || 'Unknown';
+        var hostHostname = host.hostname || '';
+        var hostOs       = host.os       || '';
+
+        /* Build findings table rows */
+        var _sevCols = {critical:'#e74c3c',high:'#e67e22',medium:'#f1c40f',low:'#3498db',info:'#95a5a6'};
+        var findingsRows = '';
+        try {
+            var findings = typeof r.phase1_json === 'string' ? JSON.parse(r.phase1_json) : (r.phase1_json || []);
+            findings.forEach(function(f) {
+                var sev = (f.severity || 'info').toLowerCase();
+                var col = _sevCols[sev] || '#ccc';
+                findingsRows +=
+                    '<tr><td style="color:' + col + ';font-weight:bold">' + esc(f.severity||'') + '</td>' +
+                    '<td>' + esc(f.source||'') + '</td>' +
+                    '<td>' + esc(String(f.port||'')) + '</td>' +
+                    '<td>' + esc(f.finding||'') + '</td>' +
+                    '<td style="color:#888;font-size:0.85em">' + esc(f.evidence||'') + '</td></tr>';
+            });
+        } catch(e) {}
+
+        /* Render Phase 2 markdown to HTML for the report */
+        var p2html = _aiMd(r.phase2_markdown || '');
+
+        /* Timestamp for filename and report header */
+        var now = new Date();
+        var pad = function(n) { return String(n).padStart(2,'0'); };
+        var ts  = now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate()) +
+                  '_' + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+        var tsDisplay = now.toLocaleString();
+        var costLine = r.cost_usd != null
+            ? '$' + Number(r.cost_usd).toFixed(4) + ' | ' +
+              ((r.tokens_input||0)+(r.tokens_output||0)).toLocaleString() + ' tokens'
+            : 'Cached';
+
+        var html = '<!DOCTYPE html>\n<html lang="en">\n<head>\n' +
+            '<meta charset="UTF-8">\n' +
+            '<meta name="viewport" content="width=device-width,initial-scale=1">\n' +
+            '<title>Legion AI Report — ' + esc(hostIp) + ' — ' + ts + '</title>\n' +
+            '<style>\n' +
+            '  body{font-family:system-ui,sans-serif;background:#1a1a1a;color:#d0d0d0;margin:0;padding:24px;line-height:1.5}\n' +
+            '  h1{color:#4ea6dc;margin:0 0 4px}\n' +
+            '  h2{color:#4ea6dc;border-bottom:1px solid #333;padding-bottom:6px;margin:24px 0 12px}\n' +
+            '  h3,h4{color:#c0c0c0;margin:12px 0 4px}\n' +
+            '  .meta{font-size:0.85em;color:#888;margin-bottom:20px}\n' +
+            '  table{width:100%;border-collapse:collapse;font-size:0.9em;margin-bottom:16px}\n' +
+            '  th{background:#252525;padding:8px;text-align:left;border-bottom:2px solid #333;color:#aaa;font-size:0.8em;text-transform:uppercase;letter-spacing:0.05em}\n' +
+            '  td{padding:7px 8px;border-bottom:1px solid #2a2a2a;vertical-align:top}\n' +
+            '  tr:hover td{background:rgba(255,255,255,0.03)}\n' +
+            '  pre{background:#111;padding:10px;overflow:auto;font-size:0.82em;border:1px solid #333}\n' +
+            '  code{background:#111;padding:1px 4px;font-size:0.88em}\n' +
+            '  ul{padding-left:20px;margin:6px 0}\n' +
+            '  li{margin:3px 0}\n' +
+            '  .section{background:#1e1e1e;border:1px solid #2a2a2a;border-radius:6px;padding:16px;margin-bottom:20px}\n' +
+            '  .footer{margin-top:32px;font-size:0.8em;color:#555;border-top:1px solid #2a2a2a;padding-top:12px}\n' +
+            '</style>\n</head>\n<body>\n' +
+            '<h1>Legion AI Analysis Report</h1>\n' +
+            '<div class="meta">' +
+            '<strong>Host:</strong> ' + esc(hostIp) +
+            (hostHostname && hostHostname !== 'unknown' ? ' (' + esc(hostHostname) + ')' : '') +
+            (hostOs && hostOs !== 'unknown' ? ' &nbsp;|&nbsp; <strong>OS:</strong> ' + esc(hostOs) : '') +
+            ' &nbsp;|&nbsp; <strong>Generated:</strong> ' + tsDisplay +
+            ' &nbsp;|&nbsp; <strong>Cost:</strong> ' + costLine +
+            '</div>\n' +
+            '<div class="section">\n<h2>Phase 1 — Security Findings</h2>\n' +
+            '<table>\n<thead><tr><th>Severity</th><th>Source</th><th>Port</th><th>Finding</th><th>Evidence</th></tr></thead>\n' +
+            '<tbody>' + findingsRows + '</tbody>\n</table>\n</div>\n' +
+            '<div class="section">\n<h2>Phase 2 — Attack Plan</h2>\n' +
+            p2html + '\n</div>\n' +
+            '<div class="footer">Generated by Legion v' + (_VERSION || '10.x') + ' &mdash; ' + tsDisplay + '</div>\n' +
+            '</body>\n</html>';
+
+        var filename = 'legion-ai-report-' + esc(hostIp).replace(/[^a-z0-9.]/gi, '-') + '-' + ts + '.html';
+
+        /* Try the modern File System Access API first (gives a real Save As dialog).
+           Fall back to <a download> which triggers the browser's download mechanism. */
+        if (window.showSaveFilePicker) {
+            window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [{ description: 'HTML Report', accept: { 'text/html': ['.html'] } }]
+            }).then(function(fh) {
+                return fh.createWritable();
+            }).then(function(w) {
+                w.write(html);
+                return w.close();
+            }).catch(function() {
+                /* User cancelled — no action needed */
+            });
+        } else {
+            /* Firefox / fallback: trigger a download */
+            var blob = new Blob([html], { type: 'text/html' });
+            var url  = URL.createObjectURL(blob);
+            var a    = document.createElement('a');
+            a.href     = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
+        }
+    }
+
+    var _aiExportBtn = $('ai-export-html-btn');
+    if (_aiExportBtn) _aiExportBtn.addEventListener('click', _aiExportHtml);
 
     function _aiShowResults(result, histResult) {
         _aiShowState('ai-results');
