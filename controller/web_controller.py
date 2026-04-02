@@ -198,6 +198,7 @@ class WebController:
         self.slowProcessesRunning = 0
         self._pending_ports_stages = {}    # hostIp -> set of stage nums still running
         self._pending_stages_lock = threading.Lock()
+        self._scheduler_lock      = threading.Lock()  # serialise concurrent scheduler() calls (race fix)
         self._scan_generation = {}         # hostIp -> int; bumped each new scan so stale threads self-cancel
         self._pending_scan_notes = {}      # hostIp -> note text deferred until host exists in DB
         self._state_changed = False
@@ -1038,6 +1039,11 @@ class WebController:
         """controller.py:2344 — run automated attacks after nmap import.
         Reads SchedulerSettings from legion.conf and runs configured tools
         against discovered hosts/ports."""
+        # Serialise concurrent scheduler() calls from parallel _wait_and_import threads.
+        # Without this lock, 5 PORTS stages finishing simultaneously all pass the
+        # already_ran check before any of them commits their runCommand() row →
+        # duplicate feroxbuster/gobuster/nuclei processes for the same port.
+        self._scheduler_lock.acquire()
         try:
             # Exit/shutdown in progress — do not start any new tools.
             # _wait_and_import threads whose nmap finished naturally (exit=0)
@@ -1111,8 +1117,16 @@ class WebController:
                             # so the DB check catches completed screenshots on repeat scheduler runs.
                             try:
                                 from app.auxiliary import Filters as _Filters
+                                # Only consider Waiting or Running processes as
+                                # blocking — a Finished process means the tool
+                                # completed and should be re-launchable on rescan.
+                                # Checking Finished processes here caused "already ran"
+                                # false-positives that silently skipped all tools
+                                # whenever the same host was scanned more than once
+                                # in the same session.
                                 existing = self.logic.activeProject.repositoryContainer.processRepository.getProcesses(
-                                    _Filters(), showProcesses='noNmap')
+                                    _Filters(), showProcesses='noNmap',
+                                    status_filter=['Waiting', 'Running'])
                                 already_ran = any(
                                     p.get('name','') == tool_id and
                                     p.get('hostIp','') == hip and
@@ -1120,7 +1134,7 @@ class WebController:
                                     for p in (existing or [])
                                 )
                                 if already_ran:
-                                    log.debug(f'[Scheduler] Skipping {tool_id} on {hip}:{port_num} — already ran')
+                                    log.debug(f'[Scheduler] Skipping {tool_id} on {hip}:{port_num} — already running/queued')
                                     continue
                             except Exception:
                                 pass
@@ -1165,6 +1179,8 @@ class WebController:
 
         except Exception as e:
             log.error(f"[WebController] scheduler error: {e}")
+        finally:
+            self._scheduler_lock.release()
 
     def checkProcessQueue(self):
         """controller.py:1570 — dequeue and start processes respecting concurrency limits.
@@ -2246,6 +2262,12 @@ class WebController:
         The stage/stop params are kept for API compatibility but stage is always 1
         from external callers; the parallel launcher handles sequencing internally.
         """
+        # A new scan means we are NOT shutting down.  killRunningProcesses() sets
+        # _shutting_down=True but never resets it — without this line every
+        # subsequent scheduler() call after a kill is silently suppressed, causing
+        # automated tools (feroxbuster, nuclei, etc.) to never launch.
+        self._shutting_down = False
+
         host_arg = str(targetHosts).strip()
         if not host_arg or stop:
             return
