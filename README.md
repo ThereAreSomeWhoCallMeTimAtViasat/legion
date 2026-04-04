@@ -8,11 +8,11 @@
 
 ## Why I built this
 
-I've always liked Legion. The layout — hosts on the left, tabbed detail panels on the right, a live process list at the bottom — is genuinely good UX for a pentest workflow. But the PyQt6 desktop app had friction: it required a full Qt environment, X11 forwarding when working remotely, and a brittle dependency stack that broke on every Kali update.
+I've always liked Legion. The classic layout with hosts on the left, tabbed detail panels on the right, and a live process list at the bottom.  I think it is an excellent UX for a pentest workflow. But the PyQt6 desktop app was hard to develop with: it required a full Qt environment, X11 forwarding when working remotely, and a brittle dependency stack that seemed to break with Kali updates.
 
-So I rewrote the interface as a Flask web app. The layout is identical to the original. The keyboard shortcuts, tab structure, and process model are the same. The underlying Python scanning engine (`controller.py`, `logic.py`, the SQLAlchemy ORM, the staged nmap pipeline) is unchanged — I just replaced every Qt widget with its HTML equivalent, polled with a 1.5-second snapshot API instead of Qt signals, and ran the whole thing in a browser.
+Since the main branch was moving to Flask, I rewrote the classic interface as a Flask web app. The layout is very close to the original. The keyboard shortcuts, tab structure, and process model are the same. The underlying Python scanning engine (`controller.py`, `logic.py`, the SQLAlchemy ORM, the staged nmap pipeline) is unchanged — I just replaced every Qt widget with its HTML equivalent, polled with a 1.5-second snapshot API instead of Qt signals, and ran the whole thing in a browser.
 
-While I was in there I added the things I'd always wanted: AI host analysis via Claude (Vertex AI), keyword match highlighting with navigation arrows, parallel staged nmap, a config GUI so you don't have to hand-edit `legion.conf`, and about 45 other features. The name **LegionnAIre** reflects the AI addition.
+While I was in there I added the things I'd always wanted: Interactive terminals, AI host analysis via Claude (Vertex AI), tool keyword match highlighting with navigation arrows, better note taking, parallel nmap stages, a config GUI so you don't have to hand-edit `legion.conf`, and several other UI features. There is a full selenium test suite for developers.  The name **LegionnAIre** reflects the AI addition and its Legion roots.
 
 ---
 
@@ -241,7 +241,7 @@ The Flask layer wraps the original Qt6 controller with zero changes to the scann
 
 - Fork of [GoVanguard/legion](https://github.com/GoVanguard/legion) by Shane Scott (ifly53e)
 - Original Sparta Python 2.7 codebase by [SECFORCE](https://github.com/SECFORCE/sparta)
-- Flask web UI, parallel staged nmap, AI integration, and all features described above by Tim McLean
+- Flask web UI, parallel staged nmap, AI integration, and all features described above by Tim McLean (ifly53e, ThereAreSomeWhoCallMeTimAtViasat)
 - nmap XML parsing engine originally by yunshu, modified by ketchup and SECFORCE
 - Relies on nmap, hydra, SQLAlchemy, Flask, xterm.js, and many other open source tools
 
