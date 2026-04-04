@@ -34,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.95-flask
-- **Static asset cache:** `?v=76` in `base.html`
+- **Current Flask version:** v10.117-flask
+- **Static asset cache:** `?v=84` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -214,6 +214,7 @@ Called automatically from `start()` on every project open/create:
 - **v10.94**: Ctrl+B most-recent-selection wins — xterm fallback reads (`_termState.xterm.getSelection()`) now guarded by `&& !_lastNonXtermSelSource`. xterm maintains its own selection state independently of `window.getSelection()`; the old code used the stale xterm selection even after the user made a fresh DOM selection in the upper panel.
 - **v10.95**: Config manager backup + validation — `_backup_conf(src, label)` helper writes to `~/.local/share/legion/backup/{label}-{YYYYMMDD_HHMMSS}.conf` (timestamped, never overwrites). All three save paths now use it: raw legion.conf save, profile save, and profile activate. Profile activate also validates with `_validate_legion_conf` before copying — broken profiles can't become active.
 - **Tests**: `tests/test_ui_v10_features.py` (port 5075, 10 tests): context menu clamping, font size all panels, goto-tab same+cross-host. `tests/test_ui_v10b_features.py` (port 5078, 14 tests): context menu scroll, filter label, notes all stages, process timeout (API+DOM+duration+output panel+nmap-exempt), scheduler no impacket. Skill registered at `~/.claude/skills/legion-selenium-test.md`.
+- **v10.117**: Easy Mode Config Editor (backlog #10 + #11) — `⊞ Easy Edit` button in F2 Config Manager modal. Parses the active profile's conf text client-side, shows structured section editors, serializes back on close. Sections: GeneralSettings/BruteSettings/ToolSettings (labeled forms with typed inputs), StagedNmapSettings (per-stage type+spec rows), HostActions (searchable table, 2-col CSV), PortActions (searchable table, 3-col CSV, [IP]/[PORT] validation), PortTerminalActions (same + terminal checkbox), SchedulerSettings (tool dropdown from known keys, service + tcp/udp), MatchSettings (tag chip editor with add/delete per keyword). Inline red-border validation blocks save when [IP]/[PORT] missing. `✓ Apply to Config` serializes without closing; `← Back to Advanced` applies and returns to raw textarea. CSS cache buster `?v=84`.
 
 ---
 
@@ -653,8 +654,8 @@ pip install "anthropic[vertex]"
 | 7 | LLM host analysis (AI tab) | Med | ✅ Done v10.55 | Vertex AI, two-phase, history DB, Jaccard similarity, side-by-side |
 | 8 | Save-on-exit prompt | Low | ✅ Done v10.3 | |
 | 9 | Auto per-service NSE scripts after discovery | Med | ❌ Not started | Flask only; after #7 |
-| 10 | Tool manager GUI — add/remove tools from legion.conf | Med | ❌ Not started | Form-based; no direct conf editing |
-| 11 | Settings GUI — change GeneralSettings/BruteSettings/etc in a form | Med | ❌ Not started | Replaces direct legion.conf editing for settings |
+| 10 | Tool manager GUI — add/remove tools from legion.conf | Med | ✅ Done v10.117 | Easy Mode in F2: searchable tables for HostActions/PortActions/PortTerminalActions/SchedulerSettings; inline [IP]/[PORT] validation |
+| 11 | Settings GUI — change GeneralSettings/BruteSettings/etc in a form | Med | ✅ Done v10.117 | Easy Mode in F2: labeled forms for General/Brute/Tool/StagedNmap settings; typed inputs per field |
 | 12 | Fix Hydra SSH against legacy targets (libssh2 MAC incompatibility) | Med | ❌ Not started | See design below |
 | 13 | Update legion.conf tool list — retire deprecated tools, add modern equivalents | Med | ✅ Done v10.28 | install_tools.sh + update script; both confs updated |
 | 14 | Taller tabs — increase height of the right-panel tab bar tabs | Low | ✅ Done v10.31 | .tab-btn padding 12px → 15px top/bottom |

@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.116-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.117-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -748,14 +748,28 @@
         </div>
 
         <!-- Bottom: Action buttons -->
-        <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+        <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
             <button id="config-save" type="button">Save</button>
+            <button id="config-easy-btn" type="button" style="border-color:var(--highlight);color:var(--highlight)" title="Open structured GUI editor for this profile">⊞ Easy Edit</button>
             <button id="config-new" type="button">New Profile</button>
             <button id="config-rename" type="button">Rename</button>
             <button id="config-duplicate" type="button">Duplicate</button>
             <button id="config-delete" type="button" style="border-color:rgba(255,80,80,.5);color:#f44">Delete</button>
             <div style="flex:1"></div>
             <p id="config-status" class="meta-note" style="margin:0"></p>
+        </div>
+
+        <!-- Easy Mode panel — replaces config-editors when active -->
+        <div id="easy-mode-panel" style="display:none;flex:1;min-height:0;flex-direction:column;margin-top:8px">
+            <!-- Easy toolbar -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                <button id="easy-back-btn" type="button">← Back to Advanced</button>
+                <div id="easy-section-tabs" style="display:flex;gap:4px;flex-wrap:wrap;flex:1"></div>
+                <button id="easy-apply-btn" type="button" style="border-color:var(--highlight);color:var(--highlight)">✓ Apply to Config</button>
+            </div>
+            <!-- Section content area -->
+            <div id="easy-content" style="flex:1;overflow:auto;background:var(--base);border:1px solid var(--border);border-radius:4px;padding:12px;min-height:360px;max-height:500px"></div>
+            <div id="easy-status" style="margin-top:6px;font-size:9pt;color:#f44;min-height:16px"></div>
         </div>
     </div>
 </div>

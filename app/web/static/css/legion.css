@@ -265,6 +265,50 @@ body.black-output-bg .tool-output-area{background:#000}
 #cfg-find-close{color:#f44;border-color:rgba(255,80,80,.4)}
 /* Wrapper so the highlight overlay can sit on top of the textarea */
 .cfg-editor-wrap{position:relative}
+
+/* ── Easy Mode Config Editor ── */
+#easy-section-tabs .easy-tab{padding:4px 12px;font-size:8.5pt;border-radius:3px;cursor:pointer;background:var(--midlight);border:1px solid var(--border);color:var(--text)}
+#easy-section-tabs .easy-tab.active{background:var(--highlight);color:#fff;border-color:var(--highlight)}
+#easy-section-tabs .easy-tab:hover:not(.active){background:var(--hover)}
+/* Form sections */
+.easy-form-row{display:grid;grid-template-columns:220px 1fr;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--dark)}
+.easy-form-row:last-child{border-bottom:none}
+.easy-form-label{font-size:9pt;color:var(--disabled)}
+.easy-form-input{background:var(--base);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:3px 6px;font-size:9pt;font-family:inherit;width:100%}
+.easy-form-input:focus{outline:none;border-color:var(--highlight)}
+.easy-form-input.easy-error{border-color:#f44}
+.easy-error-msg{font-size:8pt;color:#f44;margin-top:2px}
+.easy-bool{accent-color:var(--highlight)}
+/* Table sections */
+.easy-table-wrap{overflow:auto;max-height:380px;border:1px solid var(--border);border-radius:4px}
+.easy-table{width:100%;border-collapse:collapse;font-size:8.5pt}
+.easy-table thead th{background:var(--dark);color:var(--disabled);padding:5px 8px;text-align:left;font-weight:600;font-size:8pt;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1}
+.easy-table tbody tr:hover td{background:var(--hover)}
+.easy-table td{padding:4px 6px;border-bottom:1px solid var(--dark);vertical-align:middle}
+.easy-table td:last-child{white-space:nowrap}
+.easy-td-input{background:var(--base);color:var(--text);border:1px solid var(--border);border-radius:2px;padding:2px 5px;font-size:8.5pt;font-family:inherit;width:100%;min-width:60px}
+.easy-td-input:focus{outline:none;border-color:var(--highlight)}
+.easy-td-input.easy-error{border-color:#f44;background:#2a0000}
+.easy-td-select{background:var(--midlight);color:var(--text);border:1px solid var(--border);border-radius:2px;padding:2px 4px;font-size:8.5pt;font-family:inherit}
+.easy-del-btn{background:none;border:1px solid rgba(255,80,80,.4);color:#f44;border-radius:2px;padding:1px 6px;cursor:pointer;font-size:8pt}
+.easy-del-btn:hover{background:rgba(255,80,80,.15)}
+.easy-add-row{padding:8px;border-top:1px solid var(--border);background:var(--dark)}
+.easy-add-row input,.easy-add-row select{margin-right:4px}
+.easy-search-bar{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.easy-search-bar input{flex:1;background:var(--base);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:4px 8px;font-size:9pt}
+/* Match settings */
+.easy-match-section{margin-bottom:16px}
+.easy-match-section h4{font-size:9pt;color:var(--highlight);margin-bottom:6px}
+.easy-match-tags{display:flex;flex-wrap:wrap;gap:4px;max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--dark)}
+.easy-match-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--midlight);border:1px solid var(--border);border-radius:10px;font-size:8pt}
+.easy-match-tag button{background:none;border:none;color:var(--disabled);cursor:pointer;padding:0;font-size:10pt;line-height:1}
+.easy-match-tag button:hover{color:#f44}
+.easy-match-add{display:flex;gap:6px;margin-top:6px}
+.easy-match-add input{flex:1;background:var(--base);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:3px 8px;font-size:9pt}
+/* Staged nmap */
+.easy-stage-row{display:grid;grid-template-columns:100px 120px 1fr;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--dark)}
+.easy-stage-row:last-child{border-bottom:none}
+.easy-stage-label{font-size:9pt;color:var(--disabled);font-weight:600}
 /* Highlight overlay: mirrors textarea text, pointer-events off, only <mark> is visible */
 .cfg-find-overlay{
   position:absolute;top:0;left:0;right:0;bottom:0;

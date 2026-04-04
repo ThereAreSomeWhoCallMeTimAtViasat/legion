@@ -2698,6 +2698,734 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(function(err) { setText('config-status', 'Error: ' + err.message); });
     });
 
+    /* ══════════════════════════════════════════════════════════════════
+       EASY MODE CONFIG EDITOR — backlog #10 / #11
+       Parses the current profile's raw conf text into structured data,
+       renders section-specific form/table UIs for editing, and serializes
+       back to conf text when the user closes Easy Mode.
+    ══════════════════════════════════════════════════════════════════ */
+    (function() {
+        /* ── Helpers ────────────────────────────────────────────────── */
+        function esc(s) {
+            return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                                  .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        /* CSV parser matching Python parse_csv — respects quoted strings */
+        function parseCSV(value) {
+            var elements = [], current = [], inQ = false, qch = '';
+            for (var i = 0; i < value.length; i++) {
+                var ch = value[i];
+                if ((ch === '"' || ch === "'") && !inQ) { inQ = true; qch = ch; current.push(ch); }
+                else if (ch === qch && inQ) { inQ = false; qch = ''; current.push(ch); }
+                else if (ch === ',' && !inQ) { elements.push(current.join('').trim()); current = []; }
+                else { current.push(ch); }
+            }
+            var last = current.join('').trim();
+            if (last || elements.length) elements.push(last);
+            return elements;
+        }
+
+        /* Strip outer quotes from a value string */
+        function stripQuotes(s) {
+            s = s.trim();
+            if ((s.startsWith('"') && s.endsWith('"')) ||
+                (s.startsWith("'") && s.endsWith("'"))) return s.slice(1, -1);
+            return s;
+        }
+
+        /* Quote a value that contains commas, and escape inner quotes */
+        function quoteIfNeeded(s) {
+            if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1)
+                return '"' + s.replace(/"/g, '\\"') + '"';
+            return s;
+        }
+
+        /* ── Conf parser ─────────────────────────────────────────────── */
+        function parseConf(text) {
+            var sections = {};   /* { sectionName: [{key, value, rawLine}] } */
+            var order = [];      /* section order */
+            var cur = null;
+            text.split('\n').forEach(function(rawLine) {
+                var s = rawLine.trim();
+                if (!s || s.startsWith('#') || s.startsWith(';')) {
+                    if (cur) sections[cur].push({ comment: true, rawLine: rawLine });
+                    return;
+                }
+                if (s.startsWith('[') && s.endsWith(']')) {
+                    cur = s.slice(1, -1).trim();
+                    if (!sections[cur]) { sections[cur] = []; order.push(cur); }
+                    return;
+                }
+                if (cur && s.indexOf('=') !== -1) {
+                    var idx = s.indexOf('=');
+                    sections[cur].push({ key: s.slice(0,idx).trim(), value: s.slice(idx+1).trim(), rawLine: rawLine });
+                }
+            });
+            return { sections: sections, order: order };
+        }
+
+        /* ── Conf serializer ─────────────────────────────────────────── */
+        function serializeConf(parsed) {
+            var lines = [];
+            parsed.order.forEach(function(sec) {
+                lines.push('[' + sec + ']');
+                (parsed.sections[sec] || []).forEach(function(entry) {
+                    if (entry.comment) { /* skip retained comments */ return; }
+                    lines.push(entry.key + '=' + entry.value);
+                });
+                lines.push('');
+            });
+            return lines.join('\n');
+        }
+
+        /* Write back to the active profile textarea */
+        function cfgSetCurrentText(text) {
+            var name = cfgGetCurrentName();
+            var ta = document.querySelector('#config-editors textarea[data-profile="' + name + '"]');
+            if (ta) ta.value = text;
+        }
+
+        /* ── State ───────────────────────────────────────────────────── */
+        var _parsed = null;
+        var _activeSection = null;
+
+        var SECTIONS = [
+            'GeneralSettings','BruteSettings','ToolSettings','StagedNmapSettings',
+            'HostActions','PortActions','PortTerminalActions','SchedulerSettings','MatchSettings'
+        ];
+
+        var FORM_DEFS = {
+            GeneralSettings: [
+                {key:'log-directory',                 type:'text',   label:'Log Directory'},
+                {key:'default-terminal',              type:'text',   label:'Default Terminal'},
+                {key:'tool-output-black-background',  type:'bool',   label:'Black Background for Output'},
+                {key:'screenshooter-timeout',         type:'number', label:'Screenshooter Timeout (ms)'},
+                {key:'process-timeout',               type:'number', label:'Process Timeout (s) — 0 = disabled'},
+                {key:'web-services',                  type:'csv',    label:'Web Services'},
+                {key:'enable-scheduler',              type:'bool',   label:'Enable Scheduler'},
+                {key:'enable-scheduler-on-import',    type:'bool',   label:'Enable Scheduler on XML Import'},
+                {key:'max-fast-processes',            type:'number', label:'Max Concurrent Processes (all tools)'},
+                {key:'max-slow-processes',            type:'number', label:'Max Concurrent nmap Processes'},
+                {key:'tool-duplication',              type:'enum',   label:'Tool Duplication Mode',
+                 options:['skip','newTab','append','askMe']},
+            ],
+            BruteSettings: [
+                {key:'store-cleartext-passwords-on-exit', type:'bool',  label:'Store Cleartext Passwords on Exit'},
+                {key:'username-wordlist-path',            type:'text',  label:'Username Wordlist Path'},
+                {key:'password-wordlist-path',            type:'text',  label:'Password Wordlist Path'},
+                {key:'default-username',                  type:'text',  label:'Default Username'},
+                {key:'default-password',                  type:'text',  label:'Default Password'},
+                {key:'services',                          type:'csv',   label:'Brute-Force Services'},
+                {key:'no-username-services',              type:'csv',   label:'No-Username Services'},
+                {key:'no-password-services',              type:'csv',   label:'No-Password Services'},
+            ],
+            ToolSettings: [
+                {key:'nmap-path',        type:'text', label:'nmap Path'},
+                {key:'hydra-path',       type:'text', label:'Hydra Path'},
+                {key:'cutycapt-path',    type:'text', label:'CutyCapt Path'},
+                {key:'texteditor-path',  type:'text', label:'Text Editor Path'},
+                {key:'pyshodan-api-key', type:'text', label:'pyShodan API Key'},
+            ],
+        };
+
+        /* ── Collect all tool keys for SchedulerSettings dropdown ─────── */
+        function getAllToolKeys() {
+            var keys = [];
+            ['HostActions','PortActions','PortTerminalActions'].forEach(function(sec) {
+                (_parsed.sections[sec] || []).forEach(function(e) {
+                    if (e.key && !e.comment) keys.push(e.key);
+                });
+            });
+            return keys;
+        }
+
+        /* ── Validation helpers ──────────────────────────────────────── */
+        function setFieldError(input, msg) {
+            input.classList.add('easy-error');
+            var err = input.parentElement.querySelector('.easy-error-msg');
+            if (!err) {
+                err = document.createElement('div');
+                err.className = 'easy-error-msg';
+                input.parentElement.appendChild(err);
+            }
+            err.textContent = msg;
+        }
+        function clearFieldError(input) {
+            input.classList.remove('easy-error');
+            var err = input.parentElement.querySelector('.easy-error-msg');
+            if (err) err.textContent = '';
+        }
+        function validateCmd(input, requirePort) {
+            var v = input.value;
+            if (!v.includes('[IP]')) { setFieldError(input, 'Command must contain [IP]'); return false; }
+            if (requirePort && !v.includes('[PORT]')) { setFieldError(input, 'Command must contain [PORT]'); return false; }
+            clearFieldError(input); return true;
+        }
+
+        /* ── Section renderers ────────────────────────────────────────── */
+
+        /* Generic form for GeneralSettings / BruteSettings / ToolSettings */
+        function renderForm(sec) {
+            var defs = FORM_DEFS[sec] || [];
+            var entries = _parsed.sections[sec] || [];
+            var map = {};
+            entries.forEach(function(e) { if (!e.comment) map[e.key] = e.value; });
+
+            var html = '<div class="easy-form">';
+            defs.forEach(function(d) {
+                var val = map[d.key] !== undefined ? stripQuotes(map[d.key]) : '';
+                html += '<div class="easy-form-row">';
+                html += '<label class="easy-form-label" for="ef-' + esc(d.key) + '">' + esc(d.label) + '</label>';
+                html += '<div style="position:relative">';
+                if (d.type === 'bool') {
+                    var chk = (val.toLowerCase() === 'true') ? 'checked' : '';
+                    html += '<input class="easy-bool" type="checkbox" id="ef-' + esc(d.key) + '" data-key="' + esc(d.key) + '" ' + chk + '>';
+                } else if (d.type === 'enum') {
+                    html += '<select class="easy-td-select" id="ef-' + esc(d.key) + '" data-key="' + esc(d.key) + '" style="width:160px">';
+                    d.options.forEach(function(o) {
+                        html += '<option value="' + esc(o) + '"' + (val===o?' selected':'') + '>' + esc(o) + '</option>';
+                    });
+                    html += '</select>';
+                } else if (d.type === 'number') {
+                    html += '<input class="easy-form-input" type="number" id="ef-' + esc(d.key) + '" data-key="' + esc(d.key) + '" value="' + esc(val) + '" style="width:120px">';
+                } else if (d.type === 'csv') {
+                    html += '<input class="easy-form-input" type="text" id="ef-' + esc(d.key) + '" data-key="' + esc(d.key) + '" value="' + esc(val) + '" placeholder="comma-separated">';
+                } else {
+                    html += '<input class="easy-form-input" type="text" id="ef-' + esc(d.key) + '" data-key="' + esc(d.key) + '" value="' + esc(val) + '">';
+                }
+                html += '</div></div>';
+            });
+            html += '</div>';
+
+            var content = $('easy-content');
+            content.innerHTML = html;
+        }
+
+        function collectForm(sec) {
+            var defs = FORM_DEFS[sec] || [];
+            var entries = _parsed.sections[sec] = _parsed.sections[sec] || [];
+            /* Build a map from existing entries, preserve order */
+            var map = {};
+            entries.forEach(function(e) { if (!e.comment) map[e.key] = e; });
+
+            defs.forEach(function(d) {
+                var inp = document.getElementById('ef-' + d.key);
+                if (!inp) return;
+                var val;
+                if (d.type === 'bool') {
+                    val = inp.checked ? 'True' : 'False';
+                } else if (d.type === 'csv') {
+                    var csv = inp.value.trim();
+                    val = (csv.indexOf(',') !== -1) ? '"' + csv + '"' : csv;
+                } else {
+                    val = inp.value.trim();
+                }
+                if (map[d.key]) {
+                    map[d.key].value = val;
+                } else {
+                    /* New key not previously in conf */
+                    entries.push({ key: d.key, value: val });
+                    map[d.key] = entries[entries.length - 1];
+                }
+            });
+        }
+
+        /* StagedNmapSettings */
+        function renderStaged() {
+            var entries = _parsed.sections['StagedNmapSettings'] || [];
+            var map = {};
+            entries.forEach(function(e) { if (!e.comment) map[e.key] = e.value; });
+            var stages = ['stage1-ports','stage2-ports','stage3-ports','stage4-ports','stage5-ports','stage6-ports'];
+            var html = '<div class="easy-form">';
+            stages.forEach(function(sk, i) {
+                var raw = stripQuotes(map[sk] || '');
+                var parts = raw.split('|');
+                var kw = parts[0] || 'PORTS';
+                var spec = parts.slice(1).join('|');
+                html += '<div class="easy-stage-row">';
+                html += '<span class="easy-stage-label">Stage ' + (i+1) + '</span>';
+                html += '<select class="easy-td-select" data-stage="' + esc(sk) + '" data-role="type" style="width:100px">';
+                ['PORTS','NSE','NOOP'].forEach(function(t) {
+                    html += '<option value="' + t + '"' + (kw===t?' selected':'') + '>' + t + '</option>';
+                });
+                html += '</select>';
+                html += '<input class="easy-form-input" data-stage="' + esc(sk) + '" data-role="spec" value="' + esc(spec) + '" placeholder="e.g. T:80,443 or vulners">';
+                html += '</div>';
+            });
+            html += '</div>';
+            $('easy-content').innerHTML = html;
+        }
+
+        function collectStaged() {
+            var entries = _parsed.sections['StagedNmapSettings'] = _parsed.sections['StagedNmapSettings'] || [];
+            var map = {};
+            entries.forEach(function(e) { if (!e.comment) map[e.key] = e; });
+
+            $('easy-content').querySelectorAll('[data-role="type"]').forEach(function(sel) {
+                var sk = sel.dataset.stage;
+                var specEl = $('easy-content').querySelector('[data-stage="' + sk + '"][data-role="spec"]');
+                var spec = specEl ? specEl.value.trim() : '';
+                var kw = sel.value;
+                var val = spec ? kw + '|' + spec : kw;
+                if (map[sk]) { map[sk].value = val; }
+                else { entries.push({ key: sk, value: val }); }
+            });
+        }
+
+        /* Generic dynamic table for HostActions / PortActions / PortTerminalActions */
+        function renderTable(sec) {
+            var isPort   = (sec === 'PortActions' || sec === 'PortTerminalActions');
+            var isTerm   = (sec === 'PortTerminalActions');
+            var entries  = _parsed.sections[sec] || [];
+            var search   = '';
+
+            function buildHTML(filter) {
+                var html = '<div class="easy-search-bar">';
+                html += '<input id="easy-search" type="text" placeholder="Filter…" value="' + esc(filter) + '">';
+                html += '<span style="color:var(--disabled);font-size:8.5pt" id="easy-row-count"></span>';
+                html += '</div>';
+                html += '<div class="easy-table-wrap"><table class="easy-table"><thead><tr>';
+                html += '<th style="width:140px">Key</th><th style="min-width:120px">Label</th>';
+                if (isTerm) html += '<th style="width:60px">Terminal</th>';
+                html += '<th>Command</th>';
+                if (isPort) html += '<th style="width:150px">Services</th>';
+                html += '<th style="width:50px"></th>';
+                html += '</tr></thead><tbody id="easy-tbody"></tbody></table></div>';
+                html += '<div class="easy-add-row">';
+                html += '<strong style="font-size:8.5pt;color:var(--disabled)">Add new:</strong>&nbsp;';
+                html += 'Key: <input id="add-key" type="text" class="easy-td-input" style="width:110px" placeholder="unique-key">&nbsp;';
+                html += 'Label: <input id="add-label" type="text" class="easy-td-input" style="width:140px">&nbsp;';
+                if (isTerm) html += '<label style="font-size:8.5pt"><input type="checkbox" id="add-term" checked>&nbsp;[term]</label>&nbsp;';
+                html += 'Cmd: <input id="add-cmd" type="text" class="easy-td-input" style="width:240px" placeholder="' + (isPort?'use [IP] [PORT]':'use [IP]') + '">&nbsp;';
+                if (isPort) html += 'Services: <input id="add-svc" type="text" class="easy-td-input" style="width:120px" placeholder="empty=all">&nbsp;';
+                html += '<button id="easy-add-row-btn" type="button">+ Add</button>';
+                html += '</div>';
+                return html;
+            }
+
+            $('easy-content').innerHTML = buildHTML('');
+
+            function renderRows(filter) {
+                var tbody = $('easy-tbody');
+                if (!tbody) return;
+                var rows = '', count = 0;
+                entries.forEach(function(e, idx) {
+                    if (e.comment || !e.key) return;
+                    var parts = parseCSV(e.value);
+                    var label   = stripQuotes(parts[0] || '');
+                    var cmd     = stripQuotes(parts[1] || '');
+                    var svc     = stripQuotes(parts[2] || '');
+                    var isTermRow = cmd.startsWith('[term]');
+                    var cmdClean = isTermRow ? cmd.slice(6).trim() : cmd;
+
+                    if (filter) {
+                        var hay = (e.key + label + cmd + svc).toLowerCase();
+                        if (hay.indexOf(filter.toLowerCase()) === -1) return;
+                    }
+                    count++;
+                    var needPort = isPort;
+                    var cmdErr = (!cmd.includes('[IP]') || (needPort && !cmd.includes('[PORT]'))) ? ' easy-error' : '';
+                    rows += '<tr data-idx="' + idx + '">';
+                    rows += '<td><input class="easy-td-input" data-role="key" value="' + esc(e.key) + '" style="width:130px"></td>';
+                    rows += '<td><input class="easy-td-input" data-role="label" value="' + esc(label) + '"></td>';
+                    if (isTerm) rows += '<td style="text-align:center"><input type="checkbox" class="easy-bool" data-role="term"' + (isTermRow?' checked':'') + '></td>';
+                    rows += '<td><input class="easy-td-input' + cmdErr + '" data-role="cmd" value="' + esc(cmdClean) + '" style="min-width:200px"></td>';
+                    if (isPort) rows += '<td><input class="easy-td-input" data-role="svc" value="' + esc(svc) + '"></td>';
+                    rows += '<td><button class="easy-del-btn" data-idx="' + idx + '">✕</button></td>';
+                    rows += '</tr>';
+                });
+                tbody.innerHTML = rows;
+                var countEl = $('easy-row-count');
+                if (countEl) countEl.textContent = count + ' entries';
+
+                /* Inline cmd validation on change */
+                tbody.querySelectorAll('[data-role="cmd"]').forEach(function(inp) {
+                    inp.addEventListener('input', function() {
+                        var requirePort = isPort;
+                        if (!inp.value.includes('[IP]')) inp.classList.add('easy-error');
+                        else if (requirePort && !inp.value.includes('[PORT]')) inp.classList.add('easy-error');
+                        else inp.classList.remove('easy-error');
+                    });
+                });
+
+                /* Delete buttons */
+                tbody.querySelectorAll('.easy-del-btn').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var idx = parseInt(btn.dataset.idx);
+                        entries.splice(idx, 1);
+                        renderRows(search);
+                    });
+                });
+            }
+
+            renderRows('');
+
+            /* Search */
+            var searchEl = $('easy-search');
+            if (searchEl) searchEl.addEventListener('input', function() {
+                search = this.value;
+                renderRows(search);
+            });
+
+            /* Add row */
+            var addBtn = $('easy-add-row-btn');
+            if (addBtn) addBtn.addEventListener('click', function() {
+                var key   = ($('add-key')   || {}).value.trim();
+                var label = ($('add-label') || {}).value.trim();
+                var cmd   = ($('add-cmd')   || {}).value.trim();
+                var svc   = ($('add-svc')   || {}).value.trim();
+                var term  = $('add-term') ? $('add-term').checked : false;
+                if (!key || !label || !cmd) { setText('easy-status', 'Key, Label, and Command are required'); return; }
+                if (!cmd.includes('[IP]')) { setText('easy-status', 'Command must contain [IP]'); return; }
+                if (isPort && !cmd.includes('[PORT]')) { setText('easy-status', 'Command must contain [PORT]'); return; }
+                setText('easy-status', '');
+                var fullCmd = (isTerm && term) ? '[term] ' + cmd : cmd;
+                var value;
+                if (isPort) { value = quoteIfNeeded(label) + ',' + quoteIfNeeded(fullCmd) + ',' + quoteIfNeeded(svc); }
+                else        { value = quoteIfNeeded(label) + ',' + quoteIfNeeded(fullCmd); }
+                entries.push({ key: key, value: value });
+                if ($('add-key'))   $('add-key').value   = '';
+                if ($('add-label')) $('add-label').value = '';
+                if ($('add-cmd'))   $('add-cmd').value   = '';
+                if ($('add-svc'))   $('add-svc').value   = '';
+                renderRows(search);
+            });
+        }
+
+        function collectTable(sec) {
+            var isPort  = (sec === 'PortActions' || sec === 'PortTerminalActions');
+            var isTerm  = (sec === 'PortTerminalActions');
+            var entries = _parsed.sections[sec] = _parsed.sections[sec] || [];
+            var tbody   = $('easy-tbody');
+            if (!tbody) return;
+            tbody.querySelectorAll('tr[data-idx]').forEach(function(tr) {
+                var idx   = parseInt(tr.dataset.idx);
+                if (isNaN(idx) || !entries[idx]) return;
+                var keyEl   = tr.querySelector('[data-role="key"]');
+                var lblEl   = tr.querySelector('[data-role="label"]');
+                var cmdEl   = tr.querySelector('[data-role="cmd"]');
+                var svcEl   = tr.querySelector('[data-role="svc"]');
+                var termEl  = tr.querySelector('[data-role="term"]');
+                if (!keyEl || !cmdEl) return;
+                var key   = keyEl.value.trim();
+                var label = lblEl ? lblEl.value.trim() : '';
+                var cmd   = cmdEl.value.trim();
+                var svc   = svcEl ? svcEl.value.trim() : '';
+                var term  = termEl ? termEl.checked : false;
+                var fullCmd = (isTerm && term) ? '[term] ' + cmd : cmd;
+                entries[idx].key   = key;
+                entries[idx].value = isPort
+                    ? quoteIfNeeded(label) + ',' + quoteIfNeeded(fullCmd) + ',' + quoteIfNeeded(svc)
+                    : quoteIfNeeded(label) + ',' + quoteIfNeeded(fullCmd);
+            });
+        }
+
+        /* SchedulerSettings */
+        function renderScheduler() {
+            var entries  = _parsed.sections['SchedulerSettings'] || [];
+            var toolKeys = getAllToolKeys();
+            var search   = '';
+
+            function buildHTML() {
+                var html = '<div class="easy-search-bar">';
+                html += '<input id="easy-search" type="text" placeholder="Filter…">';
+                html += '<span style="color:var(--disabled);font-size:8.5pt" id="easy-row-count"></span>';
+                html += '</div>';
+                html += '<div class="easy-table-wrap"><table class="easy-table"><thead><tr>';
+                html += '<th>Tool</th><th>Service Filter</th><th style="width:80px">Protocol</th><th style="width:50px"></th>';
+                html += '</tr></thead><tbody id="easy-tbody"></tbody></table></div>';
+                html += '<div class="easy-add-row">';
+                html += '<strong style="font-size:8.5pt;color:var(--disabled)">Add:</strong>&nbsp;';
+                html += '<select id="add-tool" class="easy-td-select">';
+                toolKeys.forEach(function(k) { html += '<option>' + esc(k) + '</option>'; });
+                html += '</select>&nbsp;';
+                html += 'Services: <input id="add-svc" type="text" class="easy-td-input" style="width:140px" placeholder="e.g. http,https or empty">&nbsp;';
+                html += 'Protocol: <select id="add-proto" class="easy-td-select"><option>tcp</option><option>udp</option></select>&nbsp;';
+                html += '<button id="easy-add-row-btn" type="button">+ Add</button>';
+                html += '</div>';
+                return html;
+            }
+
+            $('easy-content').innerHTML = buildHTML();
+
+            function renderRows(filter) {
+                var tbody = $('easy-tbody');
+                if (!tbody) return;
+                var rows = '', count = 0;
+                entries.forEach(function(e, idx) {
+                    if (e.comment || !e.key) return;
+                    var parts   = parseCSV(e.value);
+                    var svc     = stripQuotes(parts[0] || '');
+                    var proto   = stripQuotes(parts[1] || 'tcp');
+                    if (filter) {
+                        var hay = (e.key + svc + proto).toLowerCase();
+                        if (hay.indexOf(filter.toLowerCase()) === -1) return;
+                    }
+                    count++;
+                    var keyErr = (!toolKeys.length || toolKeys.includes(e.key)) ? '' : ' easy-error';
+                    rows += '<tr data-idx="' + idx + '">';
+                    rows += '<td><select class="easy-td-select' + keyErr + '" data-role="tool">';
+                    var found = toolKeys.includes(e.key);
+                    if (!found) rows += '<option value="' + esc(e.key) + '" selected>' + esc(e.key) + ' ⚠</option>';
+                    toolKeys.forEach(function(k) {
+                        rows += '<option value="' + esc(k) + '"' + (k===e.key?' selected':'') + '>' + esc(k) + '</option>';
+                    });
+                    rows += '</select></td>';
+                    rows += '<td><input class="easy-td-input" data-role="svc" value="' + esc(svc) + '"></td>';
+                    rows += '<td><select class="easy-td-select" data-role="proto"><option' + (proto==='tcp'?' selected':'') + '>tcp</option><option' + (proto==='udp'?' selected':'') + '>udp</option></select></td>';
+                    rows += '<td><button class="easy-del-btn" data-idx="' + idx + '">✕</button></td>';
+                    rows += '</tr>';
+                });
+                tbody.innerHTML = rows;
+                var countEl = $('easy-row-count');
+                if (countEl) countEl.textContent = count + ' entries';
+                tbody.querySelectorAll('.easy-del-btn').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        entries.splice(parseInt(btn.dataset.idx), 1);
+                        renderRows(search);
+                    });
+                });
+            }
+
+            renderRows('');
+            var searchEl = $('easy-search');
+            if (searchEl) searchEl.addEventListener('input', function() { search=this.value; renderRows(search); });
+
+            var addBtn = $('easy-add-row-btn');
+            if (addBtn) addBtn.addEventListener('click', function() {
+                var tool  = ($('add-tool')  || {}).value.trim();
+                var svc   = ($('add-svc')   || {}).value.trim();
+                var proto = ($('add-proto') || {}).value.trim() || 'tcp';
+                if (!tool) { setText('easy-status', 'Tool is required'); return; }
+                setText('easy-status', '');
+                var value = quoteIfNeeded(svc) + ',' + proto;
+                entries.push({ key: tool, value: value });
+                renderRows(search);
+            });
+        }
+
+        function collectScheduler() {
+            var entries = _parsed.sections['SchedulerSettings'] = _parsed.sections['SchedulerSettings'] || [];
+            var tbody   = $('easy-tbody');
+            if (!tbody) return;
+            tbody.querySelectorAll('tr[data-idx]').forEach(function(tr) {
+                var idx   = parseInt(tr.dataset.idx);
+                if (isNaN(idx) || !entries[idx]) return;
+                var toolEl  = tr.querySelector('[data-role="tool"]');
+                var svcEl   = tr.querySelector('[data-role="svc"]');
+                var protoEl = tr.querySelector('[data-role="proto"]');
+                if (!toolEl) return;
+                entries[idx].key   = toolEl.value;
+                entries[idx].value = quoteIfNeeded(svcEl ? svcEl.value.trim() : '') + ',' + (protoEl ? protoEl.value : 'tcp');
+            });
+        }
+
+        /* MatchSettings */
+        function renderMatch() {
+            var entries = _parsed.sections['MatchSettings'] || [];
+            var map = {};
+            entries.forEach(function(e) { if (!e.comment) map[e.key] = e; });
+
+            function renderSection(id, title, keywords) {
+                var html = '<div class="easy-match-section">';
+                html += '<h4>' + esc(title) + '</h4>';
+                html += '<div class="easy-match-add">';
+                html += '<input id="add-' + id + '" type="text" placeholder="Add keyword…">';
+                html += '<button type="button" data-addto="' + id + '">+ Add</button>';
+                html += '</div>';
+                html += '<div class="easy-match-tags" id="tags-' + id + '">';
+                var filter = document.getElementById('match-filter') ? document.getElementById('match-filter').value.toLowerCase() : '';
+                keywords.forEach(function(kw, i) {
+                    if (filter && kw.toLowerCase().indexOf(filter) === -1) return;
+                    html += '<span class="easy-match-tag">' + esc(kw) +
+                            '<button data-src="' + id + '" data-i="' + i + '" title="Remove">×</button></span>';
+                });
+                html += '</div></div>';
+                return html;
+            }
+
+            function getKWs(key) {
+                var e = map[key];
+                if (!e) return [];
+                var raw = stripQuotes(e.value);
+                return raw.split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+            }
+
+            function fullRender() {
+                var posKWs = getKWs('global-positive');
+                var negKWs = getKWs('global-negative');
+                var filterBar = '<div class="easy-search-bar" style="margin-bottom:12px">' +
+                    '<input id="match-filter" type="text" placeholder="Filter keywords…">' +
+                    '<span style="color:var(--disabled);font-size:8.5pt">' +
+                    (posKWs.length + negKWs.length) + ' total keywords</span></div>';
+                $('easy-content').innerHTML = filterBar +
+                    renderSection('pos', 'global-positive (' + posKWs.length + ' keywords)', posKWs) +
+                    renderSection('neg', 'global-negative (' + negKWs.length + ' keywords)', negKWs);
+                wireMatch(posKWs, negKWs);
+            }
+
+            function wireMatch(posKWs, negKWs) {
+                var mf = $('match-filter');
+                if (mf) mf.addEventListener('input', fullRender);
+
+                /* Delete keyword */
+                $('easy-content').querySelectorAll('.easy-match-tag button').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var src = btn.dataset.src;
+                        var i   = parseInt(btn.dataset.i);
+                        var kwList = src === 'pos' ? posKWs : negKWs;
+                        var key   = src === 'pos' ? 'global-positive' : 'global-negative';
+                        kwList.splice(i, 1);
+                        var entry = map[key];
+                        if (entry) entry.value = '"' + kwList.join(',') + '"';
+                        fullRender();
+                    });
+                });
+
+                /* Add keyword */
+                $('easy-content').querySelectorAll('[data-addto]').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var src   = btn.dataset.addto;
+                        var inp   = document.getElementById('add-' + src);
+                        var kw    = inp ? inp.value.trim() : '';
+                        if (!kw) return;
+                        var key   = src === 'pos' ? 'global-positive' : 'global-negative';
+                        var kwList = src === 'pos' ? posKWs : negKWs;
+                        kwList.push(kw);
+                        if (!map[key]) {
+                            var newEntry = { key: key, value: '"' + kwList.join(',') + '"' };
+                            (_parsed.sections['MatchSettings'] = _parsed.sections['MatchSettings'] || []).push(newEntry);
+                            map[key] = newEntry;
+                        } else {
+                            map[key].value = '"' + kwList.join(',') + '"';
+                        }
+                        if (inp) inp.value = '';
+                        fullRender();
+                    });
+                });
+            }
+
+            fullRender();
+        }
+
+        /* ── Section switch ──────────────────────────────────────────── */
+        function switchSection(sec) {
+            /* Collect current section before switching */
+            if (_activeSection) collectSection(_activeSection);
+            _activeSection = sec;
+            setText('easy-status', '');
+
+            /* Highlight active tab */
+            $('easy-section-tabs').querySelectorAll('.easy-tab').forEach(function(t) {
+                t.classList.toggle('active', t.dataset.sec === sec);
+            });
+
+            if (FORM_DEFS[sec])              renderForm(sec);
+            else if (sec === 'StagedNmapSettings') renderStaged();
+            else if (sec === 'SchedulerSettings')  renderScheduler();
+            else if (sec === 'MatchSettings')       renderMatch();
+            else                                     renderTable(sec);
+        }
+
+        function collectSection(sec) {
+            if (!sec || !_parsed) return;
+            if (FORM_DEFS[sec])                  collectForm(sec);
+            else if (sec === 'StagedNmapSettings')   collectStaged();
+            else if (sec === 'SchedulerSettings')    collectScheduler();
+            else if (sec !== 'MatchSettings')        collectTable(sec);
+            /* MatchSettings collects live via event handlers */
+        }
+
+        /* ── Open / Close ─────────────────────────────────────────────── */
+        function openEasy() {
+            var text = cfgGetCurrentText();
+            if (!text) { alert('No profile loaded — save a profile first.'); return; }
+            _parsed = parseConf(text);
+            _activeSection = null;
+
+            /* Build section tabs */
+            var tabsEl = $('easy-section-tabs');
+            tabsEl.innerHTML = '';
+            SECTIONS.forEach(function(sec) {
+                if (!_parsed.sections[sec] && !FORM_DEFS[sec] && sec !== 'StagedNmapSettings') return;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'easy-tab';
+                btn.dataset.sec = sec;
+                btn.textContent = sec.replace('Settings','').replace('Actions','');
+                btn.addEventListener('click', function() { switchSection(sec); });
+                tabsEl.appendChild(btn);
+            });
+
+            /* Show panel, hide textarea + find bar */
+            var editors = $('config-editors');
+            var findBar = $('cfg-find-bar');
+            if (editors) editors.style.display = 'none';
+            if (findBar) findBar.style.display  = 'none';
+            var panel = $('easy-mode-panel');
+            if (panel) panel.style.display = 'flex';
+
+            /* Open first available section */
+            var first = tabsEl.querySelector('.easy-tab');
+            if (first) switchSection(first.dataset.sec);
+        }
+
+        function closeEasy() {
+            if (_activeSection) collectSection(_activeSection);
+            if (_parsed) {
+                /* Validate required placeholders before closing */
+                var errors = [];
+                ['PortActions','PortTerminalActions'].forEach(function(sec) {
+                    (_parsed.sections[sec] || []).forEach(function(e) {
+                        if (e.comment || !e.key) return;
+                        var parts = parseCSV(e.value);
+                        var cmd = stripQuotes(parts[1] || '');
+                        if (!cmd.includes('[IP]')) errors.push(sec + ' › ' + e.key + ': missing [IP]');
+                        if (!cmd.includes('[PORT]')) errors.push(sec + ' › ' + e.key + ': missing [PORT]');
+                    });
+                });
+                ['HostActions'].forEach(function(sec) {
+                    (_parsed.sections[sec] || []).forEach(function(e) {
+                        if (e.comment || !e.key) return;
+                        var parts = parseCSV(e.value);
+                        var cmd = stripQuotes(parts[1] || '');
+                        if (!cmd.includes('[IP]')) errors.push(sec + ' › ' + e.key + ': missing [IP]');
+                    });
+                });
+                if (errors.length > 0) {
+                    if (!confirm(errors.length + ' command(s) are missing required placeholders:\n\n' +
+                            errors.slice(0,10).join('\n') + '\n\nApply anyway?')) return;
+                }
+                cfgSetCurrentText(serializeConf(_parsed));
+            }
+            _parsed = null;
+            _activeSection = null;
+
+            var editors = $('config-editors');
+            var findBar = $('cfg-find-bar');
+            var panel   = $('easy-mode-panel');
+            if (editors) editors.style.display = '';
+            if (findBar) /* keep hidden unless user opens find */ ;
+            if (panel)   panel.style.display   = 'none';
+        }
+
+        /* ── Wire buttons ─────────────────────────────────────────────── */
+        var easyBtn = $('config-easy-btn');
+        if (easyBtn) easyBtn.addEventListener('click', openEasy);
+
+        var backBtn = $('easy-back-btn');
+        if (backBtn) backBtn.addEventListener('click', closeEasy);
+
+        var applyBtn = $('easy-apply-btn');
+        if (applyBtn) applyBtn.addEventListener('click', function() {
+            if (_activeSection) collectSection(_activeSection);
+            if (_parsed) cfgSetCurrentText(serializeConf(_parsed));
+            setText('easy-status', '✓ Applied to config — review in Advanced mode then Save');
+        });
+
+    })(); /* end Easy Mode IIFE */
+
     /* ── Process management buttons ── */
     var clearFinished = $('process-clear-finished-button');
     if (clearFinished) clearFinished.addEventListener('click', function() {
