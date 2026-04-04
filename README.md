@@ -124,10 +124,10 @@ Navigate to `http://127.0.0.1:5000` (or your chosen port).
 1. **Add a host** — type an IP, CIDR, or hostname in the Add Hosts dialog; click Staged Scan
 2. **Watch the scan** — five nmap stages run in parallel; the process list shows live progress %; vulners runs last
 3. **Review results** — Services, Ports, Scripts, CVEs, and Notes tabs populate as data arrives
-4. **Run tools** — right-click a port for the full port action menu; automated tools fire without clicking
+4. **Configure** — press F2 to open the Config Manager; use Easy Edit to add tools or adjust settings without touching the raw conf file
 5. **Analyze with AI** — click the AI tab on any host; click Analyze when all scans finish
 
-![Host list and port details](gifs/shots/hosts_list_zoomed.png)
+![Config Manager — Easy Edit and profile management](gifs/shots/quickstart_dialog.png)
 
 ---
 
