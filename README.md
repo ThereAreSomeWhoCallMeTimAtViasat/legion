@@ -163,7 +163,11 @@ Navigate to `http://127.0.0.1:5000` (or your chosen port).
 
 The main config file is at `~/.local/share/legion/legion.conf` (created on first run from the repo default).
 
-Edit via the in-app Config Manager (F2 → Easy Edit) or directly:
+Press **F2** → **⊞ Easy Edit** to configure everything through a structured GUI — no need to know the conf syntax. The Scheduler tab shown below controls which tools fire automatically when a service is discovered.
+
+![Easy Edit — Scheduler tab showing 50 auto-run tool entries with service filters](gifs/shots/easy_mode_scheduler.png)
+
+To edit the raw conf directly:
 ```bash
 sudoedit /root/.local/share/legion/legion.conf
 ```
