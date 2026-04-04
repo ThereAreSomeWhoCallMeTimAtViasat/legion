@@ -1,8 +1,39 @@
 # LegionnAIre
 
-> A network penetration testing framework with a modern Flask web UI and integrated AI-powered host analysis.
+> A semi-automated network penetration testing framework — browser-based, AI-assisted, and built on the Legion/Sparta lineage.
 
 ![LegionnAIre main interface](gifs/shots/hero_full.png)
+
+---
+
+## What is LegionnAIre?
+
+LegionnAIre is an open source, semi-automated network penetration testing framework for discovery, reconnaissance, and exploitation. It is a fork of [Legion](https://github.com/GoVanguard/legion), which was itself a fork of [Sparta](https://github.com/SECFORCE/sparta) — a tool that has been in active pentest use since 2015.
+
+The core workflow is the same as it has always been:
+
+1. **Add targets** — IPs, CIDRs, hostnames, or ranges. Legion adds them to scope.
+2. **Scan** — nmap runs staged port scans across your targets. Services are identified and versioned.
+3. **Auto-attack** — the scheduler fires the right tool for each discovered service automatically. HTTP gets feroxbuster, nuclei, gobuster. SSH gets ssh-audit. SMB gets netexec and enum4linux-ng. And so on.
+4. **Investigate** — browse results by host: open ports, service versions, CVEs, NSE script output, screenshots, and tool output all in one place.
+5. **Exploit** — right-click any host or port for a context menu of targeted tools. Open an interactive terminal. Run Hydra against authentication services from the Brute tab.
+6. **Document** — notes per host with Ctrl+B terminal capture, scan commands auto-logged, AI-generated attack plans.
+
+### What the original Legion did — and still does
+
+These are the foundational capabilities inherited from Sparta/Legion and fully preserved in this Flask rewrite:
+
+- **Staged nmap scanning** — customizable port ranges scanned in sequence; each stage's results feed the next. Timing, fragmentation, host discovery, and custom options all configurable per scan.
+- **Semi-automated tool scheduling** — `legion.conf` maps service names to tools. When nmap identifies a service, the matching tools run automatically without user intervention.
+- **Rich context menus** — right-click any host or port for a list of relevant tools. Dozens of host actions (dnsrecon, masscan, theharvester) and port actions (nikto, wpscan, sslscan, sqlmap, and more) built in and fully customisable.
+- **Multi-host scope management** — add individual IPs, CIDR subnets, ranges, or hostnames. Mark hosts as checked. Delete hosts from scope. Filter by OS, state, or service.
+- **CPE and CVE detection** — Vulners NSE runs against every discovered service; CVEs are stored per host with severity and ExploitDB cross-references.
+- **Integrated screenshotting** — EyeWitness captures web service screenshots automatically on HTTP/HTTPS discovery.
+- **Hydra brute forcing** — the Brute tab targets FTP, SSH, MySQL, PostgreSQL, VNC, Telnet, and more with configurable wordlists.
+- **nmap XML import** — import existing scan results without re-scanning. All parsed data (hosts, ports, services, scripts) loads into the project database.
+- **IPv6 support** — full IPv6 scanning with automatic fallback when connectivity is unavailable.
+- **Project save and restore** — SQLite-backed sessions save all results, notes, process history, screenshots, and tool output. Pick up exactly where you left off.
+- **Extensible tool configuration** — `legion.conf` defines every host action, port action, and scheduled tool. Add your own scripts with `[IP]`, `[PORT]`, and `[OUTPUT]` placeholders. No code changes required.
 
 ---
 
