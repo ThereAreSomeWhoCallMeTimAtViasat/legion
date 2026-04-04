@@ -9,20 +9,31 @@
       <stop offset="0%" stop-color="#e8a020" stop-opacity="0.11"/>
       <stop offset="100%" stop-color="#e8a020" stop-opacity="0"/>
     </radialGradient>
-    <!-- neon blade gradient: bright cyan edge, slightly lighter centre -->
+    <!-- neon blade: bright white-cyan centre, deep cyan edges -->
     <linearGradient id="bladeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%"   stop-color="#0088cc"/>
-      <stop offset="35%"  stop-color="#00dfff"/>
-      <stop offset="65%"  stop-color="#00dfff"/>
-      <stop offset="100%" stop-color="#0088cc"/>
+      <stop offset="0%"   stop-color="#0099dd"/>
+      <stop offset="28%"  stop-color="#00eeff"/>
+      <stop offset="50%"  stop-color="#aaffff"/>
+      <stop offset="72%"  stop-color="#00eeff"/>
+      <stop offset="100%" stop-color="#0099dd"/>
     </linearGradient>
-    <!-- glow filters -->
-    <filter id="outerGlow" x="-50%" y="-50%" width="200%" height="200%">
+    <filter id="outerGlow" x="-40%" y="-40%" width="180%" height="180%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
-    <filter id="swordGlow" x="-60%" y="-20%" width="220%" height="140%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b"/>
+    <!-- heavy neon bloom for swords -->
+    <filter id="neonBloom" x="-80%" y="-40%" width="260%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5"  result="b2"/>
+      <feMerge>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="b2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- tight inner glow on blade surface -->
+    <filter id="bladeShine" x="-30%" y="-10%" width="160%" height="120%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <filter id="crestGlow" x="-20%" y="-40%" width="140%" height="180%">
@@ -63,8 +74,6 @@
     <line x1="168" y1="354" x2="256" y2="366"/>
     <line x1="344" y1="354" x2="256" y2="366"/>
   </g>
-
-  <!-- ── Neural network nodes ── -->
   <g fill="#00dfff" filter="url(#sg)">
     <circle cx="256" cy="60"  r="5.5" opacity="0.9"/>
     <circle cx="166" cy="94"  r="4"   opacity="0.75"/>
@@ -82,77 +91,54 @@
   </g>
 
   <!-- ── Helmet aura ── -->
-  <ellipse cx="256" cy="220" rx="118" ry="108" fill="url(#helmAura)"/>
+  <ellipse cx="256" cy="215" rx="118" ry="108" fill="url(#helmAura)"/>
 
   <!-- ── Helmet inner fill ── -->
-  <path d="M 172 300
-           C 166 162 188 120 256 112
-           C 324 120 346 162 340 300
-           Q 312 356 256 360
-           Q 200 356 172 300 Z"
+  <path d="M 172 300 C 166 162 188 120 256 112 C 324 120 346 162 340 300
+           Q 312 356 256 360 Q 200 356 172 300 Z"
         fill="#12122a"/>
 
-  <!-- ════════════════════════════════════
-       TRANSVERSE CREST — arched, red over gold
-       Matches original: red horsehair plume
-       arching over gold metal crest base
-       ════════════════════════════════════ -->
-
-  <!-- 1. Red horsehair plume — tall outer arch -->
-  <!-- Cubic bezier: peaks at y≈72 midpoint -->
+  <!-- ── Transverse crest: red plume over gold base ── -->
+  <!-- red plume arch -->
   <path d="M 124 128 C 148 42 364 42 388 128"
         fill="none" stroke="#cc2020" stroke-width="36"
         stroke-linecap="round" filter="url(#crestGlow)" opacity="0.95"/>
-
-  <!-- 2. Red highlight (brighter inner stripe of plume) -->
   <path d="M 134 126 C 156 56 356 56 378 126"
         fill="none" stroke="#ff4444" stroke-width="14"
         stroke-linecap="round" opacity="0.7"/>
-
-  <!-- 3. Gold metal crest base — lower, shorter arch -->
+  <!-- gold crest base -->
   <path d="M 122 130 C 148 74 364 74 390 130"
         fill="none" stroke="#a06810" stroke-width="30"
         stroke-linecap="round" opacity="0.7"/>
   <path d="M 124 128 C 148 70 364 70 388 128"
         fill="none" stroke="#e8a020" stroke-width="26"
         stroke-linecap="round" filter="url(#crestGlow)" opacity="0.95"/>
-
-  <!-- 4. Gold highlight ridge -->
   <path d="M 132 126 C 155 82 357 82 380 126"
         fill="none" stroke="#ffd060" stroke-width="10"
         stroke-linecap="round" opacity="0.85"/>
 
   <!-- ── Helmet dome outline ── -->
-  <path d="M 172 300
-           C 166 162 188 120 256 112
-           C 324 120 346 162 340 300"
+  <path d="M 172 300 C 166 162 188 120 256 112 C 324 120 346 162 340 300"
         fill="none" stroke="#e8a020" stroke-width="3.5"
         stroke-linecap="round" filter="url(#outerGlow)"/>
 
   <!-- ── Left cheek guard ── -->
   <path d="M 172 300 L 170 332 Q 182 360 218 362 L 218 308 Z"
-        fill="#12122a" stroke="#e8a020" stroke-width="2.5"
-        stroke-linejoin="round"/>
-
+        fill="#12122a" stroke="#e8a020" stroke-width="2.5" stroke-linejoin="round"/>
   <!-- ── Right cheek guard ── -->
   <path d="M 340 300 L 342 332 Q 330 360 294 362 L 294 308 Z"
-        fill="#12122a" stroke="#e8a020" stroke-width="2.5"
-        stroke-linejoin="round"/>
-
+        fill="#12122a" stroke="#e8a020" stroke-width="2.5" stroke-linejoin="round"/>
   <!-- ── Neck guard ── -->
   <path d="M 218 362 Q 256 374 294 362 L 294 308 Q 256 322 218 308 Z"
-        fill="#12122a" stroke="#e8a020" stroke-width="2.5"
-        stroke-linejoin="round"/>
+        fill="#12122a" stroke="#e8a020" stroke-width="2.5" stroke-linejoin="round"/>
 
-  <!-- ── Visor slot ── -->
+  <!-- ── Visor + nose guard ── -->
   <rect x="200" y="240" width="112" height="20" rx="4"
         fill="#060610" stroke="#e8a020" stroke-width="2" filter="url(#sg)"/>
-
-  <!-- ── Nose guard ── -->
   <rect x="250" y="240" width="12" height="56" rx="3"
         fill="#12122a" stroke="#e8a020" stroke-width="2"/>
 
-  <!-- ── Circuit traces on dome (AI layer) ── -->
+  <!-- ── Circuit traces ── -->
   <g stroke="#00dfff" stroke-width="1.5" fill="none" opacity="0.5">
     <path d="M 196 185 H 222 V 196 H 290 V 185 H 316" stroke-dasharray="4,2.5"/>
     <path d="M 188 222 H 204 V 213 H 308 V 222 H 324" stroke-dasharray="4,2.5"/>
@@ -164,80 +150,79 @@
     <circle cx="308" cy="213" r="3.5"/>
   </g>
 
-  <!-- ════════════════════════════════════
-       CROSSED GLADIUS SWORDS — neon blue
-       More prominent, clearly sword-shaped
-       ════════════════════════════════════ -->
+  <!-- ════════════════════════════════════════════
+       CROSSED GLADIUS SWORDS — tips pointing DOWN
+       Front layer, maximum neon brightness
+       Centred at (256,290): handles up, tips down
+       ════════════════════════════════════════════ -->
 
-  <!-- Glow halos underneath both swords -->
-  <g opacity="0.35" filter="url(#swordGlow)">
-    <g transform="translate(256,312) rotate(-40)">
-      <polygon points="-9,52 9,52 5,-108 -5,-108" fill="#00dfff"/>
+  <!-- Wide diffuse bloom (outermost glow, drawn first) -->
+  <g filter="url(#neonBloom)" opacity="0.55">
+    <g transform="translate(256,290) rotate(-42)">
+      <polygon points="-10,-58 10,-58 6,118 -6,118" fill="#00eeff"/>
     </g>
-    <g transform="translate(256,312) rotate(40)">
-      <polygon points="-9,52 9,52 5,-108 -5,-108" fill="#00dfff"/>
+    <g transform="translate(256,290) rotate(42)">
+      <polygon points="-10,-58 10,-58 6,118 -6,118" fill="#00eeff"/>
     </g>
   </g>
 
-  <!-- Left sword (tilted -40°) -->
-  <g transform="translate(256,312) rotate(-40)">
-    <!-- Full blade: tapers from guard to tip, neon blue -->
-    <polygon points="-8,50 8,50 5,-104 -5,-104"
-             fill="url(#bladeGrad)" opacity="0.95"/>
-    <!-- Pointed tip -->
-    <polygon points="-5,-104 5,-104 0,-136"
-             fill="#80f0ff" opacity="0.95"/>
-    <!-- Central fuller (bright highlight stripe) -->
-    <rect x="-1.5" y="-104" width="3" height="152" rx="1"
-          fill="#aaf0ff" opacity="0.6"/>
-    <!-- Crossguard — amber, wide and prominent -->
-    <rect x="-26" y="40" width="52" height="12" rx="4"
-          fill="#e8a020" stroke="#a06810" stroke-width="1.5"
+  <!-- Left sword: rotate -42° so handle goes upper-right, tip lower-left -->
+  <g transform="translate(256,290) rotate(-42)">
+    <!-- blade: negative y = handle end (up), positive y = tip (down) -->
+    <polygon points="-9,-56 9,-56 6,114 -6,114"
+             fill="url(#bladeGrad)" filter="url(#bladeShine)" opacity="0.98"/>
+    <!-- pointed tip -->
+    <polygon points="-6,114 6,114 0,148"
+             fill="#aaffff" filter="url(#bladeShine)" opacity="0.98"/>
+    <!-- fuller highlight stripe -->
+    <rect x="-2" y="-56" width="4" height="168" rx="2"
+          fill="#ccffff" opacity="0.55"/>
+    <!-- crossguard at blade root (negative y side) -->
+    <rect x="-28" y="-68" width="56" height="13" rx="4"
+          fill="#e8a020" stroke="#c08010" stroke-width="1.5"
           filter="url(#sg)"/>
-    <!-- Guard centre bead -->
-    <circle cx="0" cy="46" r="6" fill="#ffd060" stroke="#a06810" stroke-width="1"/>
-    <!-- Grip / handle -->
-    <rect x="-7" y="52" width="14" height="40" rx="4"
-          fill="#1a0a30" stroke="#0088cc" stroke-width="1.5"/>
-    <!-- Grip wrap detail -->
-    <line x1="-7" y1="61" x2="7" y2="61" stroke="#00dfff" stroke-width="1.5" opacity="0.6"/>
-    <line x1="-7" y1="71" x2="7" y2="71" stroke="#00dfff" stroke-width="1.5" opacity="0.6"/>
-    <line x1="-7" y1="81" x2="7" y2="81" stroke="#00dfff" stroke-width="1.5" opacity="0.6"/>
-    <!-- Pommel — amber disc -->
-    <ellipse cx="0" cy="97" rx="10" ry="8"
-             fill="#e8a020" stroke="#a06810" stroke-width="1.5"
-             filter="url(#sg)"/>
-    <ellipse cx="0" cy="97" rx="5"  ry="4" fill="#ffd060" opacity="0.8"/>
+    <!-- guard centre jewel -->
+    <ellipse cx="0" cy="-62" rx="7" ry="5.5"
+             fill="#ffd060" stroke="#c08010" stroke-width="1" filter="url(#sg)"/>
+    <!-- grip -->
+    <rect x="-8" y="-108" width="16" height="40" rx="5"
+          fill="#120830" stroke="#00aaee" stroke-width="1.5"/>
+    <!-- grip wraps -->
+    <line x1="-8" y1="-97" x2="8" y2="-97" stroke="#00eeff" stroke-width="2" opacity="0.7"/>
+    <line x1="-8" y1="-85" x2="8" y2="-85" stroke="#00eeff" stroke-width="2" opacity="0.7"/>
+    <line x1="-8" y1="-73" x2="8" y2="-73" stroke="#00eeff" stroke-width="2" opacity="0.7"/>
+    <!-- pommel -->
+    <ellipse cx="0" cy="-120" rx="12" ry="9"
+             fill="#e8a020" stroke="#c08010" stroke-width="1.5" filter="url(#sg)"/>
+    <ellipse cx="0" cy="-120" rx="6" ry="4.5" fill="#ffd060" opacity="0.9"/>
   </g>
 
-  <!-- Right sword (tilted +40°) -->
-  <g transform="translate(256,312) rotate(40)">
-    <polygon points="-8,50 8,50 5,-104 -5,-104"
-             fill="url(#bladeGrad)" opacity="0.95"/>
-    <polygon points="-5,-104 5,-104 0,-136"
-             fill="#80f0ff" opacity="0.95"/>
-    <rect x="-1.5" y="-104" width="3" height="152" rx="1"
-          fill="#aaf0ff" opacity="0.6"/>
-    <rect x="-26" y="40" width="52" height="12" rx="4"
-          fill="#e8a020" stroke="#a06810" stroke-width="1.5"
+  <!-- Right sword: rotate +42° so handle goes upper-left, tip lower-right -->
+  <g transform="translate(256,290) rotate(42)">
+    <polygon points="-9,-56 9,-56 6,114 -6,114"
+             fill="url(#bladeGrad)" filter="url(#bladeShine)" opacity="0.98"/>
+    <polygon points="-6,114 6,114 0,148"
+             fill="#aaffff" filter="url(#bladeShine)" opacity="0.98"/>
+    <rect x="-2" y="-56" width="4" height="168" rx="2"
+          fill="#ccffff" opacity="0.55"/>
+    <rect x="-28" y="-68" width="56" height="13" rx="4"
+          fill="#e8a020" stroke="#c08010" stroke-width="1.5"
           filter="url(#sg)"/>
-    <circle cx="0" cy="46" r="6" fill="#ffd060" stroke="#a06810" stroke-width="1"/>
-    <rect x="-7" y="52" width="14" height="40" rx="4"
-          fill="#1a0a30" stroke="#0088cc" stroke-width="1.5"/>
-    <line x1="-7" y1="61" x2="7" y2="61" stroke="#00dfff" stroke-width="1.5" opacity="0.6"/>
-    <line x1="-7" y1="71" x2="7" y2="71" stroke="#00dfff" stroke-width="1.5" opacity="0.6"/>
-    <line x1="-7" y1="81" x2="7" y2="81" stroke="#00dfff" stroke-width="1.5" opacity="0.6"/>
-    <ellipse cx="0" cy="97" rx="10" ry="8"
-             fill="#e8a020" stroke="#a06810" stroke-width="1.5"
-             filter="url(#sg)"/>
-    <ellipse cx="0" cy="97" rx="5"  ry="4" fill="#ffd060" opacity="0.8"/>
+    <ellipse cx="0" cy="-62" rx="7" ry="5.5"
+             fill="#ffd060" stroke="#c08010" stroke-width="1" filter="url(#sg)"/>
+    <rect x="-8" y="-108" width="16" height="40" rx="5"
+          fill="#120830" stroke="#00aaee" stroke-width="1.5"/>
+    <line x1="-8" y1="-97" x2="8" y2="-97" stroke="#00eeff" stroke-width="2" opacity="0.7"/>
+    <line x1="-8" y1="-85" x2="8" y2="-85" stroke="#00eeff" stroke-width="2" opacity="0.7"/>
+    <line x1="-8" y1="-73" x2="8" y2="-73" stroke="#00eeff" stroke-width="2" opacity="0.7"/>
+    <ellipse cx="0" cy="-120" rx="12" ry="9"
+             fill="#e8a020" stroke="#c08010" stroke-width="1.5" filter="url(#sg)"/>
+    <ellipse cx="0" cy="-120" rx="6" ry="4.5" fill="#ffd060" opacity="0.9"/>
   </g>
 
-  <!-- ── Divider rule ── -->
+  <!-- ── Divider + text ── -->
   <line x1="116" y1="432" x2="396" y2="432"
         stroke="#e8a020" stroke-width="1.2" opacity="0.5"/>
-
-  <!-- ── LegionnAIre text ── -->
   <text x="258" y="478" text-anchor="middle"
         font-family="Georgia,'Palatino Linotype',serif"
         font-size="52" font-weight="bold" letter-spacing="0.5"

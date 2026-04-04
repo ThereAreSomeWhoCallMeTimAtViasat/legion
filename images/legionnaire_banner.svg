@@ -6,10 +6,11 @@
       <stop offset="100%" stop-color="#06060f"/>
     </radialGradient>
     <linearGradient id="bladeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%"   stop-color="#0088cc"/>
-      <stop offset="40%"  stop-color="#00dfff"/>
-      <stop offset="60%"  stop-color="#00dfff"/>
-      <stop offset="100%" stop-color="#0088cc"/>
+      <stop offset="0%"   stop-color="#0099dd"/>
+      <stop offset="28%"  stop-color="#00eeff"/>
+      <stop offset="50%"  stop-color="#aaffff"/>
+      <stop offset="72%"  stop-color="#00eeff"/>
+      <stop offset="100%" stop-color="#0099dd"/>
     </linearGradient>
     <linearGradient id="textFade" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="70%"  stop-color="#191928" stop-opacity="0"/>
@@ -23,8 +24,13 @@
       <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
-    <filter id="swordGlow" x="-80%" y="-30%" width="260%" height="160%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
+    <filter id="neonBloom" x="-80%" y="-40%" width="260%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b2"/>
+      <feMerge><feMergeNode in="b1"/><feMergeNode in="b2"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="bladeShine" x="-30%" y="-10%" width="160%" height="120%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <filter id="crestGlow" x="-20%" y="-60%" width="140%" height="220%">
@@ -49,159 +55,129 @@
   <circle cx="110" cy="110" r="97"  fill="none" stroke="#e8a020"
           stroke-width="0.6" opacity="0.3"/>
 
-  <!-- neural network -->
+  <!-- neural net -->
   <g stroke="#00dfff" stroke-width="0.7" opacity="0.25" fill="none" clip-path="url(#emblemClip)">
-    <line x1="110" y1="14"  x2="62"  y2="34"/>
-    <line x1="110" y1="14"  x2="158" y2="34"/>
-    <line x1="62"  y1="34"  x2="158" y2="34"/>
-    <line x1="110" y1="14"  x2="110" y2="52"/>
-    <line x1="62"  y1="34"  x2="42"  y2="68"/>
-    <line x1="158" y1="34"  x2="178" y2="68"/>
-    <line x1="20"  y1="100" x2="42"  y2="68"/>
-    <line x1="200" y1="100" x2="178" y2="68"/>
-    <line x1="20"  y1="100" x2="40"  y2="142"/>
-    <line x1="200" y1="100" x2="180" y2="142"/>
-    <line x1="40"  y1="142" x2="66"  y2="164"/>
-    <line x1="180" y1="142" x2="154" y2="164"/>
-    <line x1="66"  y1="164" x2="110" y2="170"/>
-    <line x1="154" y1="164" x2="110" y2="170"/>
+    <line x1="110" y1="14"  x2="62"  y2="34"/>  <line x1="110" y1="14"  x2="158" y2="34"/>
+    <line x1="62"  y1="34"  x2="158" y2="34"/>  <line x1="110" y1="14"  x2="110" y2="52"/>
+    <line x1="62"  y1="34"  x2="42"  y2="68"/>  <line x1="158" y1="34"  x2="178" y2="68"/>
+    <line x1="20"  y1="100" x2="42"  y2="68"/>  <line x1="200" y1="100" x2="178" y2="68"/>
+    <line x1="20"  y1="100" x2="40"  y2="142"/> <line x1="200" y1="100" x2="180" y2="142"/>
+    <line x1="40"  y1="142" x2="66"  y2="164"/> <line x1="180" y1="142" x2="154" y2="164"/>
+    <line x1="66"  y1="164" x2="110" y2="170"/> <line x1="154" y1="164" x2="110" y2="170"/>
   </g>
   <g fill="#00dfff" filter="url(#sg)" clip-path="url(#emblemClip)">
     <circle cx="110" cy="14"  r="3.2" opacity="0.9"/>
-    <circle cx="62"  cy="34"  r="2.4" opacity="0.75"/>
-    <circle cx="158" cy="34"  r="2.4" opacity="0.75"/>
+    <circle cx="62"  cy="34"  r="2.4" opacity="0.75"/> <circle cx="158" cy="34"  r="2.4" opacity="0.75"/>
     <circle cx="110" cy="52"  r="2.4" opacity="0.7"/>
-    <circle cx="42"  cy="68"  r="2.4" opacity="0.7"/>
-    <circle cx="178" cy="68"  r="2.4" opacity="0.7"/>
-    <circle cx="20"  cy="100" r="3"   opacity="0.8"/>
-    <circle cx="200" cy="100" r="3"   opacity="0.8"/>
-    <circle cx="40"  cy="142" r="2.4" opacity="0.7"/>
-    <circle cx="180" cy="142" r="2.4" opacity="0.7"/>
-    <circle cx="66"  cy="164" r="2.4" opacity="0.65"/>
-    <circle cx="154" cy="164" r="2.4" opacity="0.65"/>
+    <circle cx="42"  cy="68"  r="2.4" opacity="0.7"/>  <circle cx="178" cy="68"  r="2.4" opacity="0.7"/>
+    <circle cx="20"  cy="100" r="3"   opacity="0.8"/>  <circle cx="200" cy="100" r="3"   opacity="0.8"/>
+    <circle cx="40"  cy="142" r="2.4" opacity="0.7"/>  <circle cx="180" cy="142" r="2.4" opacity="0.7"/>
+    <circle cx="66"  cy="164" r="2.4" opacity="0.65"/> <circle cx="154" cy="164" r="2.4" opacity="0.65"/>
     <circle cx="110" cy="170" r="3"   opacity="0.8"/>
   </g>
 
   <!-- helmet fill -->
-  <path d="M 72 128 C 68 60 80 40 110 36 C 140 40 152 60 148 128
-           Q 134 156 110 158 Q 86 156 72 128 Z"
+  <path d="M 72 126 C 68 58 82 38 110 34 C 138 38 152 58 148 126
+           Q 134 154 110 156 Q 86 154 72 126 Z"
         fill="#12122a" clip-path="url(#emblemClip)"/>
 
-  <!-- CREST: red plume over gold base (arched) -->
-  <path d="M 52 136 C 64 80 156 64 156 64 C 156 64 64 80 52 136"
-        fill="none"/>
-  <!-- red plume arch -->
-  <path d="M 50 136 C 62 62 158 48 158 48 C 158 48 62 62 50 136"
-        fill="none"/>
-  <path d="M 50 136 C 64 56 110 36 110 36 C 110 36 156 56 170 136"
-        fill="none" stroke="#cc2020" stroke-width="20"
+  <!-- crest: red plume over gold base -->
+  <path d="M 50 132 C 64 54 110 34 110 34 C 110 34 156 54 170 132"
+        fill="none" stroke="#cc2020" stroke-width="22"
         stroke-linecap="round" filter="url(#crestGlow)" opacity="0.95"
         clip-path="url(#emblemClip)"/>
-  <path d="M 55 134 C 68 66 110 48 110 48 C 110 48 152 66 165 134"
+  <path d="M 56 130 C 68 62 110 44 110 44 C 110 44 152 62 164 130"
         fill="none" stroke="#ff4040" stroke-width="8"
-        stroke-linecap="round" opacity="0.65"
-        clip-path="url(#emblemClip)"/>
-  <!-- gold crest base -->
-  <path d="M 50 136 C 64 72 110 54 110 54 C 110 54 156 72 170 136"
+        stroke-linecap="round" opacity="0.65" clip-path="url(#emblemClip)"/>
+  <path d="M 50 132 C 64 68 110 50 110 50 C 110 50 156 68 170 132"
         fill="none" stroke="#9a6210" stroke-width="18"
-        stroke-linecap="round" opacity="0.6"
-        clip-path="url(#emblemClip)"/>
-  <path d="M 50 136 C 64 70 110 52 110 52 C 110 52 156 70 170 136"
+        stroke-linecap="round" opacity="0.6" clip-path="url(#emblemClip)"/>
+  <path d="M 50 132 C 64 66 110 48 110 48 C 110 48 156 66 170 132"
         fill="none" stroke="#e8a020" stroke-width="14"
         stroke-linecap="round" filter="url(#crestGlow)" opacity="0.95"
         clip-path="url(#emblemClip)"/>
-  <path d="M 55 134 C 68 78 110 60 110 60 C 110 60 152 78 165 134"
+  <path d="M 56 130 C 68 74 110 56 110 56 C 110 56 152 74 164 130"
         fill="none" stroke="#ffd060" stroke-width="5"
-        stroke-linecap="round" opacity="0.8"
-        clip-path="url(#emblemClip)"/>
+        stroke-linecap="round" opacity="0.8" clip-path="url(#emblemClip)"/>
 
   <!-- dome outline -->
-  <path d="M 72 128 C 68 60 80 40 110 36 C 140 40 152 60 148 128"
+  <path d="M 72 126 C 68 58 82 38 110 34 C 138 38 152 58 148 126"
         fill="none" stroke="#e8a020" stroke-width="2"
-        stroke-linecap="round" filter="url(#glow)"
-        clip-path="url(#emblemClip)"/>
+        stroke-linecap="round" filter="url(#glow)" clip-path="url(#emblemClip)"/>
 
-  <!-- cheek guards -->
-  <path d="M 72 128 L 70 148 Q 78 162 96 163 L 96 133 Z"
-        fill="#12122a" stroke="#e8a020" stroke-width="1.6"
-        clip-path="url(#emblemClip)"/>
-  <path d="M 148 128 L 150 148 Q 142 162 124 163 L 124 133 Z"
-        fill="#12122a" stroke="#e8a020" stroke-width="1.6"
-        clip-path="url(#emblemClip)"/>
-  <path d="M 96 163 Q 110 168 124 163 L 124 133 Q 110 138 96 133 Z"
-        fill="#12122a" stroke="#e8a020" stroke-width="1.6"
-        clip-path="url(#emblemClip)"/>
+  <!-- cheek/neck guards -->
+  <path d="M 72 126 L 70 146 Q 78 160 96 161 L 96 131 Z"
+        fill="#12122a" stroke="#e8a020" stroke-width="1.6" clip-path="url(#emblemClip)"/>
+  <path d="M 148 126 L 150 146 Q 142 160 124 161 L 124 131 Z"
+        fill="#12122a" stroke="#e8a020" stroke-width="1.6" clip-path="url(#emblemClip)"/>
+  <path d="M 96 161 Q 110 166 124 161 L 124 131 Q 110 136 96 131 Z"
+        fill="#12122a" stroke="#e8a020" stroke-width="1.6" clip-path="url(#emblemClip)"/>
 
   <!-- visor + nose guard -->
-  <rect x="85" y="96" width="50" height="9" rx="2"
-        fill="#06060f" stroke="#e8a020" stroke-width="1"
-        clip-path="url(#emblemClip)"/>
-  <rect x="107" y="96" width="6" height="22" rx="1.5"
-        fill="#12122a" stroke="#e8a020" stroke-width="1"
-        clip-path="url(#emblemClip)"/>
+  <rect x="85" y="94" width="50" height="9" rx="2"
+        fill="#06060f" stroke="#e8a020" stroke-width="1" clip-path="url(#emblemClip)"/>
+  <rect x="107" y="94" width="6" height="22" rx="1.5"
+        fill="#12122a" stroke="#e8a020" stroke-width="1" clip-path="url(#emblemClip)"/>
 
   <!-- circuit traces -->
   <g stroke="#00dfff" stroke-width="0.9" fill="none" opacity="0.48" clip-path="url(#emblemClip)">
-    <path d="M 82 73 H 96 V 78 H 124 V 73 H 138" stroke-dasharray="3,2"/>
-    <path d="M 79 88 H 88 V 83 H 132 V 88 H 141" stroke-dasharray="3,2"/>
+    <path d="M 82 71 H 96 V 76 H 124 V 71 H 138" stroke-dasharray="3,2"/>
+    <path d="M 79 86 H 88 V 81 H 132 V 86 H 141" stroke-dasharray="3,2"/>
   </g>
   <g fill="#00dfff" opacity="0.9" clip-path="url(#emblemClip)">
-    <circle cx="96"  cy="78" r="1.8"/>
-    <circle cx="124" cy="78" r="1.8"/>
-    <circle cx="88"  cy="83" r="1.8"/>
-    <circle cx="132" cy="83" r="1.8"/>
+    <circle cx="96" cy="76" r="1.8"/> <circle cx="124" cy="76" r="1.8"/>
+    <circle cx="88" cy="81" r="1.8"/> <circle cx="132" cy="81" r="1.8"/>
   </g>
 
-  <!-- SWORDS: neon blue crossed gladius -->
-  <!-- glow halos -->
-  <g opacity="0.3" filter="url(#swordGlow)" clip-path="url(#emblemClip)">
-    <g transform="translate(110,132) rotate(-40)">
-      <polygon points="-5,24 5,24 3,-52 -3,-52" fill="#00dfff"/>
+  <!-- SWORDS: tips DOWN, front layer, neon bloom -->
+  <!-- bloom halos -->
+  <g filter="url(#neonBloom)" opacity="0.5" clip-path="url(#emblemClip)">
+    <g transform="translate(110,126) rotate(-42)">
+      <polygon points="-6,-30 6,-30 4,62 -4,62" fill="#00eeff"/>
     </g>
-    <g transform="translate(110,132) rotate(40)">
-      <polygon points="-5,24 5,24 3,-52 -3,-52" fill="#00dfff"/>
+    <g transform="translate(110,126) rotate(42)">
+      <polygon points="-6,-30 6,-30 4,62 -4,62" fill="#00eeff"/>
     </g>
   </g>
 
   <!-- left sword -->
-  <g transform="translate(110,132) rotate(-40)" clip-path="url(#emblemClip)">
-    <polygon points="-5,24 5,24 3,-56 -3,-56" fill="url(#bladeGrad)" opacity="0.95"/>
-    <polygon points="-3,-56 3,-56 0,-70" fill="#80f0ff" opacity="0.95"/>
-    <rect x="-0.8" y="-56" width="1.6" height="78" rx="0.8" fill="#aaf0ff" opacity="0.55"/>
-    <rect x="-13" y="20" width="26" height="6" rx="2"
-          fill="#e8a020" stroke="#a06810" stroke-width="0.8" filter="url(#sg)"/>
-    <circle cx="0" cy="23" r="3.5" fill="#ffd060" stroke="#a06810" stroke-width="0.6"/>
-    <rect x="-3.5" y="26" width="7" height="20" rx="2"
-          fill="#1a0a30" stroke="#0088cc" stroke-width="0.8"/>
-    <ellipse cx="0" cy="48" rx="5.5" ry="4.5"
-             fill="#e8a020" stroke="#a06810" stroke-width="0.8" filter="url(#sg)"/>
+  <g transform="translate(110,126) rotate(-42)" clip-path="url(#emblemClip)">
+    <polygon points="-5,-28 5,-28 3.5,60 -3.5,60"
+             fill="url(#bladeGrad)" filter="url(#bladeShine)" opacity="0.98"/>
+    <polygon points="-3.5,60 3.5,60 0,78" fill="#aaffff" opacity="0.98"/>
+    <rect x="-1" y="-28" width="2" height="86" rx="1" fill="#ccffff" opacity="0.55"/>
+    <rect x="-14" y="-36" width="28" height="7" rx="2"
+          fill="#e8a020" stroke="#c08010" stroke-width="0.8" filter="url(#sg)"/>
+    <ellipse cx="0" cy="-32" rx="4" ry="3" fill="#ffd060" filter="url(#sg)"/>
+    <rect x="-4" y="-56" width="8" height="20" rx="2.5"
+          fill="#120830" stroke="#00aaee" stroke-width="1"/>
+    <line x1="-4" y1="-50" x2="4" y2="-50" stroke="#00eeff" stroke-width="1.2" opacity="0.7"/>
+    <line x1="-4" y1="-43" x2="4" y2="-43" stroke="#00eeff" stroke-width="1.2" opacity="0.7"/>
+    <ellipse cx="0" cy="-62" rx="6" ry="4.5"
+             fill="#e8a020" stroke="#c08010" stroke-width="0.8" filter="url(#sg)"/>
   </g>
 
   <!-- right sword -->
-  <g transform="translate(110,132) rotate(40)" clip-path="url(#emblemClip)">
-    <polygon points="-5,24 5,24 3,-56 -3,-56" fill="url(#bladeGrad)" opacity="0.95"/>
-    <polygon points="-3,-56 3,-56 0,-70" fill="#80f0ff" opacity="0.95"/>
-    <rect x="-0.8" y="-56" width="1.6" height="78" rx="0.8" fill="#aaf0ff" opacity="0.55"/>
-    <rect x="-13" y="20" width="26" height="6" rx="2"
-          fill="#e8a020" stroke="#a06810" stroke-width="0.8" filter="url(#sg)"/>
-    <circle cx="0" cy="23" r="3.5" fill="#ffd060" stroke="#a06810" stroke-width="0.6"/>
-    <rect x="-3.5" y="26" width="7" height="20" rx="2"
-          fill="#1a0a30" stroke="#0088cc" stroke-width="0.8"/>
-    <ellipse cx="0" cy="48" rx="5.5" ry="4.5"
-             fill="#e8a020" stroke="#a06810" stroke-width="0.8" filter="url(#sg)"/>
+  <g transform="translate(110,126) rotate(42)" clip-path="url(#emblemClip)">
+    <polygon points="-5,-28 5,-28 3.5,60 -3.5,60"
+             fill="url(#bladeGrad)" filter="url(#bladeShine)" opacity="0.98"/>
+    <polygon points="-3.5,60 3.5,60 0,78" fill="#aaffff" opacity="0.98"/>
+    <rect x="-1" y="-28" width="2" height="86" rx="1" fill="#ccffff" opacity="0.55"/>
+    <rect x="-14" y="-36" width="28" height="7" rx="2"
+          fill="#e8a020" stroke="#c08010" stroke-width="0.8" filter="url(#sg)"/>
+    <ellipse cx="0" cy="-32" rx="4" ry="3" fill="#ffd060" filter="url(#sg)"/>
+    <rect x="-4" y="-56" width="8" height="20" rx="2.5"
+          fill="#120830" stroke="#00aaee" stroke-width="1"/>
+    <line x1="-4" y1="-50" x2="4" y2="-50" stroke="#00eeff" stroke-width="1.2" opacity="0.7"/>
+    <line x1="-4" y1="-43" x2="4" y2="-43" stroke="#00eeff" stroke-width="1.2" opacity="0.7"/>
+    <ellipse cx="0" cy="-62" rx="6" ry="4.5"
+             fill="#e8a020" stroke="#c08010" stroke-width="0.8" filter="url(#sg)"/>
   </g>
 
   <!-- ── Divider ── -->
-  <rect x="228" y="28" width="3" height="164" rx="1.5"
-        fill="#e8a020" opacity="0.7"/>
+  <rect x="228" y="28" width="3" height="164" rx="1.5" fill="#e8a020" opacity="0.7"/>
 
   <!-- ── Wordmark ── -->
-  <!-- AI glow layer -->
-  <text x="248" y="122" dominant-baseline="middle"
-        font-family="Georgia,'Palatino Linotype',serif"
-        font-size="90" font-weight="bold" letter-spacing="-1"
-        fill="none" opacity="0">x</text>
-
   <text x="248" y="120" dominant-baseline="middle"
         font-family="Georgia,'Palatino Linotype',serif"
         font-size="90" font-weight="bold" letter-spacing="-1">
