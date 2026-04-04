@@ -9,44 +9,58 @@
       <stop offset="0%" stop-color="#e8a020" stop-opacity="0.10"/>
       <stop offset="100%" stop-color="#e8a020" stop-opacity="0"/>
     </radialGradient>
-    <!-- lightsaber blade: deep blue → cyan → white-hot core → cyan → deep blue -->
-    <linearGradient id="saberGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%"   stop-color="#003888"/>
-      <stop offset="18%"  stop-color="#0099ff"/>
-      <stop offset="40%"  stop-color="#66eeff"/>
-      <stop offset="50%"  stop-color="#ffffff"/>
-      <stop offset="60%"  stop-color="#66eeff"/>
-      <stop offset="82%"  stop-color="#0099ff"/>
-      <stop offset="100%" stop-color="#003888"/>
-    </linearGradient>
-    <!-- silver hilt gradient: edge-to-bright-to-edge -->
+
+    <!-- Silver hilt — bright centre, dark edges, visible against dark bg -->
     <linearGradient id="hiltGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%"   stop-color="#505870"/>
-      <stop offset="30%"  stop-color="#b8c4d8"/>
-      <stop offset="55%"  stop-color="#e0e8f4"/>
-      <stop offset="80%"  stop-color="#b0bcd0"/>
-      <stop offset="100%" stop-color="#485060"/>
+      <stop offset="0%"   stop-color="#303848"/>
+      <stop offset="25%"  stop-color="#8898b0"/>
+      <stop offset="50%"  stop-color="#d8e4f4"/>
+      <stop offset="75%"  stop-color="#8898b0"/>
+      <stop offset="100%" stop-color="#303848"/>
+    </linearGradient>
+    <linearGradient id="pommelGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#202838"/>
+      <stop offset="40%"  stop-color="#b0bcd0"/>
+      <stop offset="60%"  stop-color="#e8f0fc"/>
+      <stop offset="100%" stop-color="#202838"/>
     </linearGradient>
     <linearGradient id="guardGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%"   stop-color="#404858"/>
-      <stop offset="50%"  stop-color="#c8d4e8"/>
-      <stop offset="100%" stop-color="#404858"/>
+      <stop offset="0%"   stop-color="#1a2030"/>
+      <stop offset="35%"  stop-color="#a0b0c8"/>
+      <stop offset="65%"  stop-color="#c8d8ec"/>
+      <stop offset="100%" stop-color="#1a2030"/>
     </linearGradient>
+
+    <!-- Blade — white-hot core → cyan → deep blue -->
+    <linearGradient id="bladeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#002266"/>
+      <stop offset="15%"  stop-color="#0066cc"/>
+      <stop offset="38%"  stop-color="#44ddff"/>
+      <stop offset="50%"  stop-color="#ffffff"/>
+      <stop offset="62%"  stop-color="#44ddff"/>
+      <stop offset="85%"  stop-color="#0066cc"/>
+      <stop offset="100%" stop-color="#002266"/>
+    </linearGradient>
+
     <filter id="outerGlow" x="-40%" y="-40%" width="180%" height="180%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
-    <!-- neon bloom for blade glow -->
-    <filter id="bladeBloom" x="-120%" y="-20%" width="340%" height="140%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="11" result="b1"/>
-      <feGaussianBlur in="SourceGraphic" stdDeviation="5"  result="b2"/>
-      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="b3"/>
+    <!-- triple-layer neon bloom for blade atmosphere -->
+    <filter id="bladeBloom" x="-200%" y="-30%" width="500%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="b1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6"  result="b2"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2"  result="b3"/>
       <feMerge>
         <feMergeNode in="b1"/>
         <feMergeNode in="b2"/>
         <feMergeNode in="b3"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
+    </filter>
+    <filter id="hiltSheen" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <filter id="crestGlow" x="-20%" y="-40%" width="140%" height="180%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
@@ -58,14 +72,14 @@
     </filter>
   </defs>
 
-  <!-- ── Background ── -->
+  <!-- ── Background + rings ── -->
   <circle cx="256" cy="256" r="256" fill="url(#bgGrad)"/>
   <circle cx="256" cy="256" r="244" fill="none" stroke="#e8a020"
           stroke-width="3.5" opacity="0.9" filter="url(#outerGlow)"/>
   <circle cx="256" cy="256" r="237" fill="none" stroke="#e8a020"
           stroke-width="0.8" opacity="0.3"/>
 
-  <!-- ── Neural network ── -->
+  <!-- ── Neural net ── -->
   <g stroke="#00dfff" stroke-width="1" opacity="0.22" fill="none">
     <line x1="256" y1="58"  x2="168" y2="90"/>  <line x1="256" y1="58"  x2="344" y2="90"/>
     <line x1="168" y1="90"  x2="344" y2="90"/>  <line x1="256" y1="58"  x2="256" y2="118"/>
@@ -89,12 +103,11 @@
   <!-- ── Helmet aura ── -->
   <ellipse cx="256" cy="205" rx="115" ry="100" fill="url(#helmAura)"/>
 
-  <!-- ── Helmet inner fill (compact — chin at y≈326) ── -->
+  <!-- ── Helmet fill ── -->
   <path d="M 178 292 C 173 164 190 122 256 114 C 322 122 339 164 334 292
-           Q 310 322 256 326 Q 202 322 178 292 Z"
-        fill="#12122a"/>
+           Q 310 322 256 326 Q 202 322 178 292 Z" fill="#12122a"/>
 
-  <!-- ── Crest: arched red plume over gold base ── -->
+  <!-- ── Crest ── -->
   <path d="M 124 124 C 148 40 364 40 388 124"
         fill="none" stroke="#cc2020" stroke-width="36"
         stroke-linecap="round" filter="url(#crestGlow)" opacity="0.95"/>
@@ -140,113 +153,133 @@
     <circle cx="206" cy="206" r="3.5"/> <circle cx="306" cy="206" r="3.5"/>
   </g>
 
-  <!-- ═══════════════════════════════════════════════════════
-       CROSSED LIGHTSABERS — entirely below chin (y>338)
-       Cross centre: (256, 405)
-       Left saber:  rotate(+61°) — hilt lower-left (8 o'clock),
-                    blade crosses to lower-right tip (5 o'clock)
-       Right saber: rotate(-61°) — hilt lower-right (4 o'clock),
-                    blade crosses to lower-left tip (7 o'clock)
+  <!-- ═══════════════════════════════════════════════════════════
+       LIGHTSABERS
+       Emitters flanking the helmet at chin level — 9 and 3 o'clock.
+       Left emitter:  (168, 330)   rotate +45°  blade → lower-right
+       Right emitter: (344, 330)   rotate -45°  blade → lower-left
+       Blades cross at (256, 418).  Tips at (312,474) and (200,474).
 
-       In local coords (y=0 at cross centre):
-         Pommel    : y = -118   → screen: hilt outer end
-         Grip      : y = -118 to -60
-         Guard     : y = -60 to -52
-         Emitter   : y = -52
-         Blade     : y = -52 to +62
-         Tip       : y = +62
-  ═══════════════════════════════════════════════════════ -->
+       Local coordinate origin = emitter (blade root).
+         y < 0  →  toward pommel (away from blade)
+         y > 0  →  toward blade tip
 
-  <!-- Step 1: blade bloom halos (behind everything, drawn first) -->
-  <g filter="url(#bladeBloom)" opacity="0.5">
-    <g transform="translate(256,405) rotate(61)">
-      <rect x="-5" y="-52" width="10" height="114" rx="5" fill="#0066ff"/>
+       Hilt:  y = -64 (pommel) to y = 0 (emitter)
+       Blade: y = 0  to y = +200 (tip)
+  ═══════════════════════════════════════════════════════════ -->
+
+  <!-- STEP 1 — blade bloom halos (widest glow, drawn before everything) -->
+  <g filter="url(#bladeBloom)" opacity="0.45">
+    <g transform="translate(168,330) rotate(45)">
+      <rect x="-5" y="0" width="10" height="200" rx="5" fill="#0055ff"/>
     </g>
-    <g transform="translate(256,405) rotate(-61)">
-      <rect x="-5" y="-52" width="10" height="114" rx="5" fill="#0066ff"/>
+    <g transform="translate(344,330) rotate(-45)">
+      <rect x="-5" y="0" width="10" height="200" rx="5" fill="#0055ff"/>
     </g>
   </g>
 
-  <!-- Step 2: LEFT hilt (silver) — drawn before right blade so blade overlaps -->
-  <g transform="translate(256,405) rotate(61)">
-    <!-- pommel -->
-    <ellipse cx="0" cy="-120" rx="9" ry="6"
-             fill="url(#hiltGrad)" stroke="#506080" stroke-width="1"/>
-    <ellipse cx="0" cy="-120" rx="5" ry="3.5" fill="#e0e8f4" opacity="0.75"/>
-    <!-- grip body -->
-    <rect x="-5" y="-112" width="10" height="52" rx="2.5"
-          fill="url(#hiltGrad)" stroke="#506080" stroke-width="0.9"/>
-    <!-- grip band detail -->
-    <line x1="-5" y1="-100" x2="5" y2="-100" stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <line x1="-5" y1="-90"  x2="5" y2="-90"  stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <line x1="-5" y1="-80"  x2="5" y2="-80"  stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <line x1="-5" y1="-70"  x2="5" y2="-70"  stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <!-- activation button -->
-    <rect x="-2" y="-95" width="4" height="7" rx="1.5"
-          fill="#2244aa" stroke="#4466cc" stroke-width="0.8"/>
-    <!-- guard (cross-piece) -->
-    <rect x="-9" y="-62" width="18" height="7" rx="2"
-          fill="url(#guardGrad)" stroke="#506080" stroke-width="0.9"/>
-    <!-- emitter sleeve -->
-    <rect x="-5.5" y="-55" width="11" height="6" rx="1.5"
-          fill="url(#guardGrad)" stroke="#4466aa" stroke-width="0.8"/>
+  <!-- STEP 2 — LEFT HILT  (translate to emitter, rotate +45°) -->
+  <!-- Entire hilt is in y<0 local space (above/behind the emitter) -->
+  <g transform="translate(168,330) rotate(45)">
+    <!-- pommel cap -->
+    <ellipse cx="0" cy="-62" rx="10" ry="7"
+             fill="url(#pommelGrad)" stroke="#303848" stroke-width="1.2"
+             filter="url(#hiltSheen)"/>
+    <ellipse cx="0" cy="-62" rx="5.5" ry="4"
+             fill="#e8f0fc" opacity="0.7"/>
+    <!-- main grip body -->
+    <rect x="-6" y="-54" width="12" height="44" rx="3"
+          fill="url(#hiltGrad)" stroke="#282838" stroke-width="1"/>
+    <!-- grip grooves (dark bands across) -->
+    <line x1="-6" y1="-46" x2="6" y2="-46" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <line x1="-6" y1="-37" x2="6" y2="-37" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <line x1="-6" y1="-28" x2="6" y2="-28" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <line x1="-6" y1="-19" x2="6" y2="-19" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <!-- grip highlight (bright centre stripe) -->
+    <rect x="-1.5" y="-54" width="3" height="44" rx="1.5"
+          fill="#e8f0fc" opacity="0.35"/>
+    <!-- activation stud -->
+    <rect x="-2.5" y="-41" width="5" height="8" rx="1.5"
+          fill="#1a44bb" stroke="#3366dd" stroke-width="0.8"/>
+    <!-- guard (wide cross-piece at blade root) -->
+    <rect x="-14" y="-12" width="28" height="9" rx="3"
+          fill="url(#guardGrad)" stroke="#202838" stroke-width="1.2"
+          filter="url(#hiltSheen)"/>
+    <!-- guard highlight -->
+    <rect x="-10" y="-11" width="20" height="3" rx="1.5"
+          fill="#d0dff0" opacity="0.5"/>
+    <!-- emitter shroud (tapers to blade) -->
+    <rect x="-7" y="-3" width="14" height="5" rx="2"
+          fill="url(#guardGrad)" stroke="#1a2840" stroke-width="0.8"/>
   </g>
 
-  <!-- Step 3: RIGHT hilt (silver) -->
-  <g transform="translate(256,405) rotate(-61)">
-    <ellipse cx="0" cy="-120" rx="9" ry="6"
-             fill="url(#hiltGrad)" stroke="#506080" stroke-width="1"/>
-    <ellipse cx="0" cy="-120" rx="5" ry="3.5" fill="#e0e8f4" opacity="0.75"/>
-    <rect x="-5" y="-112" width="10" height="52" rx="2.5"
-          fill="url(#hiltGrad)" stroke="#506080" stroke-width="0.9"/>
-    <line x1="-5" y1="-100" x2="5" y2="-100" stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <line x1="-5" y1="-90"  x2="5" y2="-90"  stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <line x1="-5" y1="-80"  x2="5" y2="-80"  stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <line x1="-5" y1="-70"  x2="5" y2="-70"  stroke="#404858" stroke-width="1.8" opacity="0.9"/>
-    <rect x="-2" y="-95" width="4" height="7" rx="1.5"
-          fill="#2244aa" stroke="#4466cc" stroke-width="0.8"/>
-    <rect x="-9" y="-62" width="18" height="7" rx="2"
-          fill="url(#guardGrad)" stroke="#506080" stroke-width="0.9"/>
-    <rect x="-5.5" y="-55" width="11" height="6" rx="1.5"
-          fill="url(#guardGrad)" stroke="#4466aa" stroke-width="0.8"/>
+  <!-- STEP 3 — RIGHT HILT (mirror) -->
+  <g transform="translate(344,330) rotate(-45)">
+    <ellipse cx="0" cy="-62" rx="10" ry="7"
+             fill="url(#pommelGrad)" stroke="#303848" stroke-width="1.2"
+             filter="url(#hiltSheen)"/>
+    <ellipse cx="0" cy="-62" rx="5.5" ry="4" fill="#e8f0fc" opacity="0.7"/>
+    <rect x="-6" y="-54" width="12" height="44" rx="3"
+          fill="url(#hiltGrad)" stroke="#282838" stroke-width="1"/>
+    <line x1="-6" y1="-46" x2="6" y2="-46" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <line x1="-6" y1="-37" x2="6" y2="-37" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <line x1="-6" y1="-28" x2="6" y2="-28" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <line x1="-6" y1="-19" x2="6" y2="-19" stroke="#181828" stroke-width="2.2" opacity="0.95"/>
+    <rect x="-1.5" y="-54" width="3" height="44" rx="1.5"
+          fill="#e8f0fc" opacity="0.35"/>
+    <rect x="-2.5" y="-41" width="5" height="8" rx="1.5"
+          fill="#1a44bb" stroke="#3366dd" stroke-width="0.8"/>
+    <rect x="-14" y="-12" width="28" height="9" rx="3"
+          fill="url(#guardGrad)" stroke="#202838" stroke-width="1.2"
+          filter="url(#hiltSheen)"/>
+    <rect x="-10" y="-11" width="20" height="3" rx="1.5"
+          fill="#d0dff0" opacity="0.5"/>
+    <rect x="-7" y="-3" width="14" height="5" rx="2"
+          fill="url(#guardGrad)" stroke="#1a2840" stroke-width="0.8"/>
   </g>
 
-  <!-- Step 4: LEFT blade (neon cyan, on top of both hilts) -->
-  <g transform="translate(256,405) rotate(61)">
-    <!-- outer glow layer -->
-    <rect x="-7" y="-52" width="14" height="114" rx="7"
-          fill="#0055cc" opacity="0.4" filter="url(#sg)"/>
-    <!-- main blade -->
-    <rect x="-4.5" y="-52" width="9" height="114" rx="4.5"
-          fill="url(#saberGrad)" opacity="0.97"/>
-    <!-- white core -->
-    <rect x="-1.5" y="-52" width="3" height="114" rx="1.5"
-          fill="white" opacity="0.88"/>
+  <!-- STEP 4 — LEFT BLADE (on top of both hilts) -->
+  <g transform="translate(168,330) rotate(45)">
+    <!-- soft outer corona -->
+    <rect x="-9" y="2" width="18" height="198" rx="9"
+          fill="#0033aa" opacity="0.3"/>
+    <!-- main blade body -->
+    <rect x="-5" y="2" width="10" height="198" rx="5"
+          fill="url(#bladeGrad)" opacity="0.97"/>
+    <!-- bright white-hot core -->
+    <rect x="-2" y="2" width="4" height="198" rx="2"
+          fill="white" opacity="0.90"/>
     <!-- rounded tip -->
-    <ellipse cx="0" cy="62" rx="4.5" ry="4.5" fill="#ccfeff" opacity="0.97"/>
+    <ellipse cx="0" cy="200" rx="5" ry="5"
+             fill="#ccffff" opacity="0.97"/>
+    <ellipse cx="0" cy="200" rx="2" ry="2"
+             fill="white" opacity="0.95"/>
   </g>
 
-  <!-- Step 5: RIGHT blade (neon cyan, drawn last = topmost at crossing) -->
-  <g transform="translate(256,405) rotate(-61)">
-    <rect x="-7" y="-52" width="14" height="114" rx="7"
-          fill="#0055cc" opacity="0.4" filter="url(#sg)"/>
-    <rect x="-4.5" y="-52" width="9" height="114" rx="4.5"
-          fill="url(#saberGrad)" opacity="0.97"/>
-    <rect x="-1.5" y="-52" width="3" height="114" rx="1.5"
-          fill="white" opacity="0.88"/>
-    <ellipse cx="0" cy="62" rx="4.5" ry="4.5" fill="#ccfeff" opacity="0.97"/>
+  <!-- STEP 5 — RIGHT BLADE (drawn last = front at crossing) -->
+  <g transform="translate(344,330) rotate(-45)">
+    <rect x="-9" y="2" width="18" height="198" rx="9"
+          fill="#0033aa" opacity="0.3"/>
+    <rect x="-5" y="2" width="10" height="198" rx="5"
+          fill="url(#bladeGrad)" opacity="0.97"/>
+    <rect x="-2" y="2" width="4" height="198" rx="2"
+          fill="white" opacity="0.90"/>
+    <ellipse cx="0" cy="200" rx="5" ry="5"
+             fill="#ccffff" opacity="0.97"/>
+    <ellipse cx="0" cy="200" rx="2" ry="2"
+             fill="white" opacity="0.95"/>
   </g>
 
   <!-- ── Divider + text ── -->
-  <line x1="116" y1="460" x2="396" y2="460"
-        stroke="#e8a020" stroke-width="1.2" opacity="0.5"/>
-  <text x="258" y="494" text-anchor="middle"
+  <line x1="116" y1="490" x2="396" y2="490"
+        stroke="#e8a020" stroke-width="1.2" opacity="0.4"/>
+  <text x="258" y="508" text-anchor="middle"
         font-family="Georgia,'Palatino Linotype',serif"
-        font-size="48" font-weight="bold" letter-spacing="0.5"
+        font-size="44" font-weight="bold" letter-spacing="0.5"
         fill="#000" opacity="0.4">LegionnAIre</text>
-  <text x="256" y="491" text-anchor="middle"
+  <text x="256" y="505" text-anchor="middle"
         font-family="Georgia,'Palatino Linotype',serif"
-        font-size="48" font-weight="bold" letter-spacing="0.5"
+        font-size="44" font-weight="bold" letter-spacing="0.5"
         fill="#f0f0f0" opacity="0.94">
     <tspan>Legionn</tspan><tspan fill="#e8a020" filter="url(#sg)">AI</tspan><tspan>re</tspan>
   </text>
