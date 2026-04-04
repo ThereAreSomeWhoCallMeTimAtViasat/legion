@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 220" width="900" height="220">
+  <defs>
+    <radialGradient id="bgGrad" cx="12%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#191928"/>
+      <stop offset="100%" stop-color="#060610"/>
+    </radialGradient>
+    <radialGradient id="helmAura" cx="50%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#e8a020" stop-opacity="0.13"/>
+      <stop offset="100%" stop-color="#e8a020" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="blade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#8898b4"/>
+      <stop offset="42%"  stop-color="#dde4f2"/>
+      <stop offset="100%" stop-color="#788898"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="sg" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="textglow" x="-10%" y="-20%" width="120%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="circle"><circle cx="110" cy="110" r="102"/></clipPath>
+  </defs>
+
+  <!-- full background -->
+  <rect width="900" height="220" fill="url(#bgGrad)"/>
+
+  <!-- subtle right-side fade -->
+  <defs>
+    <linearGradient id="fade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#191928" stop-opacity="0"/>
+      <stop offset="60%"  stop-color="#191928" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#191928" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="220" fill="url(#fade)"/>
+
+  <!-- ── emblem, scaled to fit height ── -->
+  <!-- outer rings -->
+  <circle cx="110" cy="110" r="102" fill="#060610" opacity="0.7"/>
+  <circle cx="110" cy="110" r="101" fill="none" stroke="#e8a020"
+          stroke-width="2" opacity="0.9" filter="url(#glow)"/>
+  <circle cx="110" cy="110" r="96"  fill="none" stroke="#e8a020"
+          stroke-width="0.6" opacity="0.3"/>
+
+  <!-- neural connections -->
+  <g stroke="#4ec9f0" stroke-width="0.7" opacity="0.28" fill="none" clip-path="url(#circle)">
+    <line x1="110" y1="16"  x2="62"  y2="36"/>
+    <line x1="110" y1="16"  x2="158" y2="36"/>
+    <line x1="62"  y1="36"  x2="158" y2="36"/>
+    <line x1="110" y1="16"  x2="110" y2="54"/>
+    <line x1="62"  y1="36"  x2="44"  y2="70"/>
+    <line x1="158" y1="36"  x2="176" y2="70"/>
+    <line x1="22"  y1="100" x2="44"  y2="70"/>
+    <line x1="198" y1="100" x2="176" y2="70"/>
+    <line x1="22"  y1="100" x2="42"  y2="138"/>
+    <line x1="198" y1="100" x2="178" y2="138"/>
+    <line x1="42"  y1="138" x2="68"  y2="162"/>
+    <line x1="178" y1="138" x2="152" y2="162"/>
+    <line x1="68"  y1="162" x2="110" y2="168"/>
+    <line x1="152" y1="162" x2="110" y2="168"/>
+  </g>
+  <g fill="#4ec9f0" filter="url(#sg)" clip-path="url(#circle)">
+    <circle cx="110" cy="16"  r="3"   opacity="0.9"/>
+    <circle cx="62"  cy="36"  r="2.5" opacity="0.75"/>
+    <circle cx="158" cy="36"  r="2.5" opacity="0.75"/>
+    <circle cx="110" cy="54"  r="2.5" opacity="0.7"/>
+    <circle cx="44"  cy="70"  r="2.5" opacity="0.7"/>
+    <circle cx="176" cy="70"  r="2.5" opacity="0.7"/>
+    <circle cx="22"  cy="100" r="3"   opacity="0.8"/>
+    <circle cx="198" cy="100" r="3"   opacity="0.8"/>
+    <circle cx="42"  cy="138" r="2.5" opacity="0.7"/>
+    <circle cx="178" cy="138" r="2.5" opacity="0.7"/>
+    <circle cx="68"  cy="162" r="2.5" opacity="0.65"/>
+    <circle cx="152" cy="162" r="2.5" opacity="0.65"/>
+    <circle cx="110" cy="168" r="3"   opacity="0.8"/>
+  </g>
+
+  <!-- helmet fill -->
+  <path d="M 72 126 C 70 64 80 45 110 40 C 140 45 150 64 148 126
+           Q 132 152 110 154 Q 88 152 72 126 Z"
+        fill="#12122a" clip-path="url(#circle)"/>
+
+  <!-- crest -->
+  <rect x="52" y="36" width="116" height="12" rx="3"
+        fill="#e8a020" opacity="0.95" filter="url(#glow)" clip-path="url(#circle)"/>
+  <rect x="52" y="36" width="116" height="5" rx="2.5"
+        fill="#ffd060" opacity="0.8" clip-path="url(#circle)"/>
+
+  <!-- dome outline -->
+  <path d="M 72 126 C 70 64 80 45 110 40 C 140 45 150 64 148 126"
+        fill="none" stroke="#e8a020" stroke-width="2.2" stroke-linecap="round"
+        filter="url(#glow)" clip-path="url(#circle)"/>
+
+  <!-- cheek guards -->
+  <path d="M 72 126 L 71 142 Q 77 155 94 157 L 94 130 Z"
+        fill="#12122a" stroke="#e8a020" stroke-width="1.8" clip-path="url(#circle)"/>
+  <path d="M 148 126 L 149 142 Q 143 155 126 157 L 126 130 Z"
+        fill="#12122a" stroke="#e8a020" stroke-width="1.8" clip-path="url(#circle)"/>
+
+  <!-- neck guard -->
+  <path d="M 94 157 Q 110 163 126 157 L 126 130 Q 110 136 94 130 Z"
+        fill="#12122a" stroke="#e8a020" stroke-width="1.8" clip-path="url(#circle)"/>
+
+  <!-- visor -->
+  <rect x="86" y="98" width="48" height="9" rx="2"
+        fill="#060610" stroke="#e8a020" stroke-width="1.2"
+        filter="url(#sg)" clip-path="url(#circle)"/>
+  <!-- nose guard -->
+  <rect x="107" y="98" width="6" height="24" rx="1.5"
+        fill="#12122a" stroke="#e8a020" stroke-width="1.2" clip-path="url(#circle)"/>
+
+  <!-- circuit traces -->
+  <g stroke="#4ec9f0" stroke-width="1" fill="none" opacity="0.5" clip-path="url(#circle)">
+    <path d="M 83 73 H 96 V 78 H 124 V 73 H 137" stroke-dasharray="3,2"/>
+    <path d="M 80 89 H 88 V 85 H 132 V 89 H 140" stroke-dasharray="3,2"/>
+  </g>
+  <g fill="#4ec9f0" opacity="0.85" clip-path="url(#circle)">
+    <circle cx="96" cy="78" r="2"/>
+    <circle cx="124" cy="78" r="2"/>
+    <circle cx="88"  cy="85" r="2"/>
+    <circle cx="132" cy="85" r="2"/>
+  </g>
+
+  <!-- crossed swords at (110,130) -->
+  <g transform="translate(110,130) rotate(-37)" filter="url(#sg)" clip-path="url(#circle)">
+    <rect x="-3" y="-42" width="6" height="58" rx="1.5" fill="url(#blade)" stroke="#5a6880" stroke-width="0.6"/>
+    <polygon points="-3,-42 3,-42 0,-54" fill="#d0daf0"/>
+    <rect x="-9" y="16" width="18" height="4" rx="1.5"
+          fill="#e8a020" stroke="#a06810" stroke-width="0.7"/>
+    <rect x="-3.5" y="20" width="7" height="16" rx="2" fill="#5a2d08" stroke="#3a1a04" stroke-width="0.7"/>
+    <ellipse cx="0" cy="38" rx="4.5" ry="3.5" fill="#e8a020" stroke="#a06810" stroke-width="0.7"/>
+  </g>
+  <g transform="translate(110,130) rotate(37)" filter="url(#sg)" clip-path="url(#circle)">
+    <rect x="-3" y="-42" width="6" height="58" rx="1.5" fill="url(#blade)" stroke="#5a6880" stroke-width="0.6"/>
+    <polygon points="-3,-42 3,-42 0,-54" fill="#d0daf0"/>
+    <rect x="-9" y="16" width="18" height="4" rx="1.5"
+          fill="#e8a020" stroke="#a06810" stroke-width="0.7"/>
+    <rect x="-3.5" y="20" width="7" height="16" rx="2" fill="#5a2d08" stroke="#3a1a04" stroke-width="0.7"/>
+    <ellipse cx="0" cy="38" rx="4.5" ry="3.5" fill="#e8a020" stroke="#a06810" stroke-width="0.7"/>
+  </g>
+
+  <!-- ── Right side: wordmark ── -->
+  <!-- vertical accent bar -->
+  <rect x="234" y="32" width="3" height="156" rx="1.5"
+        fill="#e8a020" opacity="0.7"/>
+
+  <!-- main name -->
+  <text x="262" y="118" dominant-baseline="middle"
+        font-family="Georgia,'Palatino Linotype',serif"
+        font-size="88" font-weight="bold" letter-spacing="-1"
+        fill="#f0f0f0" opacity="0.93">
+    <tspan>Legionn</tspan><tspan fill="#e8a020" filter="url(#textglow)">AI</tspan><tspan>re</tspan>
+  </text>
+
+  <!-- tagline -->
+  <text x="264" y="162"
+        font-family="'Courier New', 'Lucida Console', monospace"
+        font-size="15" letter-spacing="3"
+        fill="#4ec9f0" opacity="0.75">SEMI-AUTOMATED PENTEST FRAMEWORK</text>
+
+  <!-- subtle bottom rule -->
+  <line x1="240" y1="178" x2="880" y2="178"
+        stroke="#e8a020" stroke-width="0.8" opacity="0.35"/>
+</svg>

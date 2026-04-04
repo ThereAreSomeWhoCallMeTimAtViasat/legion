@@ -1,6 +1,4 @@
-# LegionnAIre
-
-> A semi-automated network penetration testing framework — browser-based, AI-assisted, and built on the Legion/Sparta lineage.
+![LegionnAIre](images/legionnaire_banner.png)
 
 ![LegionnAIre main interface](gifs/shots/hero_full.png)
 
