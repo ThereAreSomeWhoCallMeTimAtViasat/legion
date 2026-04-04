@@ -43,19 +43,47 @@ While I was in there I added the things I'd always wanted: AI host analysis via 
 
 ![AI tab — Phase 1 findings table and Phase 2 attack plan](gifs/shots/ai_annotated.png)
 
-### Notes and terminal integration
-- **Ctrl+B** — copies the current terminal selection (or DOM output selection) into the host's Notes tab with ANSI colour preserved
-- Notes render with full ANSI-to-HTML conversion; Log tab also renders colour codes
+### Interactive terminals (xterm.js)
+
+Right-click any host → **Open Terminal** to get a full PTY session embedded directly in the browser — no SSH client, no separate window. The terminal runs inside an xterm.js panel in the bottom output area alongside your tool processes.
+
+![xterm.js interactive terminal — full ANSI colour, live PTY session](gifs/shots/xterm_terminal.png)
+
+- **Full PTY** — readline, tab completion, colour, cursor movement, scrollback all work exactly as in a real terminal
+- **ANSI colour preserved** — the Kali bash prompt, `ls` colour coding, tool output highlights all render correctly
+- **Ctrl+B to capture** — select any output in the terminal, press Ctrl+B, and it lands in the host's Notes tab with colour intact
+- **Saved on project close** — terminal history is written to the project database so it survives save/open cycles
+- **Multiple sessions** — each Interactive process gets its own tab in the upper output panel; click between them without losing state
+- **Font size controls** — A−/A+ buttons resize the terminal font independently of other output panels
+
+### Config manager (F2) — Easy Edit mode
+
+Press **F2** to open the Config Manager. Click **⊞ Easy Edit** to switch from the raw conf textarea to a structured form editor — no need to know the `legion.conf` syntax.
+
+![Easy Edit — structured form editor for all legion.conf sections](gifs/shots/easy_mode_dialog.png)
+
+Easy Edit covers every section of the config in typed, labeled forms:
+
+| Tab | What you can change |
+|---|---|
+| **General** | Max concurrent processes, process timeout, scheduler on/off, tool duplication mode |
+| **Brute** | Hydra defaults — username, password, wordlist paths, per-service field visibility |
+| **Tool** | Binary paths for nmap, hydra, and other tools |
+| **StagedNmap** | Port ranges for each of the 6 scan stages (PORTS|spec or NSE|scripts) |
+| **Host / Port / PortTerminal** | Searchable tables — add, edit, or remove host actions and port right-click menu entries with `[IP]`/`[PORT]` placeholder validation |
+| **Scheduler** | Which tools fire automatically on service discovery, and for which service names |
+| **Match** | Tag chip editor — add or remove keywords that get highlighted in tool output |
+
+- **← Back to Advanced** applies your Easy Edit changes and returns to the raw textarea
+- **✓ Apply to Config** serialises the form state into the raw conf without leaving Easy Edit
+- Every save is timestamped to `~/.local/share/legion/backup/` — nothing is lost
+
+### Notes
+- **Ctrl+B** — copies the current terminal or DOM output selection into the host's Notes tab with ANSI colour preserved
+- Notes render with full ANSI-to-HTML conversion; the Log tab also renders colour codes
 - All nmap stage commands are written to Notes automatically so scans are reproducible
 
 ![Notes panel with Ctrl+B capture](gifs/shots/notes_annotated.png)
-
-### Config manager (F2)
-- **Easy Edit mode** — structured GUI for all `legion.conf` sections: labeled forms for GeneralSettings/BruteSettings/ToolSettings, per-stage StagedNmapSettings, searchable tables for HostActions/PortActions/PortTerminalActions/SchedulerSettings, tag chip editor for MatchSettings
-- **Advanced mode** — raw textarea with find/replace (Ctrl+F / F2), syntax highlighting on hover
-- **Profile management** — create, rename, duplicate, delete, activate profiles; activation validates the conf before copying; all saves are timestamped to `~/.local/share/legion/backup/`
-
-![Config manager Easy Edit mode](gifs/shots/config_annotated.png)
 
 ### CVEs and vulnerability data
 - Vulners NSE runs as the final nmap stage against all discovered ports
