@@ -155,7 +155,7 @@ Navigate to `http://127.0.0.1:5000` (or your chosen port).
 4. **Configure** — press F2 to open the Config Manager; use Easy Edit to add tools or adjust settings without touching the raw conf file
 5. **Analyze with AI** — click the AI tab on any host; click Analyze when all scans finish
 
-![Config Manager — Easy Edit and profile management](gifs/shots/quickstart_dialog.png)
+![Add host dialog — IP, CIDR, or hostname; Easy/Hard mode; timing slider](gifs/shots/add_host_dialog.png)
 
 ---
 
