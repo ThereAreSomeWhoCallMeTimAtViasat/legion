@@ -1,4 +1,4 @@
-![LegionnAIre](images/legionnaire_banner.png)
+![LegionnAIre](images/LegionnaireBannerGood.png)
 
 ![LegionnAIre main interface](gifs/shots/hero_full.png)
 
