@@ -52,16 +52,23 @@ def build_fingerprint(ports_services, os_family=''):
     ports_services: list of dicts with keys port_number, protocol, service_name,
                     service_version (as returned by getPortsAndServicesByHostIP).
     Returns a sorted list of strings — the canonical fingerprint for Jaccard.
+
+    Ephemeral ports (>32767) are excluded because RPC/NFS services bind to random
+    high ports on each boot — including them tanks the Jaccard similarity between
+    two scans of the same host even when the services are identical.
     """
     tuples = []
     for row in (ports_services or []):
-        # getPortsAndServicesByHostIP returns dicts with key 'portId';
-        # build_fingerprint also accepts 'port_number' or 'port' for flexibility.
         port    = str(row.get('portId') or row.get('port_number') or row.get('port') or '')
         proto   = str(row.get('protocol') or 'tcp')
         service = str(row.get('name') or row.get('service_name') or row.get('service') or '')
-        version = str(row.get('version') or row.get('service_version') or row.get('service_version') or '')
+        version = str(row.get('version') or row.get('service_version') or '')
         if port:
+            try:
+                if int(port) > 32767:
+                    continue   # skip ephemeral/dynamic ports
+            except ValueError:
+                pass
             tuples.append(f"{port}/{proto}:{service}:{version}")
     tuples.sort()
     if os_family:
@@ -97,13 +104,15 @@ def save_session(host_ip, project_name, fingerprint, phase1_json,
     return session_id
 
 
-def find_similar(fingerprint, threshold=0.95, limit=10):
+def find_similar(fingerprint, threshold=0.60, limit=10, current_host_ip=None):
     """
     Return a ranked list of sessions with Jaccard similarity ≥ threshold.
+    Sessions for the same IP as current_host_ip are always included regardless
+    of threshold — they are the most directly relevant comparisons.
     Each entry: {id, timestamp, host_ip, project_name, similarity,
                  os_family, port_count, phase1_json, phase2_markdown,
                  tokens_input, tokens_output, cost_usd}
-    Sorted by similarity desc, then timestamp desc.
+    Sorted by same-IP first, then by similarity desc.
     """
     conn = _get_conn()
     rows = conn.execute(
@@ -112,13 +121,16 @@ def find_similar(fingerprint, threshold=0.95, limit=10):
 
     fp_set = set(fingerprint)
     results = []
+    seen_ids = set()
     for row in rows:
         try:
             stored = json.loads(row['fingerprint_json'])
         except Exception:
             continue
         sim = jaccard(fp_set, set(stored))
-        if sim >= threshold:
+        same_ip = (current_host_ip and row['host_ip'] == current_host_ip)
+        # Always include same-IP sessions; require threshold for cross-IP matches
+        if sim >= threshold or same_ip:
             # Extract OS and port count from stored fingerprint
             os_family   = next((t.replace('OS:', '') for t in stored if t.startswith('OS:')), '')
             port_count  = sum(1 for t in stored if not t.startswith('OS:'))
@@ -137,10 +149,12 @@ def find_similar(fingerprint, threshold=0.95, limit=10):
                 'cost_usd':       row['cost_usd'],
             })
 
-    results.sort(key=lambda x: (-x['similarity'], x['timestamp']), reverse=False)
-    # stable sort: similarity desc, then most recent first
-    results.sort(key=lambda x: (-x['similarity'],
-                                 x['timestamp']), reverse=False)
+    # Sort: same-IP sessions first (pinned at top), then by similarity desc
+    results.sort(key=lambda x: (
+        0 if (current_host_ip and x['host_ip'] == current_host_ip) else 1,
+        -x['similarity'],
+        x['timestamp']
+    ))
     return results[:limit]
 
 

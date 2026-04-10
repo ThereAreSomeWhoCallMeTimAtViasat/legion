@@ -106,6 +106,11 @@ class Database:
                     "  matchStr TEXT NOT NULL"
                     ")"
                 ))
+                _conn.execute(_text(
+                    "CREATE TABLE IF NOT EXISTS process_checked ("
+                    "  processId TEXT PRIMARY KEY"
+                    ")"
+                ))
                 _conn.commit()
         except Exception as _exc:
             self.log.warning(f"Could not create process_matches table: {_exc}")

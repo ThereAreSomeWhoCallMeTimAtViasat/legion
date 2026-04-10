@@ -118,7 +118,7 @@ var L = {
     _lastProcCount: 0,
     _pollCount: 0,
     _hostSort: {col: 'ip', dir: 1},   /* Qt6: sort(3, Descending) = by Host/IP */
-    _procSort: {col: 'id', dir: -1},  /* Qt6: sort(15, Descending) = newest first */
+    _procSort: {col: 'status', dir: 1},  /* default: Running → Waiting → Finished → Interactive */
     _toolSort: {dir: 1},              /* 1 = A→Z, -1 = Z→A */
     /* Qt6: Filters.apply(up,down,checked,portopen,portfiltered,portclosed,tcp,udp,keywords) */
     _filters: {up:true, down:false, checked:true, portopen:true, portfiltered:false,
@@ -565,6 +565,15 @@ function _ipToNum(ip) {
     return (ip||'').split('.').reduce(function(a,o){ return a*256 + (parseInt(o,10)||0); }, 0);
 }
 function renderHosts(hosts) {
+    /* After a project switch (_projectSwitchTime is set), discard any render
+       that still carries hosts from the old project.  We use a 2-second window
+       rather than a simple boolean flag because the NEW empty snapshot can
+       resolve before the OLD stale one, clearing a flag prematurely, and then
+       the old render fires and re-triggers auto-selection.  Any render that
+       arrives within 2 s of the switch AND has hosts is treated as stale. */
+    if (L._projectSwitchTime && Date.now() - L._projectSwitchTime < 2000) {
+        if ((hosts || []).length > 0) return;   /* discard stale old-project render */
+    }
     L.hosts = hosts || [];
     _drawHosts();
 }
@@ -707,11 +716,22 @@ function renderTools(tools) {
 
 /* ── Processes table (view.py:updateProcessesTableView) — with column sort ── */
 /* Qt6: setSortingEnabled(True) + ProcessesTableModel.sort(15, Descending) = newest first */
-var _statusOrder = {Running:0, Waiting:1, Finished:2, Crashed:3, Killed:3, Cancelled:3};
+var _statusOrder = {Running:0, Waiting:1, Finished:2, Interactive:3, Crashed:4, Killed:4, Cancelled:4};
 function renderProcesses(processes) {
+    /* Mirror the stale-render guard from renderHosts — discard old-project
+       process data that arrives within 2 s of a project switch.  Without this,
+       _drawProcesses auto-selects the first process row and calls
+       loadProcessOutput on a process that no longer exists in the new project,
+       writing 'Error loading output' into the lower panel. */
+    if (L._projectSwitchTime && Date.now() - L._projectSwitchTime < 2000) {
+        if ((processes || []).length > 0) return;
+    }
     L.processes = processes || [];
     _drawProcesses();
 }
+/* True while the "Hide No-Match" button is active */
+var _hideNoMatch = false;
+
 function _drawProcesses() {
     var filter = ($('process-status-filter')||{}).value || '';
     var body = $('processes-body');
@@ -721,7 +741,11 @@ function _drawProcesses() {
     var col = L._procSort.col, dir = L._procSort.dir;
     var sorted = L.processes.slice().sort(function(a, b) {
         var av, bv;
-        if (col === 'id') { av = parseInt(a.id)||0; bv = parseInt(b.id)||0; }
+        if (col === 'checked') {
+            /* Checked rows sort first when dir=1 (ascending = checked on top) */
+            av = _checkedProcessIds.has(String(a.id)) ? 0 : 1;
+            bv = _checkedProcessIds.has(String(b.id)) ? 0 : 1;
+        } else if (col === 'id') { av = parseInt(a.id)||0; bv = parseInt(b.id)||0; }
         else if (col === 'elapsed') {
             av = parseFloat(a.elapsed_secs != null ? a.elapsed_secs : a.elapsed)||0;
             bv = parseFloat(b.elapsed_secs != null ? b.elapsed_secs : b.elapsed)||0;
@@ -742,7 +766,10 @@ function _drawProcesses() {
     sorted.forEach(function(p) {
         if (p.status === 'Running') running++;
         else finished++;
-        if (filter && p.status !== filter) return;
+        /* Match-only filter (dropdown "★ Has Match" or Hide No-Match button) */
+        if (filter === 'match' && !p.has_match) return;
+        if (filter !== 'match' && filter && p.status !== filter) return;
+        if (_hideNoMatch && !p.has_match) return;
         var tr = document.createElement('tr');
         tr.dataset.processId = p.id || '';
         tr.style.cursor = 'pointer';
@@ -767,7 +794,13 @@ function _drawProcesses() {
         }
         /* Show tabTitle (e.g. "nmap (stage 1)") when available, fall back to name */
         var displayName = p.tabTitle && p.tabTitle !== p.name ? p.tabTitle : p.name || '';
+        var isChecked = _checkedProcessIds.has(String(p.id));
         tr.innerHTML =
+            '<td style="text-align:center;padding:0 4px" class="proc-check-cell">' +
+              '<input type="checkbox" data-proc-id="' + esc(String(p.id)) + '"' +
+              (isChecked ? ' checked' : '') +
+              ' style="cursor:pointer;accent-color:var(--highlight)">' +
+            '</td>' +
             '<td>' + esc(p.id) + '</td>' +
             '<td>' + matchIcon + esc(displayName) + '</td>' +
             '<td>' + esc(target) + '</td>' +
@@ -783,11 +816,19 @@ function _drawProcesses() {
 
     /* Update sort arrows */
     var ptbl = $('processes-table');
-    var colLabels = {id:'ID', name:'Name', target:'Target', status:'Status', elapsed:'Elapsed'};
+    /* checked column: show ☑ when active (sorted by selection), ☐ otherwise */
+    var colLabels = {checked:'☐', id:'ID', name:'Name', target:'Target', status:'Status', elapsed:'Elapsed'};
+    var _checkedColLabel = function(isActive, sortDir) {
+        if (!isActive) return '☐';
+        return (sortDir === 1 ? '☑ ▲' : '☑ ▼');
+    };
     if (ptbl) ptbl.querySelectorAll('th[data-sort]').forEach(function(th) {
         var isActive = th.dataset.sort === col;
-        _setThText(th, (colLabels[th.dataset.sort] || th.dataset.sort) +
-                         (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : ''));
+        var label = th.dataset.sort === 'checked'
+            ? _checkedColLabel(isActive, dir)
+            : (colLabels[th.dataset.sort] || th.dataset.sort) +
+              (isActive ? (dir === 1 ? ' \u25b2' : ' \u25bc') : '');
+        _setThText(th, label);
     });
 
     /* Auto-select: when a new Running or Interactive process appears, click its row
@@ -1073,6 +1114,10 @@ function _drawCves() {
 }
 
 function loadHostDetail(hostId) {
+    /* Capture project-switch timestamp — bail if it changes while in-flight
+       (File→New / Open) so stale tab-unread marks and host data never land
+       after _clearAllUI cleared everything. */
+    var _switchTs = L._projectSwitchTime;
     /* Fire all 4 requests in parallel — Qt6 updates each tab independently */
     var baseUrl = '/api/workspace/hosts/' + hostId;
     Promise.all([
@@ -1081,6 +1126,7 @@ function loadHostDetail(hostId) {
         fetchJson(baseUrl + '/scripts-list'),
         fetchJson(baseUrl + '/cves-list'),
     ]).then(function(results) {
+        if (L._projectSwitchTime !== _switchTs) return;   /* project switched — discard */
         var data    = results[0];
         var info    = results[1];
         var scripts = results[2].scripts || [];
@@ -1159,6 +1205,9 @@ function loadHostDetail(hostId) {
 /* ── Dynamic tool output tabs (view.py:restoreToolTabsForHost) ── */
 /* Per-process match navigation state: {idx:N} — persists across live-output polls. */
 var _matchNavState = {};
+
+/* Process checkbox selection state — survives snapshot re-renders. */
+var _checkedProcessIds = new Set();
 
 /* Per-process scroll position memory: 'bottom' | integer scrollTop.
    Survives the container.innerHTML='' wipe in renderDynamicToolTabs so the
@@ -1255,6 +1304,11 @@ function renderDynamicToolTabs(hostIp) {
 /* ── Load process output inline (view.py tool output display) ── */
 /* Qt6: updateTabHighlight → QLabel 'Matches: ...' yellow banner above output */
 function loadProcessOutput(processId, targetEl) {
+    /* Capture project switch timestamp — bail if it changes while the fetch
+       is in-flight (project New / Open) so stale output never overwrites the
+       cleared panel.  Without this, an in-flight fetch from before File→New
+       resolves after _clearAllUI and writes 'Error loading output'. */
+    var _switchTs = L._projectSwitchTime;
     /* Determine scroll intent before the async fetch.
        Two cases:
        A) Element has real content (scrollHeight > clientHeight): read and save
@@ -1285,6 +1339,8 @@ function loadProcessOutput(processId, targetEl) {
         ? 2000000   /* effectively unlimited for matched, finished processes */
         : 50000;
     fetchJson('/api/processes/' + processId + '/output?max_chars=' + _maxChars).then(function(data) {
+        /* Bail if the project switched while the fetch was in-flight */
+        if (L._projectSwitchTime !== _switchTs) return;
         /* For dynamic-tab output (dyn-output-*): honour the container-level lock.
            _dynSelLocked is set on mousedown in the container and maintained by
            selectionchange, so it is already true before the first DOM rebuild
@@ -1356,6 +1412,8 @@ function loadProcessOutput(processId, targetEl) {
             setTimeout(function() { targetEl.scrollTop = _saved; }, 0);
         }
     }).catch(function() {
+        /* Don't write error text if the project switched — the panel was already cleared */
+        if (L._projectSwitchTime !== _switchTs) return;
         targetEl.textContent = 'Error loading output';
     });
 }
@@ -1702,7 +1760,34 @@ function initInteractions() {
     });
 
     /* ── Process row click → show output inline (plain or xterm.js terminal) ── */
+    /* Checkbox column — toggle without selecting the row */
     $('processes-body').addEventListener('click', function(e) {
+        var cb = e.target.closest('input[type="checkbox"][data-proc-id]');
+        if (cb) {
+            e.stopPropagation();
+            var pid = cb.dataset.procId;
+            /* Optimistic update — reflect immediately, persist in background */
+            if (_checkedProcessIds.has(pid)) {
+                _checkedProcessIds.delete(pid);
+                cb.checked = false;
+            } else {
+                _checkedProcessIds.add(pid);
+                cb.checked = true;
+            }
+            /* Persist to DB via API (fire-and-forget — optimistic update already applied) */
+            postJson('/api/processes/' + pid + '/checked', {}).catch(function() {
+                /* Rollback optimistic update on error */
+                if (_checkedProcessIds.has(pid)) { _checkedProcessIds.delete(pid); cb.checked = false; }
+                else { _checkedProcessIds.add(pid); cb.checked = true; }
+            });
+            /* Refresh sort arrows if currently sorting by checked column */
+            if (L._procSort.col === 'checked') _drawProcesses();
+            return;
+        }
+    }, true /* capture — fires before the bubble-phase row handler below */);
+
+    $('processes-body').addEventListener('click', function(e) {
+        if (e.target.closest('input[type="checkbox"]')) return;  /* handled above */
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.processId) return;
         L.selectedProcessId = parseInt(tr.dataset.processId);
@@ -2182,6 +2267,11 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
         var snap = JSON.parse($('initial-snapshot').textContent);
         L.snapshot = snap;
+        /* Restore checkbox state from DB before first render */
+        _checkedProcessIds = new Set();
+        (snap.processes || []).forEach(function(p) {
+            if (p.proc_checked) _checkedProcessIds.add(String(p.id));
+        });
         renderHosts(snap.hosts || []);
         renderServiceNames(snap.services || []);
         renderTools(snap.tools || []);
@@ -2766,13 +2856,23 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         /* ── Conf serializer ─────────────────────────────────────────── */
+        /* Only re-serialize sections the user actually visited (opened in Easy Mode).
+           Unvisited sections are reconstructed verbatim from their original rawLines so
+           complex escaped-quote commands in PortActions can never be corrupted by the
+           parseCSV → stripQuotes → quoteIfNeeded round-trip. */
         function serializeConf(parsed) {
             var lines = [];
             parsed.order.forEach(function(sec) {
                 lines.push('[' + sec + ']');
+                var visited = _visitedSections.indexOf(sec) !== -1;
                 (parsed.sections[sec] || []).forEach(function(entry) {
-                    if (entry.comment) { /* skip retained comments */ return; }
-                    lines.push(entry.key + '=' + entry.value);
+                    if (entry.comment) return;   /* strip comments — they aren't functional */
+                    if (!visited && entry.rawLine !== undefined) {
+                        /* Unvisited section: use the original line verbatim */
+                        lines.push(entry.rawLine);
+                    } else {
+                        lines.push(entry.key + '=' + entry.value);
+                    }
                 });
                 lines.push('');
             });
@@ -2789,6 +2889,7 @@ document.addEventListener('DOMContentLoaded', function() {
         /* ── State ───────────────────────────────────────────────────── */
         var _parsed = null;
         var _activeSection = null;
+        var _visitedSections = [];   /* sections the user actually opened — only these are re-serialized */
 
         var SECTIONS = [
             'GeneralSettings','BruteSettings','ToolSettings','StagedNmapSettings',
@@ -3238,7 +3339,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 var filter = document.getElementById('match-filter') ? document.getElementById('match-filter').value.toLowerCase() : '';
                 keywords.forEach(function(kw, i) {
                     if (filter && kw.toLowerCase().indexOf(filter) === -1) return;
-                    html += '<span class="easy-match-tag">' + esc(kw) +
+                    /* Use white-space:pre so leading/trailing/multiple spaces are visible in the chip */
+                    html += '<span class="easy-match-tag" title="' + esc(kw) + '">' +
+                            '<span style="white-space:pre">' + esc(kw) + '</span>' +
                             '<button data-src="' + id + '" data-i="' + i + '" title="Remove">×</button></span>';
                 });
                 html += '</div></div>';
@@ -3249,7 +3352,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 var e = map[key];
                 if (!e) return [];
                 var raw = stripQuotes(e.value);
-                return raw.split(',').map(function(k) { return k.trim(); }).filter(Boolean);
+                /* Split on comma ONLY — no trailing \s* — because keywords like " PUT "
+                   have intentional leading/trailing spaces that are used as word-boundary
+                   guards, and "tcp  open" uses double-space deliberately.
+                   The conf canonical format uses no spaces around commas (join(',')) so
+                   split(',') is safe.  If the conf has ", keyword" (human-formatted with
+                   a separator space), that space will show in the chip (white-space:pre)
+                   so the user can see and fix it if unintended. */
+                return raw.split(',').filter(Boolean);
             }
 
             function fullRender() {
@@ -3288,7 +3398,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     btn.addEventListener('click', function() {
                         var src   = btn.dataset.addto;
                         var inp   = document.getElementById('add-' + src);
-                        var kw    = inp ? inp.value.trim() : '';
+                        /* Do NOT trim — spaces are meaningful in match keywords (e.g. " PUT ") */
+                        var kw    = inp ? inp.value : '';
                         if (!kw) return;
                         var key   = src === 'pos' ? 'global-positive' : 'global-negative';
                         var kwList = src === 'pos' ? posKWs : negKWs;
@@ -3314,6 +3425,9 @@ document.addEventListener('DOMContentLoaded', function() {
             /* Collect current section before switching */
             if (_activeSection) collectSection(_activeSection);
             _activeSection = sec;
+            /* Track that the user actually opened this section — only visited sections
+               are re-serialized on close; unvisited sections keep their original rawLines */
+            if (_visitedSections.indexOf(sec) === -1) _visitedSections.push(sec);
             setText('easy-status', '');
 
             /* Highlight active tab */
@@ -3343,6 +3457,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!text) { alert('No profile loaded — save a profile first.'); return; }
             _parsed = parseConf(text);
             _activeSection = null;
+            _visitedSections = [];   /* reset visit tracking for this session */
 
             /* Build section tabs */
             var tabsEl = $('easy-section-tabs');
@@ -3374,33 +3489,39 @@ document.addEventListener('DOMContentLoaded', function() {
         function closeEasy() {
             if (_activeSection) collectSection(_activeSection);
             if (_parsed) {
-                /* Validate required placeholders before closing */
+                /* Validate placeholder presence — only for sections the user actually visited
+                   and only for NEW rows the user added (original rows already have valid commands).
+                   Check the raw value string directly: far more reliable than parseCSV which
+                   cannot handle \" escape sequences in complex shell commands. */
                 var errors = [];
                 ['PortActions','PortTerminalActions'].forEach(function(sec) {
+                    if (_visitedSections.indexOf(sec) === -1) return;   /* unvisited — skip */
                     (_parsed.sections[sec] || []).forEach(function(e) {
-                        if (e.comment || !e.key) return;
-                        var parts = parseCSV(e.value);
-                        var cmd = stripQuotes(parts[1] || '');
-                        if (!cmd.includes('[IP]')) errors.push(sec + ' › ' + e.key + ': missing [IP]');
-                        if (!cmd.includes('[PORT]')) errors.push(sec + ' › ' + e.key + ': missing [PORT]');
+                        if (e.comment || !e.key || e.rawLine !== undefined) return;  /* skip original rows */
+                        var raw = e.value || '';
+                        if (!raw.includes('[IP]'))   errors.push(sec + ' › ' + e.key + ': missing [IP]');
+                        if (!raw.includes('[PORT]')) errors.push(sec + ' › ' + e.key + ': missing [PORT]');
                     });
                 });
                 ['HostActions'].forEach(function(sec) {
+                    if (_visitedSections.indexOf(sec) === -1) return;
                     (_parsed.sections[sec] || []).forEach(function(e) {
-                        if (e.comment || !e.key) return;
-                        var parts = parseCSV(e.value);
-                        var cmd = stripQuotes(parts[1] || '');
-                        if (!cmd.includes('[IP]')) errors.push(sec + ' › ' + e.key + ': missing [IP]');
+                        if (e.comment || !e.key || e.rawLine !== undefined) return;
+                        if (!(e.value || '').includes('[IP]'))
+                            errors.push(sec + ' › ' + e.key + ': missing [IP]');
                     });
                 });
+                /* Show validation warnings in the status bar — don't block closing.
+                   Invalid entries are the user's responsibility; the conf is still written. */
                 if (errors.length > 0) {
-                    if (!confirm(errors.length + ' command(s) are missing required placeholders:\n\n' +
-                            errors.slice(0,10).join('\n') + '\n\nApply anyway?')) return;
+                    setText('easy-status', '⚠ ' + errors.length + ' new row(s) missing placeholders: ' +
+                        errors.slice(0,3).join(' | ') + (errors.length > 3 ? ' …' : ''));
                 }
                 cfgSetCurrentText(serializeConf(_parsed));
             }
             _parsed = null;
             _activeSection = null;
+            _visitedSections = [];
 
             var editors = $('config-editors');
             var findBar = $('cfg-find-bar');
@@ -3427,6 +3548,16 @@ document.addEventListener('DOMContentLoaded', function() {
     })(); /* end Easy Mode IIFE */
 
     /* ── Process management buttons ── */
+    /* Hide No-Match toggle — filters out processes with no keyword match */
+    var hideNoMatchBtn = $('process-hide-nomatch-button');
+    if (hideNoMatchBtn) hideNoMatchBtn.addEventListener('click', function() {
+        _hideNoMatch = !_hideNoMatch;
+        this.textContent = _hideNoMatch ? 'Show Non-Match' : 'Hide No-Match';
+        this.style.borderColor = _hideNoMatch ? 'var(--match-positive,#ff0)' : '';
+        this.style.color       = _hideNoMatch ? 'var(--match-positive,#ff0)' : '';
+        _drawProcesses();
+    });
+
     var clearFinished = $('process-clear-finished-button');
     if (clearFinished) clearFinished.addEventListener('click', function() {
         var hiding = this.dataset.hidden !== '1';
@@ -3689,6 +3820,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     /* Expose on L so pollSnapshot() (top-level scope) can call it */
     L._exitFlow = _exitFlow;
+    /* Expose _clearAllUI on L so tests can trigger new-project clear without
+       going through the confirm() dialog (which blocks in headless Selenium) */
+    L._clearAllUI = _clearAllUI;
 
     var exitBtn = $('action-exit');
     if (exitBtn) exitBtn.addEventListener('click', _exitFlow);
@@ -4211,12 +4345,138 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     /* ── New Project ── */
+    /* ── New Project UI reset ── */
+    /* Safe child removal — avoids innerHTML='' on nodes with event listeners
+       which can hang Firefox headless (skill rule: never innerHTML='' on listener nodes). */
+    function _safeEmpty(el) {
+        if (!el) return;
+        while (el.firstChild) el.removeChild(el.firstChild);
+    }
+
+    function _clearAllUI() {
+        /* ── Output panels — use textContent (safe) not innerHTML='' ── */
+        var po = $('plain-output');
+        if (po) po.textContent = '';
+        var tot = $('tool-output-text');
+        if (tot) tot.textContent = 'Select a host to view output';
+        var thb = $('tool-hosts-body');
+        if (thb) _safeEmpty(thb);
+        var sci = $('script-output-inline');
+        if (sci) sci.textContent = '';
+        /* #dynamic-tabs-container has listener-bearing children — use safe removal */
+        var dc = $('dynamic-tabs-container');
+        if (dc) _safeEmpty(dc);
+        var logOut = $('log-output');
+        if (logOut) logOut.textContent = '';
+
+        /* ── Right-panel detail tables ── */
+        ['host-detail-ports','host-detail-scripts','host-detail-cves',
+         'host-info-body','ai-p1-body','ai-p1h-body'].forEach(function(id) {
+            var el = $(id); if (el) _safeEmpty(el);
+        });
+
+        /* ── Notes ── */
+        var nt = $('notes-text'); if (nt) nt.value = '';
+        var nd = $('notes-display'); if (nd) nd.textContent = '';
+
+        /* ── AI tab ── */
+        var p2md = $('ai-p2-markdown'); if (p2md) p2md.textContent = '';
+        var p2h  = $('ai-p2h-markdown'); if (p2h) p2h.textContent = '';
+        var cb   = $('ai-cost-bar');
+        if (cb) { var ct=$('ai-cost-text'); if(ct) ct.textContent=''; }
+        _aiShowState('ai-no-host');
+        _aiResults = null; _aiHostId = null;
+        _aiRunning = false; _aiRunningHostId = null;
+
+        /* ── Tools display panel ── */
+        $('right-tabs').style.display = '';
+        $('tools-display').style.display = 'none';
+
+        /* ── Terminal panels ── */
+        var termOut = $('terminal-output');
+        if (termOut) termOut.innerHTML = '';
+        _showPlainOutput();
+
+        /* ── Dynamic tab poll ── */
+        if (_dynPollTimer) { clearInterval(_dynPollTimer); _dynPollTimer = null; }
+        _dynPollProcId = null;
+
+        /* ── Process output poll ── */
+        if (L.procPollTimer) { clearInterval(L.procPollTimer); L.procPollTimer = null; }
+
+        /* ── Client state ── */
+        L._projectSwitchTime = Date.now();  /* timestamp-guard stale snapshot renders */
+        L.selectedHostId    = null;
+        L.selectedHostIp    = null;
+        L.selectedTool      = null;
+        /* Remove tab-unread CSS class from all tab buttons — resetting
+           L._hostUnreadTabs clears the data but leaves the DOM class in place */
+        document.querySelectorAll('.tab-btn.tab-unread').forEach(function(btn) {
+            btn.classList.remove('tab-unread');
+        });
+        L.selectedProcessId = null;
+        L._hostUnreadTabs   = {};
+        /* Zero out L.hosts and L.processes so any in-flight snapshot poll that
+           resolves after _clearAllUI won't re-trigger auto-selection of the
+           stale old host (renderHosts auto-selects when !selectedHostId && hosts>0). */
+        L.hosts             = [];
+        L.processes         = [];
+        L._hostProcSig      = null;
+        L._nmapSig          = null;
+        L._pollCount        = 0;
+        L._prevRunningIds   = '';
+        L._uptimeStart      = null;
+        L._uptimeEnd        = null;
+        L._uptimeActive     = false;
+        _procScrollPos      = {};
+        _matchNavState      = {};
+        _checkedProcessIds  = new Set();
+        _savedXtermSel      = '';
+        _lastNonXtermSelSource = null;
+
+        /* ── Uptime clock ── */
+        _renderUptime();
+
+        /* ── OS tab ── */
+        var osLB = $('os-list-body');   if (osLB) osLB.innerHTML = '';
+        var osHB = $('os-hosts-body');  if (osHB) osHB.innerHTML = '';
+
+        /* ── Switch left panel back to Hosts tab ── */
+        /* Clear hosts-body FIRST so the auto-select setTimeout in the tab-click
+           handler finds no rows — otherwise the stale old host is re-selected
+           before the snapshot poll clears the list, re-setting selectedHostId. */
+        var _hb = $('hosts-body'); if (_hb) _hb.innerHTML = '';
+        var hostsBtn = document.querySelector('#left-tab-bar [data-tab="hosts-panel"]');
+        if (hostsBtn) hostsBtn.click();
+
+        /* ── Switch right panel back to Services tab ── */
+        var svcBtn = document.querySelector('#right-tab-bar [data-tab="services-right"]');
+        if (svcBtn) svcBtn.click();
+
+        /* ── Switch main to Scan tab ── */
+        var scanBtn = document.querySelector('#main-tab-bar [data-tab="scan-tab"]');
+        if (scanBtn) scanBtn.click();
+    }
+
     var newBtn = $('action-new');
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
                 setText('window-title', _VERSION + ' – *untitled');
+                _clearAllUI();
                 pollSnapshot();
+                /* Belt-and-suspenders: re-clear output panels after one full snapshot
+                   cycle (1.5s) in case any in-flight loadProcessOutput or loadHostDetail
+                   callback resolved after _clearAllUI and wrote stale content. */
+                var _ts = L._projectSwitchTime;
+                setTimeout(function() {
+                    if (L._projectSwitchTime !== _ts) return;  /* another switch happened */
+                    var po = $('plain-output');
+                    if (po) po.textContent = '';
+                    document.querySelectorAll('.tab-btn.tab-unread').forEach(function(b) {
+                        b.classList.remove('tab-unread');
+                    });
+                }, 1600);
             });
         }
     });
@@ -5198,13 +5458,31 @@ document.addEventListener('DOMContentLoaded', function() {
         low: '#48f', info: 'var(--disabled)'
     };
 
-    /* Render a Phase 1 JSON array into tbody rows */
+    /* Parse port value to integer for sorting; host-level (no port) sorts last */
+    function _aiPortNum(p) {
+        if (!p && p !== 0) return 999999;
+        var n = parseInt(String(p), 10);
+        return isNaN(n) ? 999999 : n;
+    }
+
+    /* Render a Phase 1 JSON array into tbody rows — sorted by port asc, then severity */
+    var _aiSevOrder = {critical:0, high:1, medium:2, low:3, info:4};
     function _aiRenderFindings(tbodyId, findings) {
         var tbody = $(tbodyId);
         if (!tbody) return;
         tbody.innerHTML = '';
         var rows = typeof findings === 'string' ? JSON.parse(findings) : findings;
-        (rows || []).forEach(function(f) {
+        (rows || []).slice().sort(function(a, b) {
+            var pa = _aiPortNum(a.port), pb = _aiPortNum(b.port);
+            if (pa !== pb) return pa - pb;
+            /* explicit undefined check — _aiSevOrder['critical']=0 is falsy,
+               so (val || 4) would wrongly rank critical last */
+            var sevA = (a.severity||'info').toLowerCase();
+            var sevB = (b.severity||'info').toLowerCase();
+            var sa = (_aiSevOrder[sevA] !== undefined) ? _aiSevOrder[sevA] : 4;
+            var sb = (_aiSevOrder[sevB] !== undefined) ? _aiSevOrder[sevB] : 4;
+            return sa - sb;
+        }).forEach(function(f) {
             var tr   = document.createElement('tr');
             var sev  = (f.severity || 'info').toLowerCase();
             var col  = _aiSevColour[sev] || 'var(--text)';
@@ -5490,24 +5768,67 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /* Populate comparison dropdown from history matches */
     function _aiLoadSimilar(hostId) {
-        var sel = $('ai-compare-select');
-        if (!sel) return;
-        sel.innerHTML = '<option value="">— No similar hosts in history —</option>';
+        var sel  = $('ai-compare-select');        /* inside ai-results */
+        var rSel = $('ai-ready-history-select');  /* inside ai-ready */
+        if (sel)  sel.innerHTML  = '<option value="">— No similar hosts in history —</option>';
+        if (rSel) rSel.innerHTML = '<option value="">— Select a previous analysis to review —</option>';
         fetchJson('/api/ai/history/similar/' + hostId).then(function(r) {
             var matches = r.matches || [];
-            if (matches.length === 0) return;   /* keep the "No similar hosts" placeholder */
-            /* Matches exist — replace placeholder with a neutral prompt so the user
-               can choose not to compare, then list all matches below it. */
-            sel.innerHTML = '<option value="">— Select a host to compare —</option>';
-            matches.forEach(function(m) {
-                var opt = document.createElement('option');
-                opt.value = m.id;
-                opt.textContent = m.host_ip + ' — ' + (m.timestamp || '').substring(0, 10) +
-                    ' — ' + m.similarity + '% match — ' + (m.os_family || 'Unknown') +
-                    ', ' + m.port_count + ' ports';
-                sel.appendChild(opt);
-            });
+
+            /* ── Results-panel comparison dropdown (when analysis already exists) ── */
+            if (sel) {
+                if (matches.length === 0) {
+                    /* keep placeholder */
+                } else {
+                    sel.innerHTML = '<option value="">— Select a host to compare —</option>';
+                    matches.forEach(function(m) {
+                        var opt = document.createElement('option');
+                        opt.value = m.id;
+                        opt.textContent = m.host_ip + ' — ' + (m.timestamp || '').substring(0, 10) +
+                            ' — ' + m.similarity + '% — ' + (m.os_family || 'Unknown') +
+                            ', ' + m.port_count + ' ports';
+                        sel.appendChild(opt);
+                    });
+                }
+            }
+
+            /* ── Ready-panel history dropdown (before any analysis in this session) ── */
+            var histSection = $('ai-ready-history');
+            if (rSel && histSection) {
+                if (matches.length === 0) {
+                    histSection.style.display = 'none';
+                } else {
+                    histSection.style.display = '';
+                    rSel.innerHTML = '<option value="">— Select a previous analysis to review —</option>';
+                    matches.forEach(function(m) {
+                        var opt = document.createElement('option');
+                        opt.value = m.id;
+                        var label = m.host_ip + ' — ' + (m.timestamp || '').substring(0, 10) +
+                            ' — ' + m.similarity + '% match — ' + m.port_count + ' ports';
+                        if (m.cost_usd) label += ' — $' + (m.cost_usd || 0).toFixed(4);
+                        opt.textContent = label;
+                        rSel.appendChild(opt);
+                    });
+                }
+            }
         }).catch(function() {});
+    }
+
+    /* Load button in ai-ready history section */
+    var _aiReadyLoadBtn = $('ai-ready-history-load');
+    if (_aiReadyLoadBtn) {
+        _aiReadyLoadBtn.addEventListener('click', function() {
+            var sel = $('ai-ready-history-select');
+            var sessionId = sel ? sel.value : '';
+            if (!sessionId) return;
+            fetchJson('/api/ai/history/session/' + sessionId).then(function(r) {
+                if (!r || !r.phase1_json) { setText('ai-cost-hint', 'Could not load session'); return; }
+                /* Show the historical result in the results view as if it were the current analysis */
+                _aiResults = r;
+                _aiShowResults(r, null);
+                _aiLoadSimilar(_aiHostId);
+            }).catch(function() { setText('ai-cost-hint', 'Failed to load session'); });
+        });
     }
 
     /* AI tab click → restore running state or load latest/status */

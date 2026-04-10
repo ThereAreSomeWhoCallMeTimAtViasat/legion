@@ -248,6 +248,7 @@ class WebController:
         self._pending_ports_stages = {}
         self._scan_generation = {}
         self._screenshots_taken = set()   # reset per project — was lazily init'd, leaked across project switches
+        self._checked_process_ids = set() # process IDs selected via checkbox column
         self._scan_uptime_start = None    # wall time when first non-interactive process started
         self._scan_uptime_end   = None    # wall time when last non-interactive process finished
         self._shutting_down     = False   # set True in killRunningProcesses() to block scheduler
@@ -270,6 +271,8 @@ class WebController:
         self._startup_check()
         # Restore keyword match state saved by the previous session
         self.loadMatchState()
+        # Restore process checkbox selections
+        self.loadCheckedState()
 
     def _startup_check(self):
         """Clean up state left by an unclean previous shutdown (SIGKILL, power loss, etc.).
@@ -756,6 +759,9 @@ class WebController:
             if proc in self.processes:
                 self.processes.remove(proc)
             self.fastProcessesRunning = max(0, self.fastProcessesRunning - 1)
+            # NOTE: slowProcessesRunning is decremented in _capture_output (which calls
+            # this function), NOT here — decrementing in both places causes a double-
+            # decrement that makes max-slow-processes completely ineffective.
         except Exception:
             log.exception("[WebController] processFinished error")
 
@@ -874,6 +880,45 @@ class WebController:
         if saved:
             log.info(f"[WebController] Flushed output for {saved} running processes")
         self.saveMatchState()
+        self.saveCheckedState()
+
+    def saveCheckedState(self):
+        """Persist _checked_process_ids set to process_checked table."""
+        ids = getattr(self, '_checked_process_ids', set())
+        try:
+            from sqlalchemy import text as _t
+            db = self.logic.activeProject.database
+            session = db.session()
+            try:
+                session.execute(_t("DELETE FROM process_checked"))
+                for pid in ids:
+                    session.execute(_t(
+                        "INSERT OR IGNORE INTO process_checked (processId) VALUES (:pid)"
+                    ), {'pid': str(pid)})
+                session.commit()
+            finally:
+                session.close()
+        except Exception as e:
+            log.error(f"[WebController] saveCheckedState error: {e}")
+
+    def loadCheckedState(self):
+        """Restore _checked_process_ids set from process_checked table."""
+        self._checked_process_ids = set()
+        try:
+            from sqlalchemy import text as _t
+            db = self.logic.activeProject.database
+            session = db.session()
+            try:
+                rows = session.execute(
+                    _t("SELECT processId FROM process_checked")
+                ).fetchall()
+                self._checked_process_ids = {str(r[0]) for r in rows}
+                if rows:
+                    log.info(f"[WebController] Loaded {len(rows)} checked process IDs from DB")
+            finally:
+                session.close()
+        except Exception as e:
+            log.debug(f"[WebController] loadCheckedState (no saved state or old DB): {e}")
 
     def saveMatchState(self):
         """Persist _matches dict to process_matches table so it survives save/open."""
@@ -976,6 +1021,7 @@ class WebController:
         self._active_processes.clear()
         self.processes.clear()
         self.fastProcessesRunning = 0
+        self.slowProcessesRunning = 0
 
         # Drain the queue: queued-but-not-yet-started processes must not auto-restart.
         # Without this, _capture_output threads from just-killed processes call
@@ -1111,33 +1157,22 @@ class WebController:
                             if svc_name not in svc_scope and '*' not in svc_scope:
                                 continue
 
-                            # Duplicate check — Qt6: controller.py:checkDuplicate
-                            # Applies to ALL tools including screenshooter.
-                            # storeScreenshot creates a process entry with name='screenshooter',
-                            # so the DB check catches completed screenshots on repeat scheduler runs.
-                            try:
-                                from app.auxiliary import Filters as _Filters
-                                # Only consider Waiting or Running processes as
-                                # blocking — a Finished process means the tool
-                                # completed and should be re-launchable on rescan.
-                                # Checking Finished processes here caused "already ran"
-                                # false-positives that silently skipped all tools
-                                # whenever the same host was scanned more than once
-                                # in the same session.
-                                existing = self.logic.activeProject.repositoryContainer.processRepository.getProcesses(
-                                    _Filters(), showProcesses='noNmap',
-                                    status_filter=['Waiting', 'Running'])
-                                already_ran = any(
-                                    p.get('name','') == tool_id and
-                                    p.get('hostIp','') == hip and
-                                    str(p.get('port','')) == str(port_num)
-                                    for p in (existing or [])
-                                )
-                                if already_ran:
-                                    log.debug(f'[Scheduler] Skipping {tool_id} on {hip}:{port_num} — already running/queued')
-                                    continue
-                            except Exception:
-                                pass
+                            # Duplicate check — use checkDuplicate() which reads
+                            # tool-duplication from settings and checks both
+                            # in-progress (Waiting/Running) AND completed (Finished)
+                            # processes so that tool-duplication=skip prevents tools
+                            # from firing twice when multiple nmap stages complete
+                            # (e.g., stage 2 triggers enum4linux-ng, then vulners
+                            # stage 6 fires the scheduler again and would re-run it).
+                            dup_result = self.checkDuplicate(tool_id, hip, str(port_num), protocol)
+                            if dup_result == 'skip':
+                                log.debug(f'[Scheduler] Skipping {tool_id} on {hip}:{port_num} — tool-duplication=skip')
+                                continue
+                            # newTab / append — run regardless (creates a new process entry)
+                            # askMe — scheduler runs automatically, treat as skip to avoid UI prompts
+                            if dup_result == 'askMe':
+                                log.debug(f'[Scheduler] Skipping {tool_id} on {hip}:{port_num} — askMe treated as skip in scheduler')
+                                continue
 
                             # Screenshooter is a built-in special tool — not a portAction.
                             # Also guard with in-memory set to block concurrent duplicate shots
@@ -1196,19 +1231,23 @@ class WebController:
         except Exception:
             max_fast, max_scans = 5, 3
 
-        # Count currently running processes (excluding interactive)
+        # Use the atomic slowProcessesRunning counter rather than counting from
+        # _active_processes.  The list comprehension has a race condition: two threads
+        # calling checkProcessQueue() simultaneously both see the same count and both
+        # start a process, exceeding max_scans.  The atomic counter is updated inside
+        # this method before the lock is released so the next call sees the correct value.
         running_all = [p for p in self._active_processes.values()
                        if p._popen and p._popen.poll() is None
                        and not getattr(p, 'isInteractive', False)]
-        running_scans = [p for p in running_all if 'nmap' in str(p.name).lower()]
+        running_scans_count = self.slowProcessesRunning   # atomic integer, no race
 
-        log.debug(f"[Queue] running={len(running_all)}/{max_fast} scans={len(running_scans)}/{max_scans} queued={self.fastProcessQueue.qsize()}")
+        log.debug(f"[Queue] running={len(running_all)}/{max_fast} scans={running_scans_count}/{max_scans} queued={self.fastProcessQueue.qsize()}")
 
         # Start processes while under limits (controller.py:1590-1591)
         while not self.fastProcessQueue.empty():
             if len(running_all) >= max_fast:
                 break
-            if len(running_scans) >= max_scans and not self.fastProcessQueue.empty():
+            if running_scans_count >= max_scans and not self.fastProcessQueue.empty():
                 # Peek: if next is a scan, stop
                 try:
                     next_item = self.fastProcessQueue.queue[0]
@@ -1256,9 +1295,10 @@ class WebController:
                 processRepo.storeProcessRunningStatus(str(proc_id), str(popen.pid))
                 self._active_processes[int(proc_id)] = proc
                 self.fastProcessesRunning += 1
-                running_all.append(proc)
                 if 'nmap' in str(proc.name).lower():
-                    running_scans.append(proc)
+                    self.slowProcessesRunning += 1   # atomic — prevents race in next checkProcessQueue call
+                    running_scans_count += 1
+                running_all.append(proc)
 
                 t = threading.Thread(target=self._capture_output, args=(proc, processRepo),
                                       daemon=True, name=f"capture-{proc_id}")
@@ -1881,6 +1921,8 @@ class WebController:
             if hasattr(self, '_active_processes') and int(dbId) in self._active_processes:
                 del self._active_processes[int(dbId)]
             self.fastProcessesRunning = max(0, self.fastProcessesRunning - 1)
+            if 'nmap' in str(toolName).lower():
+                self.slowProcessesRunning = max(0, self.slowProcessesRunning - 1)
 
             # Stop the global uptime clock when the last non-interactive process finishes
             if not getattr(proc, 'isInteractive', False):
@@ -2276,6 +2318,34 @@ class WebController:
         tool_output_dir = self.logic.activeProject.properties.outputFolder
         nmap_bin = getattr(self.settings, 'tools_path_nmap', '').strip() or 'nmap'
 
+        # Seed host(s) into the DB immediately so they appear in the UI hosts table
+        # before any nmap stage finishes importing its XML.  Without this, the hosts
+        # table stays empty for 5–30 minutes when discovery=False, making the UI
+        # appear broken (clicking hosts / processes has no visible effect).
+        try:
+            repo = self.logic.activeProject.repositoryContainer
+            for _ip in [ip.strip() for ip in str(host_arg).split(',') if ip.strip()]:
+                if not repo.hostRepository.getHostByIP(_ip):
+                    _seed_xml = (
+                        '<?xml version="1.0"?><nmaprun>'
+                        f'<host><status state="up"/>'
+                        f'<address addr="{_ip}" addrtype="ipv4"/>'
+                        f'</host></nmaprun>'
+                    )
+                    import tempfile as _tf, os as _os2
+                    with _tf.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as _f:
+                        _f.write(_seed_xml); _seed_path = _f.name
+                    try:
+                        from app.importers.nmap_import import import_nmap_xml
+                        import_nmap_xml(project=self.logic.activeProject,
+                                        xml_path=_seed_path, output='')
+                        log.debug(f"[WebController] Seeded host {_ip} into DB for immediate UI visibility")
+                    finally:
+                        try: _os2.unlink(_seed_path)
+                        except Exception: pass
+        except Exception as _se:
+            log.debug(f"[WebController] Host pre-seed skipped: {_se}")
+
         # Classify all configured stages into PORTS (parallel) and NSE (serial, last)
         ports_stages = []   # [(stage_num, stageOpValues), ...]
         nse_stage = None    # (stage_num, stageOpValues)
@@ -2385,6 +2455,11 @@ class WebController:
         port_values = stageOpValues.strip()
         if port_values:
             tokens.extend(['-p', port_values])
+        # Rate-limit each stage so concurrent scans don't saturate the network.
+        # Without this, stages 4+5 (29k/35k ports) drop probes and self-throttle,
+        # causing slow scans.  2000 pps × 5 concurrent = 10k pps total — safe for
+        # a gigabit LAN.  --min-rate prevents nmap from backing off unnecessarily.
+        tokens.extend(['--min-rate', '500', '--max-rate', '2000'])
         tokens.extend(['-vvvv', host_arg, '--stats-every', '5s', '-oA', outputfile])
 
         command = ' '.join(t for t in tokens if t)

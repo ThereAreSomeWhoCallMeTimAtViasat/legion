@@ -24,7 +24,7 @@
   /* derived */                 --border:#5a5a5a;
   /* grid lines */              --grid:#2e2e2e;
   /* tab inactive */            --tab-inactive:#2d2d2d;
-  /* disabled text */           --disabled:#808080;
+  /* disabled text */           --disabled:#b8b8b8;
 
   /* layout constants */
   --menubar-h:25px;
@@ -534,3 +534,39 @@ tr.host-checked td:last-child{color:var(--highlight,#2a82da)}
 
 /* Tool hosts table: red port on match */
 .port-has-match{color:#f44!important;font-weight:700}
+
+/* ================================================================
+   LIGHT MODE — overrides for prefers-color-scheme:light
+   ================================================================ */
+@media (prefers-color-scheme: light) {
+  :root {
+    --window:#f0f0f0;
+    --window-text:#000;
+    --base:#fff;
+    --alt-base:#e8e8e8;
+    --text:#000;
+    --button:#dcdcdc;
+    --button-text:#000;
+    --highlight:#2a82da;
+    --highlight-text:#fff;
+    --link:#0057b3;
+    --mid:#c8c8c8;
+    --dark:#e0e0e0;
+    --shadow:#b0b0b0;
+    --light:#f8f8f8;
+    --midlight:#e8e8e8;
+    --border:#a0a0a0;
+    --grid:#d0d0d0;
+    --tab-inactive:#d8d8d8;
+    --disabled:#333;
+  }
+  ::-webkit-scrollbar-thumb{background:#aaa;border:2px solid var(--dark)}
+  ::-webkit-scrollbar-thumb:hover{background:#888}
+  .tab-bar{scrollbar-color:#aaa var(--dark)}
+  .tab-bar::-webkit-scrollbar-thumb{background:#aaa}
+  .tab-bar::-webkit-scrollbar-thumb:hover{background:#888}
+  .ansi-fg-black{color:#222}
+  .ansi-fg-bright-black{color:#444}
+  .ansi-fg-white{color:#111}
+  .ansi-fg-bright-white{color:#000}
+}

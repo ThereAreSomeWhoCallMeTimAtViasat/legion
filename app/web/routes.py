@@ -34,9 +34,10 @@ def _filters():
 # JS pings /api/heartbeat every 5 s.  If pings stop for _HB_TIMEOUT seconds
 # (browser window closed, File→Exit in Firefox, crash) the watchdog calls
 # os._exit(0) so this Legion instance terminates automatically.
-# Timeout is long enough that a page refresh (F5 / Ctrl+Shift+R, ~2–5 s gap)
-# does NOT trigger a shutdown.
-_HB_TIMEOUT  = 20        # seconds without a ping → browser is gone
+# 300 s (5 min): tolerates background-tab JS throttling, screen lock, brief
+# network gaps, and slow user interaction without spurious shutdowns.
+# A page refresh (~2–5 s gap) is still well under this threshold.
+_HB_TIMEOUT  = 300       # seconds without a ping → browser is gone
 _hb_lock     = threading.Lock()
 _hb_last     = None      # float timestamp; None = no heartbeat yet received
 _hb_started  = False     # True once the watchdog thread is running
@@ -191,6 +192,9 @@ def snapshot():
         proc['match_text'] = ', '.join(str(m) for m in match_list) if match_list else ''
         # Terminal session_id (null for regular processes, set for Interactive PTY sessions)
         proc['session_id'] = _terminal_process_sessions.get(proc.get('id') or proc.get('pid'))
+        # Checkbox selection state — persisted to process_checked table
+        _cids = getattr(wc, '_checked_process_ids', set())
+        proc['proc_checked'] = str(proc.get('id', '')) in _cids
         processes.append(proc)
 
     tool_list = [{"label": n, "tool_id": n, "run_count": c,
@@ -494,6 +498,25 @@ def process_close(process_id):
     finally:
         session.close()
     return jsonify({"status": "ok"})
+
+@web_bp.post("/api/processes/<int:process_id>/checked")
+def process_toggle_checked(process_id):
+    """Toggle the checkbox selection state for a process.
+    Persisted to process_checked table so it survives project save/open."""
+    wc = _wc()
+    pid = str(process_id)
+    if not hasattr(wc, '_checked_process_ids'):
+        wc._checked_process_ids = set()
+    if pid in wc._checked_process_ids:
+        wc._checked_process_ids.discard(pid)
+        checked = False
+    else:
+        wc._checked_process_ids.add(pid)
+        checked = True
+    # Persist immediately so a crash / browser close doesn't lose the state
+    wc.saveCheckedState()
+    return jsonify({"status": "ok", "checked": checked})
+
 
 @web_bp.post("/api/processes/clear")
 def processes_clear():
@@ -854,12 +877,35 @@ def scheduler_provider_test():
 def scheduler_provider_logs():
     return jsonify({"logs": "No provider logs yet"})
 
+def _emergency_autosave(wc):
+    """Copy the current project DB to ~/.local/share/legion/autosave/ before
+    any unexpected shutdown so the user's scan data is never silently lost.
+    Called from the heartbeat watchdog, SIGINT handler, and atexit."""
+    try:
+        import shutil as _sh
+        from datetime import datetime as _dt
+        project = wc.logic.activeProject
+        db_path = getattr(project.database, 'name', None) if project else None
+        if not db_path or not os.path.isfile(db_path):
+            return
+        autosave_dir = os.path.expanduser('~/.local/share/legion/autosave')
+        os.makedirs(autosave_dir, exist_ok=True)
+        ts   = _dt.now().strftime('%Y%m%d_%H%M%S')
+        name = getattr(project, 'name', None) or getattr(project, 'projectName', None) or 'untitled'
+        dest = os.path.join(autosave_dir, f'{name}-{ts}.legion')
+        _sh.copy2(db_path, dest)
+        logging.getLogger('legion').info(f'[Legion] Auto-saved project to {dest}')
+    except Exception as _e:
+        logging.getLogger('legion').warning(f'[Legion] Auto-save failed: {_e}')
+
+
 @web_bp.post("/api/heartbeat")
 def heartbeat():
     """Browser keepalive ping sent every 5 s by legion.js.
     Starts the browser-close watchdog on the very first call (wc captured
     from the request context so the watchdog thread needs no app context).
-    When pings stop for _HB_TIMEOUT seconds the watchdog exits the process."""
+    When pings stop for _HB_TIMEOUT seconds the watchdog auto-saves the
+    project, kills running processes, and exits the process."""
     global _hb_last, _hb_started
     with _hb_lock:
         _hb_last = time.time()
@@ -874,6 +920,10 @@ def heartbeat():
                     if last is not None and (time.time() - last) > _HB_TIMEOUT:
                         try:
                             wc.saveRunningProcessOutputs()
+                        except Exception:
+                            pass
+                        _emergency_autosave(wc)   # preserve all scan data
+                        try:
                             wc.killRunningProcesses()
                         except Exception:
                             pass
@@ -1530,12 +1580,18 @@ class _TerminalSession:
     """Manages a PTY bash session. Bash always hosts the PTY; the tool command
     (if any) is written to bash's stdin after 500ms — exactly as Qt6 does."""
 
-    def __init__(self, session_id: str, command: str = None):
+    def __init__(self, session_id: str, command: str = None,
+                 wc=None, host_ip: str = '', tab_title: str = ''):
         self.id = session_id
         self.command = command
         self._buf = bytearray()
         self._lock = _threading.Lock()
         self._alive = True
+        # Match detection — scan new PTY output as it arrives
+        self._wc        = wc
+        self._host_ip   = host_ip
+        self._tab_title = tab_title
+        self._scan_pos  = 0   # bytes already scanned for matches
 
         master_fd, slave_fd = _pty.openpty()
 
@@ -1578,6 +1634,16 @@ class _TerminalSession:
         if command:
             _threading.Timer(0.5, self._send_command).start()
 
+    _ANSI_RE = None   # compiled lazily
+
+    @staticmethod
+    def _strip_ansi(text):
+        import re
+        if _TerminalSession._ANSI_RE is None:
+            _TerminalSession._ANSI_RE = re.compile(
+                r'\x1b(?:[@-Z\\-_]|\[[0-9;?]*[ -/]*[@-~])')
+        return _TerminalSession._ANSI_RE.sub('', text)
+
     def _reader(self):
         while self._alive and self.proc.poll() is None:
             try:
@@ -1587,9 +1653,26 @@ class _TerminalSession:
                     if data:
                         with self._lock:
                             self._buf.extend(data)
+                        # Scan new chunk for keyword matches
+                        self._scan_matches(data)
             except OSError:
                 break
         self._alive = False
+
+    def _scan_matches(self, new_bytes):
+        """Scan a new PTY output chunk for keyword matches and call wc.handleMatch."""
+        if not self._wc or not self._host_ip or not self._tab_title:
+            return
+        try:
+            text = self._strip_ansi(new_bytes.decode('utf-8', errors='replace'))
+            matches = self._wc.detectMatches(text, self._tab_title)
+            if matches:
+                self._wc.handleMatch(
+                    self._host_ip, self._tab_title,
+                    ', '.join(matches)
+                )
+        except Exception:
+            pass
 
     def _send_command(self):
         if self.command and self._alive:
@@ -1638,11 +1721,12 @@ def terminal_start():
     command = payload.get('command')  # None = plain bash; string = dispatched after 500ms
 
     session_id = str(_uuid.uuid4())
-    session = _TerminalSession(session_id, command=command)
+    wc = _wc()
+    session = _TerminalSession(session_id, command=command,
+                               wc=wc, host_ip=host_ip, tab_title=label)
     _terminal_sessions[session_id] = session
 
     # Create a process row in the DB with status='Interactive'
-    wc = _wc()
     logic = _logic()
     from app.timing import getTimestamp
     from controller.web_controller import WebProcessStub
@@ -1805,7 +1889,8 @@ def ai_history_similar(host_id):
         return jsonify({'matches': [], 'fingerprint': []})
 
     (_, host_ip, _, ports, _, _, _, _, fingerprint) = result
-    matches = history_db.find_similar(fingerprint, threshold=0.95, limit=10)
+    matches = history_db.find_similar(fingerprint, threshold=0.60, limit=10,
+                                      current_host_ip=host_ip)
     return jsonify({'matches': matches, 'fingerprint': fingerprint, 'host_ip': host_ip})
 
 

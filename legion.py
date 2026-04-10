@@ -392,6 +392,15 @@ if __name__ == "__main__":
 
     if args.web:
         # --- WEB MODE (uses YOUR controller.py logic via WebController) ---
+        # Ignore terminal I/O signals immediately — must be first so that any
+        # print() calls during startup don't trigger SIGTTOU when backgrounded.
+        import signal as _sig_early
+        try:
+            _sig_early.signal(_sig_early.SIGTTOU, _sig_early.SIG_IGN)
+            _sig_early.signal(_sig_early.SIGTTIN, _sig_early.SIG_IGN)
+        except (AttributeError, OSError):
+            pass
+
         from controller.web_controller import WebController
         from app.settings import AppSettings, Settings
         from flask import Flask, jsonify, request, render_template, send_from_directory
@@ -436,46 +445,63 @@ if __name__ == "__main__":
 
         def _web_shutdown(signum=None, frame=None):
             """SIGINT/SIGTERM handler for Flask mode.
-            First press: set _exit_requested flag — JS detects it via snapshot and
-            shows the save dialog in the browser.  A 60-second timeout force-exits
-            if the browser never responds.  Second press force-exits immediately."""
-            import os as _os, threading as _threading
+            First press: kill all nmap/tool subprocesses immediately (they must not
+            linger), set _exit_requested so the browser shows the save dialog, then
+            wait up to 60 s for the user to respond.
+            Second press: force-exit without waiting."""
+            import os as _os, threading as _threading, time as _time
+            import logging as _logging
+            _log = _logging.getLogger('legion')
+
             if getattr(wc, '_exit_requested', False):
-                # Second Ctrl+C — user is insistent, force exit now
-                print("\n[Legion] Force exit.")
+                # Second Ctrl+C — force exit now
+                _log.info("[Legion] Force exit (second Ctrl+C).")
                 try:
                     wc.saveRunningProcessOutputs()
                     wc.closeProject()
                 except Exception:
                     pass
-                import time as _time
-                _time.sleep(0.5)   # let daemon threads notice kill status before _exit
+                _time.sleep(0.5)
                 _os._exit(0)
 
-            wc._exit_requested = True
-            print("\n[Legion] Exit requested — respond in the browser to save your project.")
-            print("[Legion] Press Ctrl+C again to force-quit without saving.")
+            # First press — kill subprocesses immediately, auto-save, let browser save
+            _log.info("[Legion] Stopping all scans and tool processes…")
+            try:
+                wc.killRunningProcesses()   # SIGKILL nmap + all tool grandchildren now
+            except Exception:
+                pass
+            from app.web.routes import _emergency_autosave as _eas
+            _eas(wc)   # preserve scan data in case browser never responds
+
+            wc._exit_requested = True      # tells JS snapshot to show save dialog
+            _log.info("[Legion] Processes killed. Browser save dialog shown.")
 
             def _force_exit_timeout():
-                import time
-                time.sleep(60)
+                _time.sleep(60)
                 if getattr(wc, '_exit_requested', False):
-                    print("\n[Legion] No browser response after 60s — force exiting.")
+                    _log.info("[Legion] No browser response after 60s — force exiting.")
                     try:
                         wc.saveRunningProcessOutputs()
                         wc.closeProject()
                     except Exception:
                         pass
-                    # Brief pause: lets daemon threads notice kill status written by
-                    # closeProject/killRunningProcesses before _exit tears them down.
-                    time.sleep(0.5)
+                    _time.sleep(0.5)
                     _os._exit(0)
             _threading.Thread(target=_force_exit_timeout, daemon=True).start()
 
+        # atexit: last-resort cleanup if Python exits any other way
+        # (e.g. unhandled exception, SIGTERM without our handler firing first).
+        import atexit as _atexit
+        def _atexit_cleanup():
+            from app.web.routes import _emergency_autosave as _eas
+            _eas(wc)
+            try:
+                wc.killRunningProcesses()
+            except Exception:
+                pass
+        _atexit.register(_atexit_cleanup)
+
         # Register BOTH signals before app.run().
-        # IMPORTANT: Werkzeug swallows KeyboardInterrupt internally in serve_forever(),
-        # so 'except KeyboardInterrupt' around app.run() never fires.
-        # Explicit signal handlers run before Werkzeug sees the signal.
         _signal.signal(_signal.SIGINT,  _web_shutdown)
         _signal.signal(_signal.SIGTERM, _web_shutdown)
 
@@ -600,7 +626,7 @@ if __name__ == "__main__":
                 print(f"[Legion] Could not open Firefox automatically: {_be}")
         if not args.no_browser:
             import threading as _threading
-            _threading.Timer(1.5, _open_browser).start()
+            _threading.Timer(0.5, _open_browser).start()   # 0.5s: Flask binds in <100ms
 
         app.run(host="127.0.0.1", port=_port, debug=False, threaded=True)
         sys.exit(0)

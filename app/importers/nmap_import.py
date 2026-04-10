@@ -12,7 +12,12 @@ import threading
 
 log = logging.getLogger('legion')
 
-_import_lock = threading.Lock()  # replaces QSemaphore
+# Serialises concurrent XML imports.  Previously the code patched
+# project.database.dbsemaphore.acquire/release on a shared object, which
+# caused a deadlock when two threads ran simultaneously: thread B's patch
+# overwrote thread A's patch, breaking the acquire/release pairing so
+# _import_lock was never released and every subsequent import hung forever.
+_import_lock = threading.Lock()
 
 
 def import_nmap_xml(project, xml_path, output=""):
@@ -33,7 +38,6 @@ def import_nmap_xml(project, xml_path, output=""):
 
     log.info(f"[nmap_import] Importing {xml_path}")
 
-    # Create importer using your existing NmapImporter class
     observable = UpdateProgressObservable()
     importer = NmapImporter(observable, project.repositoryContainer.hostRepository)
     importer.setDB(project.database)
@@ -41,31 +45,24 @@ def import_nmap_xml(project, xml_path, output=""):
     importer.setFilename(xml_path)
     importer.setOutput(output)
 
-    # Replace Qt semaphore acquire/release with threading.Lock
-    # This is the only Qt piece that blocks us from calling run() directly
-    original_acquire = project.database.dbsemaphore.acquire
-    original_release = project.database.dbsemaphore.release
+    # Serialise concurrent imports with a module-level lock.
+    # We hold _import_lock for the entire patch→run→restore cycle so no other
+    # thread can overwrite the dbsemaphore patches while we are running.
+    with _import_lock:
+        original_acquire = project.database.dbsemaphore.acquire
+        original_release = project.database.dbsemaphore.release
 
-    def lock_acquire(n=1):
-        _import_lock.acquire()
+        # Replace Qt semaphore with no-ops: the lock above already serialises
+        # concurrent imports so we don't need the semaphore inside run().
+        project.database.dbsemaphore.acquire = lambda n=1: None
+        project.database.dbsemaphore.release = lambda n=1: None
 
-    def lock_release(n=1):
         try:
-            _import_lock.release()
-        except RuntimeError:
-            pass  # already released
-
-    project.database.dbsemaphore.acquire = lock_acquire
-    project.database.dbsemaphore.release = lock_release
-
-    try:
-        # Call run() directly (same as QThread would call it)
-        importer.run()
-        log.info(f"[nmap_import] Import complete: {xml_path}")
-    except Exception as e:
-        log.error(f"[nmap_import] Import failed: {e}")
-        raise
-    finally:
-        # Restore original semaphore
-        project.database.dbsemaphore.acquire = original_acquire
-        project.database.dbsemaphore.release = original_release
+            importer.run()
+            log.info(f"[nmap_import] Import complete: {xml_path}")
+        except Exception as e:
+            log.error(f"[nmap_import] Import failed: {e}")
+            raise
+        finally:
+            project.database.dbsemaphore.acquire = original_acquire
+            project.database.dbsemaphore.release = original_release

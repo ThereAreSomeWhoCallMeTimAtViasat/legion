@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.117-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.143-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -269,6 +269,17 @@
             Analyze (~$0.00)
         </button>
         <span style="font-size:9pt;color:var(--disabled);margin-left:10px" id="ai-cost-hint"></span>
+        <!-- Previous analyses — shown whenever history exists, before running a new one -->
+        <div id="ai-ready-history" style="display:none;margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+            <p style="font-size:9pt;color:var(--disabled);margin-bottom:8px">Previous analyses for this host:</p>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <select id="ai-ready-history-select" style="font:inherit;background:var(--base);color:var(--text);border:1px solid var(--border);padding:2px 6px;min-width:320px">
+                    <option value="">— Select a previous analysis to review —</option>
+                </select>
+                <button id="ai-ready-history-load" type="button" style="font-size:9pt;padding:3px 12px">Load</button>
+            </div>
+            <p style="font-size:8pt;color:var(--muted);margin-top:6px">Review a previous analysis before deciding whether to run a new one.</p>
+        </div>
     </div>
     <div id="ai-running" style="padding:12px;display:none">
         <span class="spinner"></span>
@@ -433,7 +444,9 @@
             <option value="Finished">Finished</option>
             <option value="Crashed">Failed</option>
             <option value="Waiting">Waiting</option>
+            <option value="match">★ Has Match</option>
         </select>
+        <button id="process-hide-nomatch-button" type="button" title="Hide processes with no keyword matches">Hide No-Match</button>
         <button id="process-clear-finished-button" type="button">Hide Finished</button>
         <button id="process-clear-all-button" type="button">Hide All</button>
         <div style="flex:1"></div>
@@ -444,6 +457,7 @@
     <div style="display:flex;flex:1;min-height:0;overflow:hidden">
         <div class="table-wrap" id="proc-table-wrap" style="flex:1">
             <table id="processes-table"><thead><tr>
+                <th style="cursor:pointer;width:28px;text-align:center" data-sort="checked" title="Sort by selected">☐</th>
                 <th style="cursor:pointer" data-sort="id">ID ▼</th>
                 <th style="cursor:pointer" data-sort="name">Name</th>
                 <th style="cursor:pointer" data-sort="target">Target</th>
