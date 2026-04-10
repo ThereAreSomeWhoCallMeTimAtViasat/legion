@@ -959,6 +959,9 @@ def exit_server():
     import threading, os as _os
     wc = _wc()
     wc._exit_requested = False
+    wc.killRunningProcesses()   # mark all procs Killed + drain queue so
+    import time as _time        # _capture_output threads see isKilledProcess()
+    _time.sleep(1.0)            # and stop trying to write before DB is disposed
     wc.saveRunningProcessOutputs()
     wc.closeProject()
     def _stop():

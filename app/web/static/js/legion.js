@@ -384,7 +384,10 @@ function highlightMatches(html) {
         if (!pattern) return;
         var stripped = pattern.replace(/^ | $/g, '');   /* strip leading/trailing spaces only */
         if (!stripped) return;
-        var core    = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        /* ansiToHtml() HTML-escapes <, >, & before we search — match the entity forms
+           so keywords like "<ACTIVE>" and "==> DIRECTORY" find their escaped equivalents */
+        var htmlEscaped = stripped.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        var core    = htmlEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         var prefix  = (pattern[0]                    === ' ') ? '(?<![\\w])' : '';
         var suffix  = (pattern[pattern.length - 1]   === ' ') ? '(?![\\w])'  : '';
         var re = new RegExp('(' + prefix + core + suffix + ')', 'g'); /* no 'i' — case-sensitive */

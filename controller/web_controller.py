@@ -1945,7 +1945,10 @@ class WebController:
             if live_file:
                 try: live_file.close()
                 except Exception: pass
-            processRepo.storeProcessOutput(dbId, ''.join(output_parts) + f"\n[capture error: {e}]")
+            try:
+                processRepo.storeProcessOutput(dbId, ''.join(output_parts) + f"\n[capture error: {e}]")
+            except Exception:
+                pass  # DB may already be disposed (e.g. File→Exit during capture)
 
     def killProcess(self, process_id):
         """Kill a running process by DB id. Replaces controller.py:killProcess.
