@@ -109,7 +109,7 @@ def test_lower_selection_survives_snapshot_refresh(drv, srv):
         for r in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             if 'lower-sel' in r.text:
                 cells = r.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() == 'Finished':
+                if len(cells) >= 6 and cells[5].text.strip() == 'Finished':
                     return r
         return False
     proc_row = W(drv, 20).until(_fin)

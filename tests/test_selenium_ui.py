@@ -110,8 +110,9 @@ def wait_for_process_status(driver, name_fragment, status, timeout=60):
                 cells = row.find_elements(By.TAG_NAME, 'td')
                 text = ' '.join(c.text for c in cells)
                 if name_fragment.lower() in text.lower():
-                    # status is td[5] (index 4)
-                    if len(cells) >= 5 and cells[4].text.strip() == status:
+                    # Columns: ☐(0)|ID(1)|Name(2)|Target(3)|PID(4)|Status(5)|%(6)|Elapsed(7)
+                    # Checkbox added v10.136 → Status is now index 5 (was 4)
+                    if len(cells) >= 6 and cells[5].text.strip() == status:
                         return row
             except Exception:
                 pass
@@ -129,7 +130,7 @@ def all_processes_done(driver):
             var result = [];
             rows.forEach(function(r) {
                 var cells = r.querySelectorAll('td');
-                if (cells.length >= 5) result.push(cells[4].textContent.trim());
+                if (cells.length >= 6) result.push(cells[5].textContent.trim()); /* checkbox shift: Status now index 5 */
             });
             return result;
         """)
@@ -895,9 +896,9 @@ class TestProcessOutput:
         rows = driver.find_elements(By.CSS_SELECTOR, '#processes-body tr')
         for row in rows:
             cells = row.find_elements(By.TAG_NAME, 'td')
-            if len(cells) >= 5:
-                assert cells[4].text.strip() == 'Running', \
-                    f"Non-Running process shown when filter=Running: {cells[4].text}"
+            if len(cells) >= 6:
+                assert cells[5].text.strip() == 'Running', \
+                    f"Non-Running process shown when filter=Running: {cells[5].text}"
         # Reset
         sel.find_element(By.CSS_SELECTOR, 'option[value=""]').click()
 
@@ -1147,7 +1148,7 @@ class TestLiveScan:
             rows = d.find_elements(By.CSS_SELECTOR, '#processes-body tr')
             for row in rows:
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() in ('Running', 'Waiting'):
+                if len(cells) >= 6 and cells[5].text.strip() in ('Running', 'Waiting'):
                     return True
             return False
         W(driver, self.T_SCAN_STARTS).until(_has_active_process)
@@ -1159,8 +1160,8 @@ class TestLiveScan:
             var rows = document.querySelectorAll('#processes-body tr');
             for (var r of rows) {
                 var cells = r.querySelectorAll('td');
-                if (cells.length >= 5) {
-                    var s = cells[4].textContent.trim();
+                if (cells.length >= 6) {
+                    var s = cells[5].textContent.trim(); /* checkbox shift: Status now index 5 */
                     if (s === 'Running' || s === 'Waiting')
                         return r.dataset.processId;
                 }
@@ -1197,7 +1198,7 @@ class TestLiveScan:
             var rows = document.querySelectorAll('#processes-body tr');
             for (var r of rows) {
                 var cells = r.querySelectorAll('td');
-                if (cells.length >= 5 && cells[4].textContent.trim() === 'Finished')
+                if (cells.length >= 6 && cells[5].textContent.trim() === 'Finished') /* checkbox shift */
                     return true;
             }
             return false;

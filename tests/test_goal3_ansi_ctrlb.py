@@ -112,7 +112,7 @@ def _wait_for_finished(drv, name, timeout=20):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             if name in row.text:
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() == 'Finished':
+                if len(cells) >= 6 and cells[5].text.strip() == 'Finished':
                     return row
         return False
     return W(drv, timeout).until(_fin)

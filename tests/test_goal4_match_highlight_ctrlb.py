@@ -108,7 +108,7 @@ def test_goal4_match_highlight_in_notes(drv, srv):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             if 'match-cmd' in row.text:
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() == 'Finished':
+                if len(cells) >= 6 and cells[5].text.strip() == 'Finished':
                     return row
         return False
     proc_row = W(drv, 20).until(_fin)

@@ -115,8 +115,9 @@ def _wait_proc_done(drv, name, timeout=25):
     def _done(d):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             cells = row.find_elements(By.TAG_NAME, 'td')
-            if len(cells) >= 5 and name in cells[1].text:
-                if cells[4].text.strip() in ('Finished', 'Killed', 'Crashed'):
+            # Checkbox added v10.136: ☐(0)|ID(1)|Name(2)|Target(3)|PID(4)|Status(5)
+            if len(cells) >= 6 and name in cells[2].text:
+                if cells[5].text.strip() in ('Finished', 'Killed', 'Crashed'):
                     return row
         return False
     return W(drv, timeout).until(_done)

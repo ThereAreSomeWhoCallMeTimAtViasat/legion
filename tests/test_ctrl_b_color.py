@@ -81,7 +81,7 @@ def run_and_click_process(driver, wc, cmd, name, expected_word):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             if name in row.text:
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() == 'Finished':
+                if len(cells) >= 6 and cells[5].text.strip() == 'Finished':
                     return row
         return False
     proc_row = W(driver, 20).until(_fin)
@@ -255,7 +255,7 @@ class TestInteractiveTerminal:
         def _find_interactive(d):
             for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() == 'Interactive':
+                if len(cells) >= 6 and cells[5].text.strip() == 'Interactive':
                     return row
             return False
         proc_row = W(cb_driver, 10).until(_find_interactive)

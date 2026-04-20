@@ -91,7 +91,7 @@ def _run_and_load_lower(drv, wc, cmd, name, word):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             if name in row.text:
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() == 'Finished':
+                if len(cells) >= 6 and cells[5].text.strip() == 'Finished':
                     return row
         return False
     proc_row = W(drv, 20).until(_fin)
@@ -112,7 +112,7 @@ def _run_and_load_upper(drv, wc, cmd, name, word):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             if name in row.text:
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and cells[4].text.strip() == 'Finished':
+                if len(cells) >= 6 and cells[5].text.strip() == 'Finished':
                     return row
         return False
     W(drv, 20).until(_fin)

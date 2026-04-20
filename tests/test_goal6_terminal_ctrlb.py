@@ -125,7 +125,7 @@ def test_goal6_ctrlb_from_interactive_terminal(drv, srv):
     def _find_interactive(d):
         for r in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             cells = r.find_elements(By.TAG_NAME, 'td')
-            if len(cells) >= 5 and cells[4].text.strip() == 'Interactive':
+            if len(cells) >= 6 and cells[5].text.strip() == 'Interactive':
                 return r
         return False
     js(drv, 'arguments[0].click()', W(drv, 10).until(_find_interactive))

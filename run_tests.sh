@@ -59,6 +59,17 @@ $RUN_UNIT || $RUN_SELENIUM || $RUN_LIVE || $RUN_STORIES || { RUN_UNIT=true; RUN_
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ── Sync repo legion.conf → live conf before any test run ─────────────────────
+# Tests that use create_test_app() / Settings(AppSettings()) read from the live
+# conf at ~/.local/share/legion/legion.conf.  Without this sync, tests run
+# against a stale conf that may be missing new tools or still have banned tools.
+_LIVE_CONF="$HOME/.local/share/legion/legion.conf"
+_REPO_CONF="$SCRIPT_DIR/legion.conf"
+if [[ -f "$_REPO_CONF" ]]; then
+    mkdir -p "$(dirname "$_LIVE_CONF")"
+    cp "$_REPO_CONF" "$_LIVE_CONF"
+fi
+
 # ── Tracking ───────────────────────────────────────────────────────────────────
 declare -a SUITE_NAMES=()
 declare -a SUITE_STATUS=()   # pass | fail | skip

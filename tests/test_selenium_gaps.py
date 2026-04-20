@@ -207,10 +207,11 @@ def wait_process_status(driver, name_fragment, status, timeout=30):
     def _check(d):
         for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
             cells = row.find_elements(By.TAG_NAME, 'td')
-            if len(cells) >= 5:
+            if len(cells) >= 6:
                 text = ' '.join(c.text for c in cells)
                 if name_fragment.lower() in text.lower():
-                    if cells[4].text.strip() == status:
+                    # Checkbox added v10.136: Status now index 5 (was 4)
+                    if cells[5].text.strip() == status:
                         return row
         return False
     return WebDriverWait(driver, timeout,
@@ -362,8 +363,8 @@ class TestProcessActions:
         def _not_running(d):
             for row in d.find_elements(By.CSS_SELECTOR, '#processes-body tr'):
                 cells = row.find_elements(By.TAG_NAME, 'td')
-                if len(cells) >= 5 and 'kill-test' in row.text.lower():
-                    return cells[4].text.strip() not in ('Running', 'Waiting')
+                if len(cells) >= 6 and 'kill-test' in row.text.lower():
+                    return cells[5].text.strip() not in ('Running', 'Waiting')  # checkbox shift
             return False
         W(gap_driver, 10).until(_not_running)
 
@@ -805,7 +806,7 @@ class TestSendSelectionToNotes:
             var rows = document.querySelectorAll('#processes-body tr');
             for (var r of rows) {
                 var cells = r.querySelectorAll('td');
-                if (cells.length >= 5 && cells[1].textContent.includes('notes-sel-test'))
+                if (cells.length >= 6 && cells[2].textContent.includes('notes-sel-test')) /* checkbox shift: Name now index 2 */
                     return r.dataset.processId;
             }
             return null;

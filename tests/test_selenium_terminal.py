@@ -274,7 +274,7 @@ class TestOpenTerminal:
                 '#processes-body tr[data-process-id="' + arguments[0] + '"]');
             if (!row) return 'not found';
             var cells = row.querySelectorAll('td');
-            return cells.length >= 5 ? cells[4].textContent.trim() : 'no cells';
+            return cells.length >= 6 ? cells[5].textContent.trim() : 'no cells'; /* checkbox shift: Status now index 5 */
         """, str(pid))
         assert status == 'Interactive', \
             f"Terminal process {pid} status should be Interactive, got: {status!r}"
