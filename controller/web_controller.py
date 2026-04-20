@@ -1958,6 +1958,11 @@ class WebController:
 
         if proc and proc._popen and proc._popen.poll() is None:
             shell_pid = proc._popen.pid
+            # Mark Killed in DB BEFORE sending the signal so _capture_output's
+            # isKilledProcess() call (which fires immediately on EOF) sees the
+            # committed status and uses preserve_status=True.  Without this,
+            # _capture_output can race ahead and write 'Finished' over 'Killed'.
+            processRepo.storeProcessKillStatus(str(process_id))
             # Kill grandchildren FIRST — while they are still children of the shell
             # and therefore visible to the /proc BFS.  If we kill the shell first,
             # Linux re-parents its children to PID 1 before _kill_subtree runs,

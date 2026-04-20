@@ -69,14 +69,31 @@ def _settings_path():
     s = AppSettings()
     return str(s.actions.fileName() or "")
 
+def _backup_dir():
+    """v10.95 changed backups from {path}.bak to timestamped files in backup/."""
+    return os.path.expanduser('~/.local/share/legion/backup')
+
+def _latest_backup(label='legion.conf'):
+    """Return path of the most recent timestamped backup file, or None."""
+    bdir = _backup_dir()
+    if not os.path.isdir(bdir):
+        return None
+    matches = sorted(
+        [f for f in os.listdir(bdir) if f.startswith(label.replace('.', '-'))
+         or f.startswith('legion.conf')],
+        reverse=True)
+    return os.path.join(bdir, matches[0]) if matches else None
+
 def test_a1_bak_created_on_save():
-    """Saving settings creates a .bak file next to legion.conf."""
+    """Saving settings creates a timestamped backup in ~/.local/share/legion/backup/.
+    (v10.95 replaced the single .bak file with timestamped backups — never overwrites.)"""
     path = _settings_path()
     if not path or not os.path.isfile(path):
         return "SKIP"
-    bak = path + '.bak'
-    if os.path.exists(bak):
-        os.unlink(bak)
+
+    # Record state before save so we can detect a NEW backup was created
+    bdir = _backup_dir()
+    before_count = len(os.listdir(bdir)) if os.path.isdir(bdir) else 0
 
     with open(path, 'r') as f:
         original = f.read()
@@ -84,11 +101,14 @@ def test_a1_bak_created_on_save():
     r = client.post('/api/settings/legion-conf', json={'text': original})
     if r.status_code != 200:
         return f"Save failed: {r.status_code}"
-    return ok(os.path.exists(bak), f".bak not created at {bak}")
+
+    after_count = len(os.listdir(bdir)) if os.path.isdir(bdir) else 0
+    return ok(after_count > before_count,
+              f"No new backup created in {bdir} (before={before_count}, after={after_count})")
 test("A1.1: saving settings creates .bak file", test_a1_bak_created_on_save)
 
 def test_a1_bak_contains_previous_content():
-    """.bak contains the content that was in legion.conf before the save."""
+    """The backup file contains the content that was in legion.conf before the save."""
     path = _settings_path()
     if not path or not os.path.isfile(path):
         return "SKIP"
@@ -102,40 +122,68 @@ def test_a1_bak_contains_previous_content():
     if r.status_code != 200:
         return f"Save failed: {r.status_code}"
 
-    bak = path + '.bak'
-    if not os.path.exists(bak):
-        return f"FAIL: .bak not created"
-    with open(bak, 'r') as f:
+    bak_path = _latest_backup()
+    if not bak_path:
+        return "FAIL: no backup file found in backup dir"
+    with open(bak_path, 'r') as f:
         bak_content = f.read()
 
     # Restore
     client.post('/api/settings/legion-conf', json={'text': before})
     return ok(before.strip() == bak_content.strip(),
-              f".bak content mismatch.\n  expected: {before[-50:]!r}\n  got: {bak_content[-50:]!r}")
+              f"backup content mismatch.\n  expected ends: {before[-50:]!r}\n  got ends: {bak_content[-50:]!r}")
 test("A1.2: .bak contains content from before the save", test_a1_bak_contains_previous_content)
 
 def test_a1_second_save_rotates_bak():
-    """On a second save, .bak is updated to the first save's content."""
+    """Two saves >1s apart produce two distinct timestamped backups.
+    The second backup must preserve the first save's content.
+    (Backup timestamps have 1-second precision — same-second saves share a file.)"""
     path = _settings_path()
     if not path or not os.path.isfile(path):
         return "SKIP"
     with open(path, 'r') as f:
         original = f.read()
 
-    first_save  = original + '# first-save\n'
-    second_save = original + '# second-save\n'
+    marker1 = '# a1-backup-marker-first'
+    first_save  = original + marker1 + '\n'
 
+    bdir = _backup_dir()
+    # Sleep 1.1s before starting so A1.2's last save (which also creates a backup)
+    # is in a different second — prevents A1.3's first backup from sharing the
+    # same filename (TS precision = 1s) and silently overwriting A1.2's backup
+    time.sleep(1.1)
+    before = set(os.listdir(bdir)) if os.path.isdir(bdir) else set()
+
+    # Save first content — backup T1 (backs up `original`)
     client.post('/api/settings/legion-conf', json={'text': first_save})
-    client.post('/api/settings/legion-conf', json={'text': second_save})
+    time.sleep(1.1)   # ensure a different second timestamp for backup T2
 
-    bak = path + '.bak'
-    with open(bak, 'r') as f:
-        bak_content = f.read()
-
-    # Restore
+    # Save second content — backup T2 (backs up `first_save`, which has marker1)
     client.post('/api/settings/legion-conf', json={'text': original})
-    return ok('# first-save' in bak_content,
-              f".bak should contain first save content, got: {bak_content[-100:]!r}")
+
+    # Restore directly (no API call → no extra backup that might overwrite T2)
+    with open(path, 'w') as f:
+        f.write(original)
+
+    after = set(os.listdir(bdir)) if os.path.isdir(bdir) else set()
+    new_files = after - before
+    if len(new_files) < 2:
+        return f"FAIL: expected ≥2 new backup files, got {len(new_files)}: {new_files}"
+
+    # At least one of the new backup files must contain marker1
+    found = False
+    for fname in new_files:
+        fpath = os.path.join(bdir, fname)
+        try:
+            with open(fpath, 'r', errors='replace') as bf:
+                if marker1 in bf.read():
+                    found = True
+                    break
+        except Exception:
+            pass
+    return ok(found,
+              f"No new backup contains '{marker1}' — first save's content not preserved. "
+              f"New files: {new_files}")
 test("A1.3: second save rotates .bak to first save content", test_a1_second_save_rotates_bak)
 
 

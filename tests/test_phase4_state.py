@@ -460,7 +460,9 @@ def test_reg3_draw_hosts_inside_render_hosts():
     """renderHosts must call _drawHosts — break in this chain loses sort+filter."""
     idx = JS.find('function renderHosts(')
     if idx < 0: return "FAIL: renderHosts function not found"
-    body = JS[idx:idx+200]
+    # _drawHosts() is at ~698 chars in — stale-render guard comment adds ~500 chars
+    # before L.hosts = ... and _drawHosts(); use 1000 for headroom
+    body = JS[idx:idx+1000]
     return ok('_drawHosts' in body, "_drawHosts not called inside renderHosts function body")
 test("REG3: renderHosts function body calls _drawHosts (sort+filter chain intact)", test_reg3_draw_hosts_inside_render_hosts)
 

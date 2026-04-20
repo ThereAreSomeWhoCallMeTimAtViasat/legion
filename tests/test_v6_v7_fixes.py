@@ -286,7 +286,9 @@ def test_t2_orange_tab_fires_via_snapshot_change():
     # Verify the JS has markTabUnread and it's called from the loadHostDetail path
     idx = JS.find('function loadHostDetail(')
     if idx < 0: return "FAIL: loadHostDetail not found"
-    body = JS[idx:idx+3000]
+    # markTabUnread appears ~3223 chars into loadHostDetail (after the project-switch
+    # guard comment and 4-parallel-fetch block); use 5000 to give headroom
+    body = JS[idx:idx+5000]
     return ok('markTabUnread' in body,
               "markTabUnread not called inside loadHostDetail — orange tab won't fire on change")
 test("T1.2: markTabUnread called inside loadHostDetail (orange fires on host data change)", test_t2_orange_tab_fires_via_snapshot_change)
