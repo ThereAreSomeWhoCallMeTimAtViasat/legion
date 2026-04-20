@@ -172,12 +172,18 @@ US_HB_PID=""     # heartbeat keeper PID
 
 _us_start_servers() {
     echo -e "  Starting user-story servers on :${US_PORT_A} and :${US_PORT_B}..."
+    # Kill any stale legion.py processes to avoid the "other server" interactive prompt
+    pkill -f "legion.py.*--port.*${US_PORT_A}" 2>/dev/null || true
+    pkill -f "legion.py.*--port.*${US_PORT_B}" 2>/dev/null || true
+    sleep 1
     free_port "$US_PORT_A"
     free_port "$US_PORT_B"
 
-    python3 legion.py --web --port "$US_PORT_A" > /tmp/legion-us-a.log 2>&1 &
+    # --no-prompt: skip the interactive "kill/continue/abort" dialog if another
+    # instance is somehow still detected (e.g. from a previous interrupted run)
+    python3 legion.py --web --port "$US_PORT_A" --no-prompt > /tmp/legion-us-a.log 2>&1 &
     US_PID_A=$!
-    python3 legion.py --web --port "$US_PORT_B" > /tmp/legion-us-b.log 2>&1 &
+    python3 legion.py --web --port "$US_PORT_B" --no-prompt > /tmp/legion-us-b.log 2>&1 &
     US_PID_B=$!
 
     # Wait for both to bind (up to 15 s)

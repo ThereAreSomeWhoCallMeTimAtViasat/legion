@@ -946,7 +946,9 @@ class TestUS16_LiveOutputGrows:
                 '#processes-body tr[data-process-id="' + arguments[0] + '"]');
             if (!row) return 'NOT FOUND';
             var cells = row.querySelectorAll('td');
-            return cells.length >= 5 ? cells[4].textContent.trim() : 'NO STATUS CELL';
+            // Columns: ☐(0)|ID(1)|Name(2)|Target(3)|PID(4)|Status(5)|%(6)|Elapsed(7)
+            // Checkbox added v10.136 → Status is now index 5 (was 4)
+            return cells.length >= 6 ? cells[5].textContent.trim() : 'NO STATUS CELL';
         """, str(pid))
         assert status == 'Running', (
             f'Process {pid} status should be Running while outputting, got: {status!r}'
@@ -2089,7 +2091,9 @@ class TestUS31_ProcMatchCSS:
             f"var r = document.querySelector('#processes-body tr[data-process-id=\"{pid}\"]');"
             "if (!r) return null;"
             "var c = r.querySelectorAll('td');"
-            "return c.length >= 2 ? c[1].textContent : null;")
+            # Columns: ☐(0) | ID(1) | Name(2) | Target(3) | PID(4) | Status(5) | %(6) | Elapsed(7)
+            # Checkbox added v10.136 → Name is now index 2 (was 1)
+            "return c.length >= 3 ? c[2].textContent : null;")
 
         assert name_cell is not None, f'Process row {pid} not found in DOM'
         assert '\u2605' in (name_cell or ''), (
