@@ -215,19 +215,23 @@ class TestContextMenuScrollable:
         time.sleep(0.5)
 
     def test_menu_has_max_height_style(self, drv, srv):
-        """showContextMenu() sets max-height and overflow-y:auto on the menu element."""
+        """showContextMenu() sets max-height on outer menu; overflow-y:auto on inner list."""
         self._open_port_ctx_menu(drv)
         W(drv, 5).until(EC.presence_of_element_located((By.ID, 'ctx-menu')))
         styles = js(drv, """
             var m = document.getElementById('ctx-menu');
-            if (!m) return [null, null];
-            return [m.style.maxHeight, m.style.overflowY];
+            if (!m) return [null, null, null];
+            // Outer menu: max-height capping the whole menu
+            // Inner scrollable list: second child (first=topArrow, second=list, third=botArrow)
+            var list = m.children[1];
+            return [m.style.maxHeight, list ? list.style.overflowY : '', m.style.display];
         """)
         assert styles[0] is not None, "ctx-menu not found"
         assert styles[0] != '', f"max-height not set on ctx-menu; styles={styles}"
         assert ('calc(' in styles[0] or 'vh' in styles[0] or 'px' in styles[0]), \
             f"max-height unexpected value: {styles[0]!r}"
-        assert styles[1] == 'auto', f"overflow-y expected 'auto', got: {styles[1]!r}"
+        # overflow-y:auto is on the inner scrollable list div, not the outer wrapper
+        assert styles[1] == 'auto', f"overflow-y expected 'auto' on inner list, got: {styles[1]!r}"
         js(drv, 'document.body.click()')
         time.sleep(0.3)
 
@@ -518,17 +522,18 @@ class TestProcessTimeout:
             f"Expected Killed via API, got {status!r} for proc {proc_id}"
 
     def test_killed_status_in_dom(self, drv):
-        """Process row status cell (col 4) shows 'Killed' text after timeout."""
-        # Columns: ID | Name | Target | PID | Status | % | Elapsed  → index 4
+        """Process row status cell shows 'Killed' text after timeout."""
+        # Columns: ☐ | ID | Name | Target | PID | Status | % | Elapsed
+        # Checkbox added v10.136 → status is now index 5 (was 4 before checkbox)
         proc_id = type(self)._proc_id
         # Re-find after snapshot re-render (stale element rule)
         row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{proc_id}"]')))
         cells = row.find_elements(By.TAG_NAME, 'td')
-        assert len(cells) >= 5, f"Process row has only {len(cells)} cells; expected 7"
-        status_text = cells[4].text.strip()
+        assert len(cells) >= 6, f"Process row has only {len(cells)} cells; expected 8"
+        status_text = cells[5].text.strip()
         assert status_text == 'Killed', \
-            f"Status cell (index 4) shows {status_text!r}, expected 'Killed'"
+            f"Status cell (index 5) shows {status_text!r}, expected 'Killed'"
 
     def test_killed_in_under_half_runtime(self, srv):
         """The process was killed in under half its 60-second runtime.
