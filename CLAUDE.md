@@ -34,8 +34,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.143-flask
-- **Static asset cache:** CSS `?v=87`, JS `?v=99` in `base.html`
+- **Current Flask version:** v10.145-flask
+- **Static asset cache:** CSS `?v=87`, JS `?v=100` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -220,6 +220,9 @@ Called automatically from `start()` on every project open/create:
 - **v10.139**: Easy Mode MatchSettings spaces preserved. Old `split(',').map(k=>k.trim())` stripped `" PUT "` leading space (conf format `, PUT ,` — comma+space consumed by trim). New: `split(',')` only. `white-space:pre` on chip inner span. No trim on add handler. `title` attribute carries exact keyword for hover inspection.
 - **v10.140-143**: File→New production fixes — `renderProcesses` stale guard (like `renderHosts`): discards old-project process data within 2s of switch, prevents auto-click → `loadProcessOutput` → 'Error loading output'. `loadHostDetail` project-switch guard: in-flight fetches bail when `_projectSwitchTime` changes, prevents `markTabUnread` re-adding after clear. `loadProcessOutput` project-switch guard: `.catch()` skips 'Error loading output' on stale fetches. `_clearAllUI` now removes `.tab-btn.tab-unread` from DOM (not just the dict). `L._clearAllUI` exposed via `L` for testing. JS `?v=99`.
 - **Tests**: `tests/test_ui_v10e_features.py` (port 5082, 19 tests): disabled color brighter (dark+light mode, luminance), AI Phase 1 port sort (all 6 assertions), Easy Mode match spaces (7 assertions). `tests/test_ui_new_clear_checkbox.py` (port 5082, 26 tests): File→New clear (all output panels, tabs, state), process checkbox column (DB persistence, sort, toggle). Both fully passing. Key test lesson: headless Firefox `window.confirm` blocks — use `requests.post` from Python + inline JS instead of button-click injection; `_clearAllUI` is inside `initInteractions` closure so `L.procPollTimer` must be cleared via `L` namespace.
+- **v10.144**: File→Exit DB race — `_capture_output` threads crash with `no such table: process` because `closeProject()` disposes the DB while threads still write. Fix: call `killRunningProcesses()` first in `/api/exit`, sleep 1s for threads to drain, then save/close. Wrapped fallback `storeProcessOutput` call in try/except so a disposed-DB exception doesn't cascade.
+- **v10.145**: `highlightMatches` HTML-escaping bug — `ansiToHtml()` escapes `<`, `>`, `&` to HTML entities before `highlightMatches` runs its regex on the result. Keywords `==> DIRECTORY` (gobuster/feroxbuster) and `<ACTIVE>` never matched in JS even though Python backend correctly set `has_match=True`. Fix: HTML-escape the pattern before building the regex so it matches entities. Pre-existing bug (not a regression). JS `?v=100`.
+- **conf fix**: 8 match keywords dropped in commit `2a065bf` ("global-positive match keywords for all new tools") were never restored: `exists`, `Command shell session`, `Got answer`, `[high]`, `(Status: 200)`, `[*] Received`, `(Status: 302)`, `valid password found`, `Netbios`. Not a code bug — a data/conf overwrite. Both repo `legion.conf` and live conf updated.
 
 ---
 
