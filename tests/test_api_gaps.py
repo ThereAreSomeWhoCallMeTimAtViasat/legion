@@ -318,7 +318,8 @@ test("P5.4: host delete removes from snapshot, preserves other hosts", test_p17_
 def test_p18_process_kill_terminates_subprocess():
     """Kill action must cause the subprocess to exit."""
     import time as _t
-    wc.start()
+    # wc is already started by create_test_app(); calling wc.start() again would
+    # create a NEW empty project, losing all seeded data and breaking later tests
     result = wc.runCommand('sleep 30', name='kill-api-test', hostIp='10.20.30.2')
     pid = result.get('process_id')
     if not pid: return "SKIP"
@@ -344,7 +345,7 @@ test("P5.5: kill action terminates the subprocess", test_p18_process_kill_termin
 def test_p19_process_clear_sets_closed():
     """Clear action must mark the process as closed in the DB."""
     import time as _t
-    wc.start()
+    # wc already started — do not call wc.start() again (would create new empty project)
     result = wc.runCommand('echo clear-api-test', name='clear-api-test', hostIp='10.20.30.2')
     pid = result.get('process_id')
     if not pid: return "SKIP"

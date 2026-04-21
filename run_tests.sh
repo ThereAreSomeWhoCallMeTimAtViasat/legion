@@ -68,6 +68,12 @@ _REPO_CONF="$SCRIPT_DIR/legion.conf"
 if [[ -f "$_REPO_CONF" ]]; then
     mkdir -p "$(dirname "$_LIVE_CONF")"
     cp "$_REPO_CONF" "$_LIVE_CONF"
+    # Also sync the 'default' config profile — test_ui_wiring.py P6 activates it,
+    # copying it to the working conf. If default.conf is stale (missing new tools),
+    # it silently downgrades the live conf and breaks later selenium tests.
+    _PROFILES_DIR="$(dirname "$_LIVE_CONF")/profiles"
+    mkdir -p "$_PROFILES_DIR"
+    cp "$_REPO_CONF" "$_PROFILES_DIR/default.conf"
 fi
 
 # ── Tracking ───────────────────────────────────────────────────────────────────
@@ -631,6 +637,13 @@ if $RUN_LIVE; then
 fi
 
 if $RUN_SELENIUM; then
+    # Re-sync conf + default profile before selenium section.
+    # test_ui_wiring.py P6 activates the 'default' profile (copies it over the
+    # working conf). If default.conf is stale, it silently downgrades the live conf.
+    if [[ -f "$_REPO_CONF" ]]; then
+        cp "$_REPO_CONF" "$_LIVE_CONF"
+        cp "$_REPO_CONF" "$_PROFILES_DIR/default.conf"
+    fi
     section "Selenium offline  (headless Firefox)"
     # Free each port before binding — a daemon Flask thread from a prior run
     # may linger briefly after pytest exits, causing "Address already in use".

@@ -322,6 +322,19 @@ class TestAICompareDropdown:
 
     @pytest.fixture(scope="class", autouse=True)
     def setup(self, drv, srv):
+        # Clean any pre-existing history for IP_A so the "no history" tests
+        # start from a known-empty state.  ai_history.db persists across test
+        # runs, so previous runs may have left matching entries behind.
+        try:
+            import sqlite3 as _sq3, os as _os
+            _db = _os.path.expanduser('~/.local/share/legion/ai_history.db')
+            if _os.path.exists(_db):
+                _conn = _sq3.connect(_db)
+                _conn.execute("DELETE FROM ai_sessions WHERE host_ip=?", (IP_A,))
+                _conn.commit(); _conn.close()
+        except Exception:
+            pass
+
         # Select IP_A (has ports 22+80 which we'll use for fingerprint matching)
         host_a_row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP_A}"]')))
