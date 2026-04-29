@@ -792,12 +792,11 @@ class WebController:
         except Exception as e:
             log.error(f"[WebController] screenshotFinished error: {e}")
 
-    def _run_screenshot(self, ip, port):
+    def _run_screenshot(self, ip, port, svc_name=''):
         """Run eyewitness via runCommand so the process appears in the Processes/Tools
         table immediately (Waiting → Running → Finished), matching Qt6 visibility.
         Qt6 used a QThread (Screenshooter); Flask uses the normal subprocess pipeline.
         Qt6: Screenshooter blacklist — skip if host was deleted mid-scan."""
-        from app.httputil.isHttps import isHttps
         from app.timing import getTimestamp
         from app.auxiliary import isKali
 
@@ -819,10 +818,11 @@ class WebController:
         except Exception:
             pass
 
-        try:
-            proto = 'https' if isHttps(ip, port) else 'http'
-        except Exception:
-            proto = 'http'
+        # Derive protocol from service name — reliable and instant vs live probe.
+        # Service names that imply HTTPS/SSL: https, ssl, https-alt, ssl/http, ssl/https.
+        _svc = (svc_name or '').lower().strip()
+        _is_https = 'https' in _svc or (_svc == 'ssl') or _svc.startswith('ssl/')
+        proto = 'https' if _is_https else 'http'
         url = f"{proto}://{ip}:{port}"
 
         outputfile = os.path.join(screenshots_dir, f"{getTimestamp()}-{ip}-{port}")
@@ -831,8 +831,10 @@ class WebController:
             delay_s = max(1, int(getattr(self.settings, 'general_screenshooter_timeout', '15000')) // 1000)
         except (ValueError, TypeError):
             delay_s = 15
-        cmd = (f"xvfb-run -a {eyewitness} --single {url} --no-prompt --web --delay {delay_s} "
-               f"-d {outputfile}-dir")
+        # --no-verify skips SSL certificate validation so self-signed certs don't block the shot
+        no_verify = ' --no-verify' if _is_https else ''
+        cmd = (f"xvfb-run -a {eyewitness} --single {url} --no-prompt --web --delay {delay_s}"
+               f"{no_verify} -d {outputfile}-dir")
 
         log.info(f"[WebController] Screenshot: {url}")
         self.runCommand(command=cmd, name='screenshooter',
@@ -1186,7 +1188,7 @@ class WebController:
                                     log.debug(f'[Scheduler] Screenshot already in progress: {scr_key}')
                                     continue
                                 self._screenshots_taken.add(scr_key)
-                                self._run_screenshot(hip, port_num)
+                                self._run_screenshot(hip, port_num, svc_name=svc_name)
                                 continue
 
                             # Find command from portActions
