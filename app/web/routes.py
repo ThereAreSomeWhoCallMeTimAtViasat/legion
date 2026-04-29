@@ -881,6 +881,7 @@ def _emergency_autosave(wc):
     """Copy the current project DB to ~/.local/share/legion/autosave/ before
     any unexpected shutdown so the user's scan data is never silently lost.
     Called from the heartbeat watchdog, SIGINT handler, and atexit."""
+    import logging as _logging
     try:
         import shutil as _sh
         from datetime import datetime as _dt
@@ -894,9 +895,9 @@ def _emergency_autosave(wc):
         name = getattr(project, 'name', None) or getattr(project, 'projectName', None) or 'untitled'
         dest = os.path.join(autosave_dir, f'{name}-{ts}.legion')
         _sh.copy2(db_path, dest)
-        logging.getLogger('legion').info(f'[Legion] Auto-saved project to {dest}')
+        _logging.getLogger('legion').info(f'[Legion] Auto-saved project to {dest}')
     except Exception as _e:
-        logging.getLogger('legion').warning(f'[Legion] Auto-save failed: {_e}')
+        _logging.getLogger('legion').warning(f'[Legion] Auto-save failed: {_e}')
 
 
 @web_bp.post("/api/heartbeat")

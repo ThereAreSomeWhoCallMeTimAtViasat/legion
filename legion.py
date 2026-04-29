@@ -628,7 +628,64 @@ if __name__ == "__main__":
             import threading as _threading
             _threading.Timer(0.5, _open_browser).start()   # 0.5s: Flask binds in <100ms
 
-        app.run(host="127.0.0.1", port=_port, debug=False, threaded=True)
+        try:
+            app.run(host="127.0.0.1", port=_port, debug=False, threaded=True)
+        except OSError as _bind_err:
+            if _bind_err.errno != 98:   # 98 = EADDRINUSE
+                raise
+            # ── Port already in use ──────────────────────────────────────────
+            print(f"\n[Legion] Port {_port} is already in use.")
+            if _server_is_alive(_port):
+                print(f"[Legion] A server is responding at http://127.0.0.1:{_port}")
+                if args.no_prompt:
+                    print(f"[Legion] Opening Firefox to the existing server.")
+                    _open_browser()
+                else:
+                    print(  "  [O]  Open Firefox to the existing server")
+                    print(  "  [K]  Kill the existing server and start fresh")
+                    print(  "  [A]  Abort")
+                    try:
+                        _choice = input("Choice [O/k/a]: ").strip().lower() or 'o'
+                    except (EOFError, KeyboardInterrupt):
+                        _choice = 'a'
+                    if _choice == 'k':
+                        # Find and kill the process holding the port
+                        import subprocess as _sp2
+                        _r = _sp2.run(
+                            ['ss', '-tlnp', f'sport = :{_port}'],
+                            capture_output=True, text=True
+                        )
+                        import re as _re2
+                        _pids = _re2.findall(r'pid=(\d+)', _r.stdout)
+                        for _pid in set(_pids):
+                            try:
+                                _os.kill(int(_pid), 9)
+                            except (ProcessLookupError, PermissionError):
+                                pass
+                        import time as _t2
+                        for _ in range(20):
+                            _t2.sleep(0.25)
+                            try:
+                                import socket as _sock2
+                                _s2 = _sock2.socket()
+                                _s2.setsockopt(_sock2.SOL_SOCKET, _sock2.SO_REUSEADDR, 1)
+                                _s2.bind(('127.0.0.1', _port))
+                                _s2.close()
+                                break
+                            except OSError:
+                                pass
+                        print(f"[Legion] Restarting on port {_port}…")
+                        if not args.no_browser:
+                            import threading as _threading2
+                            _threading2.Timer(0.5, _open_browser).start()
+                        app.run(host="127.0.0.1", port=_port, debug=False, threaded=True)
+                    elif _choice == 'o':
+                        _open_browser()
+                    else:
+                        print("[Legion] Aborted.")
+            else:
+                print(f"[Legion] Port {_port} is occupied by a non-Legion process.")
+                print(f"         Use a different port:  sudo python3 legion.py --web --port <port>")
         sys.exit(0)
 
     # --- GUI MODE ---

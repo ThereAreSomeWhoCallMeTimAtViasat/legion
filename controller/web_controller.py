@@ -674,7 +674,7 @@ class WebController:
     # P3: Deduplication (from controller.py:3746-3789)
     # ──────────────────────────────────────────────────────────────
 
-    def checkDuplicate(self, toolName, hostIp, port, protocol='tcp'):
+    def checkDuplicate(self, toolName, hostIp, port, protocol='tcp', user_triggered=False):
         """Check if this tool was already run on this host:port.
         Returns: 'run' | 'skip' | 'newTab' | 'append' | 'askMe'
 
@@ -682,6 +682,7 @@ class WebController:
         1. Process table — same name+hostIp+port already ran
         2. Script table — nmap NSE scripts already stored for this port
            (Qt6: scriptRepository.getScriptsByPortId before running scheduler tools)
+           Only applied when user_triggered=False (scheduler context).
         """
         mode = getattr(self.settings, 'general_tool_duplication', 'skip')
         if mode not in ('skip', 'newTab', 'append', 'askMe'):
@@ -724,7 +725,7 @@ class WebController:
         except Exception:
             script_count = 0
 
-        if script_count > 0:
+        if script_count > 0 and not user_triggered:
             log.debug(f"[checkDuplicate] {toolName} on {hostIp}:{port} — {script_count} NSE scripts exist, mode={mode}")
             return mode
 
@@ -2233,7 +2234,7 @@ class WebController:
             #   'newTab'  → Qt6 created "tool (80/tcp) [2]"; Flask runs a new process (same effect)
             #   'append'  → Qt6 appended output to existing tab; Flask runs a new process
             #   'askMe'   → Qt6 showed a dialog; Flask has no dialog so we run (user intent is clear)
-            dup_mode = self.checkDuplicate(tool, ip, port, protocol)
+            dup_mode = self.checkDuplicate(tool, ip, port, protocol, user_triggered=True)
             if dup_mode == 'skip':
                 log.info(f"[WebController] handleServiceNameAction: duplicate {tool} on {ip}:{port} — mode=skip, not running")
                 results.append({'skipped': True, 'reason': 'skip', 'tool': tool, 'ip': ip, 'port': port})
