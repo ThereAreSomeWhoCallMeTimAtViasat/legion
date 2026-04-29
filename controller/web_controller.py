@@ -833,6 +833,23 @@ class WebController:
         # Service names that imply HTTPS/SSL: https, ssl, https-alt, ssl/http, ssl/https.
         _svc = (svc_name or '').lower().strip()
         _is_https = 'https' in _svc or (_svc == 'ssl') or _svc.startswith('ssl/')
+
+        if _is_https:
+            # Verify the TLS handshake actually succeeds before committing to https://.
+            # CERT_NONE accepts self-signed certs; we only fall back if the TLS protocol
+            # itself is rejected (e.g. TLS 1.0 with weak ciphers on old Java servers).
+            import ssl as _ssl
+            _ctx = _ssl.create_default_context()
+            _ctx.check_hostname = False
+            _ctx.verify_mode = _ssl.CERT_NONE
+            try:
+                with _socket.create_connection((ip, int(port)), timeout=5) as _raw:
+                    with _ctx.wrap_socket(_raw, server_hostname=ip):
+                        pass  # TLS handshake succeeded — keep https://
+            except (_ssl.SSLError, OSError):
+                log.info(f"[WebController] TLS negotiation failed for {ip}:{port} — falling back to http://")
+                _is_https = False
+
         proto = 'https' if _is_https else 'http'
         url = f"{proto}://{ip}:{port}"
 
