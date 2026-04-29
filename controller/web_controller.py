@@ -831,10 +831,8 @@ class WebController:
             delay_s = max(1, int(getattr(self.settings, 'general_screenshooter_timeout', '15000')) // 1000)
         except (ValueError, TypeError):
             delay_s = 15
-        # --no-verify skips SSL certificate validation so self-signed certs don't block the shot
-        no_verify = ' --no-verify' if _is_https else ''
         cmd = (f"xvfb-run -a {eyewitness} --single {url} --no-prompt --web --delay {delay_s}"
-               f"{no_verify} -d {outputfile}-dir")
+               f" -d {outputfile}-dir")
 
         log.info(f"[WebController] Screenshot: {url}")
         self.runCommand(command=cmd, name='screenshooter',
@@ -1160,6 +1158,28 @@ class WebController:
                             if svc_name not in svc_scope and '*' not in svc_scope:
                                 continue
 
+                            # Screenshooter is a built-in special tool — not a portAction.
+                            # Handled BEFORE checkDuplicate so layer-2 (NSE scripts exist)
+                            # does not block it: the vulners stage stores scripts for every
+                            # open port, which would permanently suppress screenshooter via
+                            # the script-count check. The in-memory _screenshots_taken set
+                            # is the dedup guard; layer-1 (process table) is sufficient too.
+                            if tool_id == 'screenshooter':
+                                if not hasattr(self, '_screenshots_taken'):
+                                    self._screenshots_taken = set()
+                                scr_key = f"{hip}:{port_num}"
+                                if scr_key in self._screenshots_taken:
+                                    log.debug(f'[Scheduler] Screenshot already in progress: {scr_key}')
+                                    continue
+                                # Layer-1 only: has a screenshooter process already finished?
+                                dup_scr = self.checkDuplicate('screenshooter', hip, str(port_num), protocol, user_triggered=True)
+                                if dup_scr == 'skip':
+                                    log.debug(f'[Scheduler] Screenshot already done for {scr_key}')
+                                    continue
+                                self._screenshots_taken.add(scr_key)
+                                self._run_screenshot(hip, port_num, svc_name=svc_name)
+                                continue
+
                             # Duplicate check — use checkDuplicate() which reads
                             # tool-duplication from settings and checks both
                             # in-progress (Waiting/Running) AND completed (Finished)
@@ -1175,20 +1195,6 @@ class WebController:
                             # askMe — scheduler runs automatically, treat as skip to avoid UI prompts
                             if dup_result == 'askMe':
                                 log.debug(f'[Scheduler] Skipping {tool_id} on {hip}:{port_num} — askMe treated as skip in scheduler')
-                                continue
-
-                            # Screenshooter is a built-in special tool — not a portAction.
-                            # Also guard with in-memory set to block concurrent duplicate shots
-                            # (DB entry only exists after the shot completes, not while in progress).
-                            if tool_id == 'screenshooter':
-                                if not hasattr(self, '_screenshots_taken'):
-                                    self._screenshots_taken = set()
-                                scr_key = f"{hip}:{port_num}"
-                                if scr_key in self._screenshots_taken:
-                                    log.debug(f'[Scheduler] Screenshot already in progress: {scr_key}')
-                                    continue
-                                self._screenshots_taken.add(scr_key)
-                                self._run_screenshot(hip, port_num, svc_name=svc_name)
                                 continue
 
                             # Find command from portActions
