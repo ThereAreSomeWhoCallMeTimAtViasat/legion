@@ -473,6 +473,19 @@ def serve_screenshot():
         return _err("screenshot not found", 404)
     return send_from_directory(os.path.dirname(path), os.path.basename(path))
 
+@web_bp.post("/api/screenshot/take")
+def screenshot_take():
+    """Manually trigger a screenshooter run for a specific host:port from the right-click menu."""
+    wc = _wc()
+    payload = request.get_json(silent=True) or {}
+    host_ip  = str(payload.get('host_ip', ''))
+    port     = str(payload.get('port', ''))
+    svc_name = str(payload.get('svc_name', ''))
+    if not host_ip or not port:
+        return _err("host_ip and port required")
+    wc._run_screenshot(host_ip, port, svc_name=svc_name)
+    return jsonify({"status": "ok"})
+
 @web_bp.post("/api/processes/<int:process_id>/kill")
 def process_kill(process_id):
     _wc().killProcess(process_id)

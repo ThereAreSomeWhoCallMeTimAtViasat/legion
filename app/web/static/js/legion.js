@@ -4823,11 +4823,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     var proto = svcName.includes('https') ? 'https' : 'http';
                     window.open(proto + '://' + L.selectedHostIp + ':' + port, '_blank');
                 } else if (action.action === 'take-screenshot' && L.selectedHostIp) {
-                    /* Trigger eyewitness screenshot via the screenshooter mechanism */
-                    postJson('/api/terminal/start', {
-                        label: 'screenshooter (' + port + '/tcp)',
-                        host_ip: L.selectedHostIp,
-                        command: 'xvfb-run -a /usr/bin/eyewitness --single http://' + L.selectedHostIp + ':' + port + ' --no-prompt --web --delay 5 -d /tmp/screenshot-' + L.selectedHostIp + '-' + port + '-dir',
+                    postJson('/api/screenshot/take', {
+                        host_ip: L.selectedHostIp, port: port, svc_name: svcName
                     }).then(function() { pollSnapshot(); });
                 } else if (action.action === 'run-custom' && L.selectedHostIp) {
                     /* Qt6: "Run custom command" — prompt user for command string,
