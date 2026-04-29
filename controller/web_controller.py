@@ -811,6 +811,17 @@ class WebController:
             log.warning(f"[WebController] eyewitness not found at {eyewitness} — screenshot skipped for {ip}:{port}")
             return
 
+        # Pre-flight TCP check — skip if the port is not reachable.
+        # eyewitness raises WebDriverError on connection-refused which clutters
+        # the output without producing a screenshot.
+        import socket as _socket
+        try:
+            _s = _socket.create_connection((ip, int(port)), timeout=5)
+            _s.close()
+        except (OSError, ValueError):
+            log.info(f"[WebController] Screenshot skipped — {ip}:{port} unreachable (connection refused/timeout)")
+            return
+
         output_folder = self.logic.activeProject.properties.outputFolder
         screenshots_dir = os.path.join(output_folder, 'screenshots')
         try:
