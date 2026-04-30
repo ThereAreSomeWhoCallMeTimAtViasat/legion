@@ -1302,6 +1302,15 @@ function renderDynamicToolTabs(hostIp) {
             restoredBtn.click();  /* re-activates tab and reloads its output */
         }
     }
+
+    /* Refresh scroll arrow opacity after tab list changes */
+    var _lbtn = $('right-tab-scroll-left'), _rbtn = $('right-tab-scroll-right');
+    if (_lbtn && _rbtn && bar) {
+        var _atLeft  = bar.scrollLeft <= 0;
+        var _atRight = bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 1;
+        _lbtn.style.opacity = _atLeft  ? '0.3' : '1';
+        _rbtn.style.opacity = _atRight ? '0.3' : '1';
+    }
 }
 
 /* ── Load process output inline (view.py tool output display) ── */
@@ -5234,6 +5243,33 @@ document.addEventListener('DOMContentLoaded', function() {
         var udec = $('upper-font-dec'), uinc = $('upper-font-inc');
         if (udec) udec.addEventListener('click', function() { changeFontSize(-1); });
         if (uinc) uinc.addEventListener('click', function() { changeFontSize(+1); });
+    })();
+
+    /* ── Right-tab-bar scroll arrows ── */
+    (function() {
+        var SCROLL_PX = 160;
+        function scrollRightTabBar(dir) {
+            var bar = $('right-tab-bar');
+            if (!bar) return;
+            bar.scrollLeft = Math.max(0, bar.scrollLeft + dir * SCROLL_PX);
+        }
+        function updateArrows() {
+            var bar = $('right-tab-bar');
+            var lbtn = $('right-tab-scroll-left');
+            var rbtn = $('right-tab-scroll-right');
+            if (!bar || !lbtn || !rbtn) return;
+            var atLeft  = bar.scrollLeft <= 0;
+            var atRight = bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 1;
+            lbtn.style.opacity = atLeft  ? '0.3' : '1';
+            rbtn.style.opacity = atRight ? '0.3' : '1';
+        }
+        var lbtn = $('right-tab-scroll-left'), rbtn = $('right-tab-scroll-right');
+        if (lbtn) lbtn.addEventListener('click', function() { scrollRightTabBar(-1); updateArrows(); });
+        if (rbtn) rbtn.addEventListener('click', function() { scrollRightTabBar(+1); updateArrows(); });
+        /* Update arrow opacity whenever the tab bar scrolls (e.g. via scrollIntoView) */
+        var bar = $('right-tab-bar');
+        if (bar) bar.addEventListener('scroll', updateArrows);
+        updateArrows();
     })();
 
     /* ── Port state filter (Services right tab) ── */
