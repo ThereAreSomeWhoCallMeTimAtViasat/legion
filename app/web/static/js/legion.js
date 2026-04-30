@@ -5465,23 +5465,36 @@ document.addEventListener('DOMContentLoaded', function() {
         return isNaN(n) ? 999999 : n;
     }
 
-    /* Render a Phase 1 JSON array into tbody rows — sorted by port asc, then severity */
+    /* Render a Phase 1 JSON array into tbody rows with sortable columns */
     var _aiSevOrder = {critical:0, high:1, medium:2, low:3, info:4};
+    var _aiSortState   = {};   /* tbodyId → {col:'sev'|'port', dir:1|-1} */
+    var _aiLastFindings = {};  /* tbodyId → raw findings array (for re-sort on header click) */
+
     function _aiRenderFindings(tbodyId, findings) {
         var tbody = $(tbodyId);
         if (!tbody) return;
+
+        /* cache for re-sort */
+        _aiLastFindings[tbodyId] = findings;
+
+        /* default sort: severity asc */
+        var sort = _aiSortState[tbodyId] || {col:'sev', dir:1};
+
         tbody.innerHTML = '';
         var rows = typeof findings === 'string' ? JSON.parse(findings) : findings;
         (rows || []).slice().sort(function(a, b) {
-            var pa = _aiPortNum(a.port), pb = _aiPortNum(b.port);
-            if (pa !== pb) return pa - pb;
-            /* explicit undefined check — _aiSevOrder['critical']=0 is falsy,
-               so (val || 4) would wrongly rank critical last */
             var sevA = (a.severity||'info').toLowerCase();
             var sevB = (b.severity||'info').toLowerCase();
             var sa = (_aiSevOrder[sevA] !== undefined) ? _aiSevOrder[sevA] : 4;
             var sb = (_aiSevOrder[sevB] !== undefined) ? _aiSevOrder[sevB] : 4;
-            return sa - sb;
+            var pa = _aiPortNum(a.port), pb = _aiPortNum(b.port);
+            if (sort.col === 'sev') {
+                if (sa !== sb) return (sa - sb) * sort.dir;
+                return pa - pb;   /* secondary: port asc always */
+            } else {
+                if (pa !== pb) return (pa - pb) * sort.dir;
+                return sa - sb;   /* secondary: severity asc always */
+            }
         }).forEach(function(f) {
             var tr   = document.createElement('tr');
             var sev  = (f.severity || 'info').toLowerCase();
@@ -5494,7 +5507,39 @@ document.addEventListener('DOMContentLoaded', function() {
                 '<td style="color:var(--disabled);font-size:8pt">' + esc(f.evidence || '') + '</td>';
             tbody.appendChild(tr);
         });
+
+        /* update sort arrows in this table's header */
+        var table = tbody.closest('table');
+        if (table) {
+            table.querySelectorAll('th[data-ai-sort]').forEach(function(th) {
+                var col = th.dataset.aiSort;
+                var lbl = th.dataset.aiLabel || col;
+                th.textContent = col === sort.col
+                    ? lbl + (sort.dir === 1 ? ' ▲' : ' ▼')
+                    : lbl;
+            });
+        }
     }
+
+    /* Wire sort-click handlers for both Phase 1 tables */
+    ['ai-p1-table', 'ai-p1h-table'].forEach(function(tableId) {
+        var tbl = $(tableId);
+        if (!tbl) return;
+        tbl.querySelectorAll('th[data-ai-sort]').forEach(function(th) {
+            th.addEventListener('click', function() {
+                var col = th.dataset.aiSort;
+                /* tbodyId is tableId with '-table' replaced by '-body' */
+                var tbodyId = tableId.replace('-table', '-body');
+                var cur = _aiSortState[tbodyId] || {col:'sev', dir:1};
+                _aiSortState[tbodyId] = {
+                    col: col,
+                    dir: (cur.col === col) ? -cur.dir : 1
+                };
+                var cached = _aiLastFindings[tbodyId];
+                if (cached) _aiRenderFindings(tbodyId, cached);
+            });
+        });
+    });
 
     /* Simple Markdown → HTML (bold, inline-code, headers, bullets, code blocks) */
     function _aiMd(md) {
