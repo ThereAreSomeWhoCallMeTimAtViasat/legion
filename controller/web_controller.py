@@ -1867,43 +1867,54 @@ class WebController:
             # (the watchdog committed in a different session).  Use isKilledProcess()
             # which opens a fresh session, sees the committed value, and returns the
             # definitive answer.  preserve_status=True skips the status→Finished write.
-            _already_killed = processRepo.isKilledProcess(str(dbId))
-            processRepo.storeProcessOutput(dbId, combined,
-                                           preserve_status=_already_killed)
+            # If the host was deleted while this process was running, skip all
+            # DB writes — the process row is already gone and _deleted_hosts guards
+            # against re-creating it via processFinished / nmap import below.
+            _host_deleted = hostIp in getattr(self, '_deleted_hosts', set())
+            if _host_deleted:
+                log.info(f"[Capture:{dbId}] Host {hostIp} deleted — skipping DB write")
+            else:
+                _already_killed = processRepo.isKilledProcess(str(dbId))
+                processRepo.storeProcessOutput(dbId, combined,
+                                               preserve_status=_already_killed)
             log.info(f"[Capture:{dbId}] SQLite write done in {int((time.monotonic()-_write_t0)*1000)}ms")
 
             # Store elapsed time in seconds (controller.py:handleProcStop)
-            if hasattr(proc, '_start_mono'):
+            if not _host_deleted and hasattr(proc, '_start_mono'):
                 elapsed_secs = finish_mono - proc._start_mono
                 processRepo.storeProcessRunningElapsedTime(dbId, round(elapsed_secs, 1))
 
             exit_code = proc._popen.returncode
             log.info(f"[WebController] Process {dbId} finished, exit={exit_code}, output={len(combined)} bytes")
 
-            # Hydra credential extraction (auxiliary.py:178-195 + controller.py:2285)
-            if 'hydra' in str(toolName).lower():
-                try:
-                    from app.auxiliary import checkHydraResults
-                    found, userlist, passlist = checkHydraResults(combined)
-                    if found:
-                        self.handleHydraFindings(userlist=userlist, passlist=passlist)
-                        log.info(f"[WebController] Hydra found {len(userlist)} users, {len(passlist)} passwords")
-                except Exception as e:
-                    log.error(f"[WebController] Hydra extraction error: {e}")
+            if _host_deleted:
+                # Host was deleted — skip all post-process work to avoid re-creating data
+                pass
+            else:
+                # Hydra credential extraction (auxiliary.py:178-195 + controller.py:2285)
+                if 'hydra' in str(toolName).lower():
+                    try:
+                        from app.auxiliary import checkHydraResults
+                        found, userlist, passlist = checkHydraResults(combined)
+                        if found:
+                            self.handleHydraFindings(userlist=userlist, passlist=passlist)
+                            log.info(f"[WebController] Hydra found {len(userlist)} users, {len(passlist)} passwords")
+                    except Exception as e:
+                        log.error(f"[WebController] Hydra extraction error: {e}")
 
-            # Call processFinished chain for non-nmap tools
-            if not processRepo.isKilledProcess(str(dbId)):
-                try:
-                    self.processFinished(proc)
-                except Exception:
-                    pass
+                # Call processFinished chain for non-nmap tools
+                if not processRepo.isKilledProcess(str(dbId)):
+                    try:
+                        self.processFinished(proc)
+                    except Exception:
+                        pass
 
             # Import nmap XML if this was an nmap process (controller.py:2240-2260)
             # This is the CRITICAL step that adds hosts/ports/services to the DB
             # Skip for staged nmap — runStagedNmap() handles its own chained imports
             outputfile = getattr(proc, 'outputfile', '')
             is_staged = getattr(proc, '_is_staged', False)
-            if 'nmap' in str(toolName).lower() and outputfile and exit_code == 0 and not is_staged:
+            if not _host_deleted and 'nmap' in str(toolName).lower() and outputfile and exit_code == 0 and not is_staged:
                 xml_path = outputfile + '.xml'
                 if not os.path.isfile(xml_path):
                     # Try without extension
@@ -2115,12 +2126,9 @@ class WebController:
             # Qt6: add to screenshooter blacklist so in-flight screenshots are discarded
             self._deleted_hosts.add(ip)
             log.info(f"[WebController] Host {ip} added to _deleted_hosts blacklist")
-            # Simplified delete: kill processes, delete from DB
-            # Kill running processes for this host
-            for proc_id, proc in list(self._active_processes.items()):
-                if getattr(proc, 'hostIp', '') == ip:
-                    self.killProcess(proc_id)
-            # Clear from queue
+
+            # 1. Drain the queue FIRST so killProcess()'s internal checkProcessQueue()
+            #    call cannot start a newly-queued process for this host.
             if hasattr(self, 'fastProcessQueue'):
                 temp = queue_module.Queue()
                 while not self.fastProcessQueue.empty():
@@ -2128,22 +2136,47 @@ class WebController:
                         p = self.fastProcessQueue.get_nowait()
                         if getattr(p, 'hostIp', '') != ip:
                             temp.put(p)
-                    except:
+                    except Exception:
                         break
                 while not temp.empty():
                     self.fastProcessQueue.put(temp.get_nowait())
-            # Delete from DB
+
+            # 2. Kill running/interactive processes and evict from _active_processes
+            #    immediately so the snapshot never shows them again.
+            for proc_id, proc in list(self._active_processes.items()):
+                if getattr(proc, 'hostIp', '') == ip:
+                    self.killProcess(proc_id)
+                    # Evict now; _capture_output will skip its own del gracefully
+                    self._active_processes.pop(proc_id, None)
+
+            # 3. Delete all process and host data from DB in one transaction.
+            #    process_matches is also deleted so no orphaned match rows remain.
             try:
                 from sqlalchemy import text
                 session = repositoryContainer.hostRepository.dbAdapter.session()
                 try:
-                    session.execute(text("DELETE FROM process_output WHERE id IN (SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM process_matches WHERE process_id IN "
+                        "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM process_output WHERE id IN "
+                        "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
                     session.execute(text("DELETE FROM process WHERE hostIp = :ip"), {"ip": ip})
-                    session.execute(text("DELETE FROM l1ScriptObj WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
-                    session.execute(text("DELETE FROM cve WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
-                    session.execute(text("DELETE FROM portObj WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
-                    session.execute(text("DELETE FROM note WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
-                    session.execute(text("DELETE FROM osObj WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM l1ScriptObj WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM cve WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM portObj WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM note WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM osObj WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
                     session.execute(text("DELETE FROM hostObj WHERE ip = :ip"), {"ip": ip})
                     session.commit()
                 finally:
