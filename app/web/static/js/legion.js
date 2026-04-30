@@ -5638,21 +5638,11 @@ document.addEventListener('DOMContentLoaded', function() {
         var hostHostname = host.hostname || '';
         var hostOs       = host.os       || '';
 
-        /* Build findings table rows */
-        var _sevCols = {critical:'#e74c3c',high:'#e67e22',medium:'#f1c40f',low:'#3498db',info:'#95a5a6'};
-        var findingsRows = '';
+        /* Parse findings for the sortable table */
+        var _reportFindings = [];
         try {
-            var findings = typeof r.phase1_json === 'string' ? JSON.parse(r.phase1_json) : (r.phase1_json || []);
-            findings.forEach(function(f) {
-                var sev = (f.severity || 'info').toLowerCase();
-                var col = _sevCols[sev] || '#ccc';
-                findingsRows +=
-                    '<tr><td style="color:' + col + ';font-weight:bold">' + esc(f.severity||'') + '</td>' +
-                    '<td>' + esc(f.source||'') + '</td>' +
-                    '<td>' + esc(String(f.port||'')) + '</td>' +
-                    '<td>' + esc(f.finding||'') + '</td>' +
-                    '<td style="color:#888;font-size:0.85em">' + esc(f.evidence||'') + '</td></tr>';
-            });
+            _reportFindings = typeof r.phase1_json === 'string'
+                ? JSON.parse(r.phase1_json) : (r.phase1_json || []);
         } catch(e) {}
 
         /* Render Phase 2 markdown to HTML for the report */
@@ -5689,7 +5679,45 @@ document.addEventListener('DOMContentLoaded', function() {
             '  li{margin:3px 0}\n' +
             '  .section{background:#1e1e1e;border:1px solid #2a2a2a;border-radius:6px;padding:16px;margin-bottom:20px}\n' +
             '  .footer{margin-top:32px;font-size:0.8em;color:#555;border-top:1px solid #2a2a2a;padding-top:12px}\n' +
-            '</style>\n</head>\n<body>\n' +
+            '  .sortable{cursor:pointer;user-select:none}\n' +
+            '  .sortable:hover{color:#ccc}\n' +
+            '</style>\n' +
+            '<script>\n' +
+            'var _f=' + JSON.stringify(_reportFindings) + ';\n' +
+            'var _sc="sev",_sd=1;\n' +
+            'var _so={critical:0,high:1,medium:2,low:3,info:4};\n' +
+            'var _scolors={critical:"#e74c3c",high:"#e67e22",medium:"#f1c40f",low:"#3498db",info:"#95a5a6"};\n' +
+            'function _pn(p){var n=parseInt(String(p||""),10);return isNaN(n)?999999:n;}\n' +
+            'function _render(){\n' +
+            '  var tb=document.getElementById("rpt-tbody");\n' +
+            '  if(!tb)return;\n' +
+            '  var rows=_f.slice().sort(function(a,b){\n' +
+            '    var sa=(_so[(a.severity||"info").toLowerCase()]!==undefined)?_so[(a.severity||"info").toLowerCase()]:4;\n' +
+            '    var sb=(_so[(b.severity||"info").toLowerCase()]!==undefined)?_so[(b.severity||"info").toLowerCase()]:4;\n' +
+            '    var pa=_pn(a.port),pb=_pn(b.port);\n' +
+            '    if(_sc==="sev"){if(sa!==sb)return(sa-sb)*_sd;return pa-pb;}\n' +
+            '    if(pa!==pb)return(pa-pb)*_sd;return sa-sb;\n' +
+            '  });\n' +
+            '  tb.innerHTML=rows.map(function(f){\n' +
+            '    var s=(f.severity||"info").toLowerCase();\n' +
+            '    var c=_scolors[s]||"#ccc";\n' +
+            '    function e(t){return String(t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}\n' +
+            '    return "<tr><td style=\'color:"+c+";font-weight:bold\'>"+e(f.severity)+"</td>"\n' +
+            '      +"<td>"+e(f.source)+"</td><td>"+e(f.port)+"</td>"\n' +
+            '      +"<td>"+e(f.finding)+"</td>"\n' +
+            '      +"<td style=\'color:#888;font-size:0.85em\'>"+e(f.evidence)+"</td></tr>";\n' +
+            '  }).join("");\n' +
+            '  ["sev","port"].forEach(function(col){\n' +
+            '    var th=document.getElementById("rpt-th-"+col);\n' +
+            '    if(!th)return;\n' +
+            '    var lbl=col==="sev"?"Severity":"Port";\n' +
+            '    th.textContent=col===_sc?lbl+(_sd===1?" ▲":" ▼"):lbl;\n' +
+            '  });\n' +
+            '}\n' +
+            'function _sort(col){_sd=(_sc===col)?-_sd:1;_sc=col;_render();}\n' +
+            'document.addEventListener("DOMContentLoaded",_render);\n' +
+            '</script>\n' +
+            '</head>\n<body>\n' +
             '<h1>Legion AI Analysis Report</h1>\n' +
             '<div class="meta">' +
             '<strong>Host:</strong> ' + esc(hostIp) +
@@ -5699,8 +5727,13 @@ document.addEventListener('DOMContentLoaded', function() {
             ' &nbsp;|&nbsp; <strong>Cost:</strong> ' + costLine +
             '</div>\n' +
             '<div class="section">\n<h2>Phase 1 — Security Findings</h2>\n' +
-            '<table>\n<thead><tr><th>Severity</th><th>Source</th><th>Port</th><th>Finding</th><th>Evidence</th></tr></thead>\n' +
-            '<tbody>' + findingsRows + '</tbody>\n</table>\n</div>\n' +
+            '<table>\n<thead><tr>' +
+            '<th id="rpt-th-sev" class="sortable" onclick="_sort(\'sev\')" style="width:80px">Severity ▲</th>' +
+            '<th style="width:100px">Source</th>' +
+            '<th id="rpt-th-port" class="sortable" onclick="_sort(\'port\')" style="width:55px">Port</th>' +
+            '<th>Finding</th>' +
+            '<th style="width:180px">Evidence</th>' +
+            '</tr></thead>\n<tbody id="rpt-tbody"></tbody>\n</table>\n</div>\n' +
             '<div class="section">\n<h2>Phase 2 — Attack Plan</h2>\n' +
             p2html + '\n</div>\n' +
             '<div class="footer">Generated by Legion v' + (_VERSION || '10.x') + ' &mdash; ' + tsDisplay + '</div>\n' +
