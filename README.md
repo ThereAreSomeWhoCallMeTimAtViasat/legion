@@ -137,82 +137,268 @@ Easy Edit covers every section of the config in typed, labeled forms:
 
 | Requirement | Minimum | Notes |
 |---|---|---|
-| OS | Kali Linux 2024.1+ | Ubuntu 22.04+ also works; Kali has most tools pre-installed |
-| Python | 3.10+ | 3.11–3.13 tested |
-| Firefox | any recent ESR | Opened automatically; geckodriver needed for Selenium tests |
-| sudo | required | nmap, masscan, and several schedulers need root |
-| Disk | ~2 GB | Tools + Python packages + project databases |
+| **OS** | Kali Linux 2024.1+ | Ubuntu 22.04+ also works; Kali has most tools pre-installed |
+| **Python** | 3.10+ | 3.11–3.13 tested |
+| **Firefox ESR** | any recent | Opened automatically by `--web`; geckodriver needed for Selenium tests |
+| **sudo / root** | required | nmap, masscan, and several schedulers need raw socket access |
+| **Go** | 1.20+ | Needed to install pd-httpx, katana, gau, waybackurls, nomore403, urlfinder |
+| **Disk** | ~3 GB | Tools + Python packages + project databases + Go tool chain |
 
 ---
 
-## Installation
+## Installation — Automated (recommended)
 
-### 1. Clone
+The automated installer handles everything in one step: Python packages, system tools, geckodriver, Firefox profile, and optional AI tab setup.
+
+```bash
+git clone https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+cd legion
+sudo bash install.sh
+```
+
+**Options:**
+
+| Flag | Effect |
+|---|---|
+| `--no-tools` | Skip system security tools (install Python packages only) |
+| `--no-ai` | Skip the Vertex AI setup prompt |
+
+---
+
+## Installation — Manual (step by step)
+
+Use this if you need to understand what each step does, skip certain parts, or troubleshoot a failed automated install.
+
+### Step 1 — Clone the repository
 
 ```bash
 git clone https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 ```
 
-### 2. Install Python dependencies
+### Step 2 — Install Python packages
 
-Covers both Flask web mode and Qt6 GUI mode:
+`requirements.txt` covers **both** Flask web mode and Qt6 GUI mode.
 
 ```bash
 sudo pip3 install --break-system-packages -r requirements.txt
 ```
 
-### 3. Install system tools
+Expected output: a list of packages being installed, ending with `Successfully installed ...`
 
-Installs Go-based tools (pd-httpx, katana, gau, waybackurls, nomore403, urlfinder),
-GitHub binaries (kerbrute, rdp-sec-check), and third-party Python tools (jexboss, LeakSearch).
-Kali pre-installs the rest (nmap, feroxbuster, netexec, eyewitness, hydra, etc.).
+**Verify:**
+```bash
+python3 -c "import flask, PyQt6.QtCore, sqlalchemy, anthropic; print('OK')"
+# Expected: OK
+```
+
+If this fails, check:
+- Python version: `python3 --version` must be 3.10+
+- pip is available: `python3 -m pip --version`
+- On Ubuntu you may need: `sudo apt-get install python3-pip python3-dev`
+
+### Step 3 — Install system security tools
+
+Kali Linux already includes most of the 50+ tools Legion uses (nmap, feroxbuster, netexec, eyewitness, hydra, enum4linux-ng, etc.).  This script installs the ones that are not in Kali's apt repos:
+
+| Tool | Method | Purpose |
+|---|---|---|
+| pd-httpx | Go | HTTP technology detection |
+| katana | Go | Web crawler |
+| gau | Go | Passive URL collection |
+| waybackurls | Go | Wayback Machine URL fetch |
+| nomore403 | Go | 403 bypass checker |
+| urlfinder | Go | URL extraction |
+| kerbrute | GitHub binary | Kerberos user enum |
+| rdp-sec-check | apt / GitHub | RDP security audit |
+| jexboss | GitHub clone | JBoss vulnerability scanner |
+| LeakSearch | GitHub clone | Credential leak search |
+| nuclei templates | nuclei CLI | Template download for nuclei scans |
 
 ```bash
 sudo bash install_tools.sh
 ```
 
-### 4. (Optional) AI tab — Vertex AI credentials
+Expected runtime: 2–10 minutes depending on network speed.
 
-The AI tab uses Anthropic Claude via Google Cloud Vertex AI.
-No API key is stored; authentication uses [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
-
+**Verify Go is installed first** — the script needs it:
 ```bash
-# One-time: authenticate with gcloud (already done if you use Claude Code daily)
-gcloud auth application-default login
+go version          # should show go1.20 or later
+# If not: sudo apt-get install golang-go
 ```
 
-Configure your project in `~/.claude/settings.json`:
-```json
+**Verify individual tools after install:**
+```bash
+for t in pd-httpx katana gau waybackurls nomore403 urlfinder kerbrute rdp-sec-check; do
+    command -v $t && echo "✓ $t" || echo "✗ $t — missing"
+done
+```
+
+### Step 4 — geckodriver (required for Selenium tests and screenshooter)
+
+**On Kali:** geckodriver is already at `/usr/bin/geckodriver` — nothing to do.
+
+**On Ubuntu:**
+```bash
+# Find the latest release at https://github.com/mozilla/geckodriver/releases
+GECKODRIVER_VERSION="v0.35.0"
+curl -fsSL "https://github.com/mozilla/geckodriver/releases/download/${GECKODRIVER_VERSION}/geckodriver-${GECKODRIVER_VERSION}-linux64.tar.gz" \
+    | sudo tar xz -C /usr/local/bin
+sudo chmod +x /usr/local/bin/geckodriver
+geckodriver --version   # verify
+```
+
+### Step 5 — (Optional) AI tab — Vertex AI credentials
+
+The AI tab uses Anthropic Claude via Google Cloud Vertex AI. Authentication uses
+[Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) — no API key file is stored anywhere.
+
+**Prerequisites:** a Google Cloud project with the Vertex AI API enabled.
+
+```bash
+# 1. Authenticate (one-time; already done if you use Claude Code daily)
+gcloud auth application-default login
+
+# 2. Tell Legion which project and region to use
+#    Edit ~/.claude/settings.json (create it if it doesn't exist):
+cat >> ~/.claude/settings.json << 'EOF'
 {
   "ANTHROPIC_VERTEX_PROJECT_ID": "your-gcp-project-id",
   "CLOUD_ML_REGION": "global"
 }
+EOF
 ```
 
-### 5. (Optional) Selenium test suite — geckodriver
-
-Required only if you run `sudo bash run_tests.sh --selenium`.
-
+**Verify:**
 ```bash
-# Kali: geckodriver is already at /usr/bin/geckodriver
-# Ubuntu: download from https://github.com/mozilla/geckodriver/releases
-# and place the binary in /usr/local/bin/geckodriver
+python3 -c "
+import json, pathlib
+cfg = json.loads(pathlib.Path('~/.claude/settings.json').expanduser().read_text())
+print('project:', cfg.get('ANTHROPIC_VERTEX_PROJECT_ID'))
+print('region: ', cfg.get('CLOUD_ML_REGION'))
+"
 ```
 
-### 6. Verify the install
+### Step 6 — Verify the complete install
+
+Runs 93 tests that check every Python import, verify Legion starts in web mode, confirm Qt6 works, and check that every tool binary is in PATH:
 
 ```bash
 sudo python3 -m pytest tests/test_requirements.py --noconftest -v
-# Expected: 93 passed (all Python imports, Flask start, Qt6 offscreen, tool binaries)
 ```
 
-Or verify with Docker from a completely clean Kali image:
+Expected output:
+```
+tests/test_requirements.py::test_shared_package_imports[flask-flask] PASSED
+tests/test_requirements.py::test_flask_web_mode_starts_and_responds PASSED
+tests/test_requirements.py::test_qt6_qapplication_offscreen PASSED
+tests/test_requirements.py::test_kali_apt_tool_present[nmap] PASSED
+...
+93 passed in ~45s
+```
+
+If some tool binary tests fail, run `sudo bash install_tools.sh` and try again.
+
+---
+
+## Installation — Docker
+
+Docker gives you Legion plus all tools in a self-contained image. Scanning still works — the container gets the same raw socket capabilities as the host via `--cap-add`.
+
+### Option A — Docker Compose (easiest)
+
+```bash
+git clone https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+cd legion
+
+# Build the image (takes 5–15 minutes; downloads all tools)
+sudo docker compose build
+
+# Start Legion in the background
+sudo docker compose up -d
+
+# Follow the logs
+sudo docker compose logs -f
+
+# Open in browser:  http://127.0.0.1:5000
+```
+
+**Stop:**
+```bash
+sudo docker compose down           # stop and remove container (keeps volumes)
+sudo docker compose down -v        # also remove volumes (deletes saved projects)
+```
+
+**Custom port:**
+```bash
+LEGION_PORT=8080 sudo docker compose up -d
+# Open http://127.0.0.1:8080
+```
+
+**Mount a host directory for project files:**
+```bash
+LEGION_PROJECTS_DIR=/home/kali/legion-projects sudo docker compose up -d
+# Save/open .legion files from /home/kali/legion-projects inside the app
+```
+
+### Option B — Docker manual (full control)
+
+```bash
+# Build
+sudo docker build -t legion .
+
+# Run — attach to host network so scans reach LAN targets
+sudo docker run -d \
+  --name legion \
+  --network host \
+  --cap-add NET_ADMIN \
+  --cap-add NET_RAW \
+  -v legion-config:/root/.local/share/legion \
+  -v legion-tmp:/tmp/legion \
+  legion
+
+# Logs
+sudo docker logs -f legion
+
+# Open http://127.0.0.1:5000 in your browser
+
+# Stop
+sudo docker stop legion && sudo docker rm legion
+```
+
+**Custom port:**
+```bash
+sudo docker run -d --name legion \
+  --network host --cap-add NET_ADMIN --cap-add NET_RAW \
+  -v legion-config:/root/.local/share/legion \
+  legion --port 8080
+# Open http://127.0.0.1:8080
+```
+
+**Save projects to a host directory:**
+```bash
+sudo docker run -d --name legion \
+  --network host --cap-add NET_ADMIN --cap-add NET_RAW \
+  -v legion-config:/root/.local/share/legion \
+  -v /home/kali/legion-projects:/projects \
+  legion
+# Files saved via File → Save As appear in /home/kali/legion-projects/
+```
+
+**Open a shell inside the container:**
+```bash
+sudo docker exec -it legion bash
+```
+
+### Docker — verify from a clean image
+
+This builds from scratch on a fresh Kali image and runs the install verification tests:
 
 ```bash
 sudo docker build --no-cache -f Dockerfile.test -t legion-test .
 sudo docker run --rm legion-test
-# Expected: 22 passed, 71 skipped (tool binary tests skip inside Docker)
+# Expected: 22 passed, 71 skipped
+# (tool binary tests skip inside Docker — they run on the host)
 ```
 
 ---
