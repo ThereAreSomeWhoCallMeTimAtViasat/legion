@@ -2,24 +2,34 @@
 # Legion tool installer — installs tools missing from this Kali system.
 # Run as root: sudo bash install_tools.sh
 #
-# Already installed (no action needed):
-#   feroxbuster, gobuster, ffuf, nuclei, testssl, netexec, smbmap,
-#   enum4linux-ng, ldapdomaindump, evil-winrm, redis-cli, masscan,
-#   amass, dnsrecon, dnsenum, wpscan, nikto, whatweb, wafw00f,
-#   sslyze, sslscan, sqlmap, seclists, wig (apt)
+# Already installed on Kali (no action needed):
+#   nmap, masscan, feroxbuster, gobuster, ffuf, nuclei, testssl,
+#   netexec, smbmap, enum4linux-ng, ldapdomaindump, evil-winrm,
+#   redis-cli, amass, dnsrecon, dnsenum, wpscan, nikto, whatweb,
+#   wafw00f, sslyze, sslscan, sqlmap, seclists, wig,
+#   impacket-*, hydra, nbtscan, onesixtyone, snmpwalk,
+#   ldapsearch, swaks, davtest, joomscan, ike-scan, finger,
+#   hping3, eyewitness, bloodhound-python, searchsploit (apt)
 #
-# New tools added (installed by this script):
-#   pd-httpx  — ProjectDiscovery httpx (tech-detect HTTP probe)
-#   katana    — ProjectDiscovery web crawler
-#   gau       — GetAllURLs passive URL collection
-#   waybackurls — Wayback Machine historical URL fetcher
-#   nomore403 — 403 bypass checker
-#   jexboss   — JBoss/Java app server vulnerability scanner (/opt/jexboss)
-#   LeakSearch — Credential leak search tool (/opt/LeakSearch)
+# Installed by this script:
+#   ssh-audit     — SSH configuration auditor (apt)
+#   kerbrute      — Kerberos user enum/brute (GitHub binary)
+#   rdp-sec-check — RDP security scanner (apt or GitHub Perl)
+#   pd-httpx      — ProjectDiscovery httpx tech-detect probe (Go)
+#   katana        — ProjectDiscovery web crawler (Go)
+#   gau           — GetAllURLs passive URL collection (Go)
+#   waybackurls   — Wayback Machine URL fetcher (Go)
+#   nomore403     — 403 bypass checker (Go)
+#   jexboss       — JBoss/Java app server scanner (/opt/jexboss, Python)
+#   LeakSearch    — Credential leak search (/opt/LeakSearch, Python)
+#   urlfinder     — URL extraction from JS/HTML (Go)
+#   nuclei templates — Required before nuclei can scan
+#   neotermcolor  — Python dep for LeakSearch (pip)
+#   mongosh       — MongoDB shell (optional, for mongo terminal actions)
 #
 # Not added (unavailable / deprecated):
-#   arachni   — Officially discontinued in 2016; use nuclei templates instead
-#   dirdar    — Superseded by nomore403 and nuclei fuzzing templates
+#   arachni     — Officially discontinued 2016; use nuclei instead
+#   dirdar      — Superseded by nomore403 and nuclei fuzzing
 #   servicelens — Sn1per-internal tool, no standalone release
 
 set -euo pipefail
@@ -234,6 +244,8 @@ else
         if [[ -f "$LEAKSEARCH_DIR/requirements.txt" ]]; then
             pip3 install --break-system-packages -r "$LEAKSEARCH_DIR/requirements.txt" -q 2>/dev/null || true
         fi
+        # neotermcolor is a hard dependency not always in requirements.txt
+        pip3 install --break-system-packages neotermcolor -q 2>/dev/null || true
         ok "LeakSearch installed at $LEAKSEARCH_DIR/LeakSearch.py"
     else
         warn "LeakSearch clone failed — install manually:"
@@ -257,12 +269,37 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# urlfinder — URL extractor from HTTP responses (used in Tools tab)
+# ---------------------------------------------------------------------------
+_go_install_and_link "github.com/projectdiscovery/urlfinder/cmd/urlfinder@latest" "urlfinder" "urlfinder"
+
+# ---------------------------------------------------------------------------
+# neotermcolor — Python dep for LeakSearch (always ensure it is installed)
+# ---------------------------------------------------------------------------
+if python3 -c "import neotermcolor" 2>/dev/null; then
+    skip "neotermcolor already installed"
+else
+    info "pip3 install neotermcolor..."
+    pip3 install --break-system-packages neotermcolor -q 2>/dev/null && ok "neotermcolor installed" || warn "neotermcolor install failed"
+fi
+
+# ---------------------------------------------------------------------------
+# Python requirements (flask, sqlalchemy, anthropic, etc.)
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
+    info "pip3 install -r requirements.txt..."
+    pip3 install --break-system-packages -r "$SCRIPT_DIR/requirements.txt" -q 2>/dev/null && ok "Python requirements installed" || warn "Some Python requirements may have failed — check pip output"
+fi
+
 echo ""
 echo "Pre-existing tools confirmed present:"
-ALL_TOOLS=(feroxbuster gobuster ffuf nuclei testssl netexec smbmap
-           enum4linux-ng ldapdomaindump evil-winrm redis-cli masscan
-           amass dnsrecon dnsenum wpscan nikto whatweb wafw00f
-           sslyze sslscan sqlmap wig)
+ALL_TOOLS=(nmap masscan feroxbuster gobuster ffuf nuclei testssl netexec smbmap
+           enum4linux-ng ldapdomaindump evil-winrm redis-cli amass dnsrecon
+           dnsenum wpscan nikto whatweb wafw00f sslyze sslscan sqlmap wig
+           hping3 eyewitness searchsploit hydra nbtscan onesixtyone snmpwalk
+           swaks davtest joomscan ike-scan finger ldapsearch)
 for tool in "${ALL_TOOLS[@]}"; do
     if command -v "$tool" &>/dev/null; then
         echo -e "  ${GREEN}✓${NC} $tool"
@@ -273,7 +310,7 @@ done
 
 echo ""
 echo "New tools installed by this script:"
-NEW_TOOLS=(pd-httpx katana gau waybackurls nomore403)
+NEW_TOOLS=(ssh-audit kerbrute rdp-sec-check pd-httpx katana gau waybackurls nomore403 urlfinder)
 for tool in "${NEW_TOOLS[@]}"; do
     if command -v "$tool" &>/dev/null; then
         echo -e "  ${GREEN}✓${NC} $tool"
@@ -281,8 +318,9 @@ for tool in "${NEW_TOOLS[@]}"; do
         echo -e "  ${RED}✗${NC} $tool — not found in PATH"
     fi
 done
-[[ -f /opt/jexboss/jexboss.py ]]   && echo -e "  ${GREEN}✓${NC} jexboss (/opt/jexboss/jexboss.py)"    || echo -e "  ${RED}✗${NC} jexboss — missing"
+[[ -f /opt/jexboss/jexboss.py ]]       && echo -e "  ${GREEN}✓${NC} jexboss (/opt/jexboss/jexboss.py)"         || echo -e "  ${RED}✗${NC} jexboss — missing"
 [[ -f /opt/LeakSearch/LeakSearch.py ]] && echo -e "  ${GREEN}✓${NC} LeakSearch (/opt/LeakSearch/LeakSearch.py)" || echo -e "  ${RED}✗${NC} LeakSearch — missing"
+python3 -c "import neotermcolor" 2>/dev/null && echo -e "  ${GREEN}✓${NC} neotermcolor (Python)" || echo -e "  ${RED}✗${NC} neotermcolor — pip3 install --break-system-packages neotermcolor"
 
 if [[ ${#NEWLY_MISSING[@]} -gt 0 ]]; then
     echo ""
