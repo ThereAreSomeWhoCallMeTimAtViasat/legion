@@ -1,5 +1,16 @@
 # Legion Project Context for Claude Code
 
+## ABSOLUTE RULE — NO GUESSING
+**Before writing ANY code that references a schema, API, column, function, or data structure:**
+1. **Read the definition** — find the CREATE TABLE, class definition, or function signature in the actual source files
+2. **Read existing usages** — grep for INSERT, SELECT, or call sites to confirm column/parameter names
+3. **Never infer from naming conventions** — a table called `process_matches` might not have a `process_id` column; read `db/SqliteDbAdapter.py` to know for certain
+4. **If uncertain, ask** — the user explicitly requires this; guessing wastes time and introduces bugs that are hard to diagnose
+
+**How this rule was learned (v10.157):** `DELETE FROM process_matches WHERE process_id IN (...)` was written by convention rather than by reading the schema. The actual table has no `process_id` column — it is keyed by `hostIp`. This one wrong column name aborted the entire delete/purge transaction on every call, leaving host data fully intact while returning `status: ok`. The correct SQL (`WHERE hostIp = :ip`) was visible in 4 places already in the codebase. Two seconds of grep would have caught it.
+
+---
+
 ## User Preferences
 - User's database refactoring and features TAKE PRECEDENCE over upstream code
 - Tests for every method before building — prove one element works before doing the whole thing
