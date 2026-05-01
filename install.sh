@@ -342,39 +342,99 @@ cd "${SCRIPT_DIR}"
 [[ -f requirements.txt ]] || die "requirements.txt not found in ${SCRIPT_DIR}"
 
 info "Installing Flask + Qt6 + shared + AI Python dependencies…"
-python3 -m pip install --break-system-packages -q -r requirements.txt \
-    && ok "requirements.txt installed" \
-    || die "pip install -r requirements.txt failed — check the error above"
 
-info "Verifying critical imports…"
-ALL_OK=true
+# mitmproxy (installed via apt on Kali) pins asgiref, tornado, urwid, and wsproto
+# to versions that conflict with pip packages.  Strategy:
+#   1. Normal install — works on most systems
+#   2. If that fails, re-run with --ignore-installed so pip installs our
+#      versions regardless of what the system has (this overrides mitmproxy's
+#      pinned versions; mitmproxy itself is unaffected as a binary tool)
+PIP_LOG=$(mktemp)
+if python3 -m pip install --break-system-packages -r requirements.txt 2>&1 | tee "$PIP_LOG"; then
+    ok "requirements.txt installed"
+else
+    warn "pip install had conflicts (likely mitmproxy version pins) — retrying with --ignore-installed…"
+    # Find the conflicting packages from the error log and force-install our versions
+    CONFLICTS=$(grep -oP "(?<=has requirement )\S+(?=,)" "$PIP_LOG" | sort -u | head -20 || true)
+    if [[ -n "$CONFLICTS" ]]; then
+        info "Force-installing conflicting packages: ${CONFLICTS}"
+        # shellcheck disable=SC2086
+        python3 -m pip install --break-system-packages --ignore-installed $CONFLICTS 2>/dev/null || true
+    fi
+    # Retry the full requirements install
+    if python3 -m pip install --break-system-packages --ignore-installed -r requirements.txt 2>&1; then
+        ok "requirements.txt installed (with --ignore-installed to resolve conflicts)"
+    else
+        die "pip install -r requirements.txt failed even with --ignore-installed.  Run manually to see full error:
+    sudo python3 -m pip install --break-system-packages -r requirements.txt"
+    fi
+fi
+rm -f "$PIP_LOG"
+
+info "Verifying critical imports — installing any that are still missing…"
 for pkg in flask sqlalchemy requests PyQt6.QtCore anthropic; do
     if python3 -c "import ${pkg}" 2>/dev/null; then
         ok "  import ${pkg}"
     else
-        fail "  import ${pkg} — FAILED"
-        ALL_OK=false
+        warn "  import ${pkg} failed — attempting targeted install…"
+        # Map import name to pip package name where they differ
+        case "$pkg" in
+            PyQt6.QtCore) pip_name="PyQt6" ;;
+            *)            pip_name="$pkg" ;;
+        esac
+        if python3 -m pip install --break-system-packages --ignore-installed "${pip_name}" 2>/dev/null \
+                && python3 -c "import ${pkg}" 2>/dev/null; then
+            ok "  import ${pkg} — fixed"
+        else
+            die "  Cannot import ${pkg} even after targeted install.  Check the pip output above."
+        fi
     fi
 done
-$ALL_OK || warn "Some imports failed — check pip output above; web mode may still work"
 
 # =============================================================================
 # 6. nuclei templates
 # =============================================================================
-step "6/9  nuclei templates"
+step "6/9  nuclei + templates"
 
+# Install nuclei if not present — it must exist before we can pull templates
 if command -v nuclei &>/dev/null; then
-    NUCLEI_DIR="${REAL_HOME}/.local/nuclei-templates"
-    if [[ -d "$NUCLEI_DIR" && -n "$(ls -A "$NUCLEI_DIR" 2>/dev/null)" ]]; then
-        ok "nuclei templates already present at ${NUCLEI_DIR}"
-    else
-        info "Downloading nuclei templates (may take a minute)…"
-        HOME="${REAL_HOME}" nuclei -update-templates 2>/dev/null && \
-            ok "nuclei templates ready" || \
-            warn "nuclei template download failed — run 'nuclei -update-templates' manually"
-    fi
+    ok "nuclei already at $(command -v nuclei)"
 else
-    warn "nuclei not found — skipping template download"
+    info "nuclei not found — installing…"
+    if apt-get install -y nuclei 2>/dev/null; then
+        ok "nuclei installed via apt"
+    else
+        info "nuclei not in apt — installing via Go…"
+        tmpdir=$(mktemp -d)
+        if GOPATH="$tmpdir" HOME=/root go install \
+                github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null; then
+            bin=$(find "$tmpdir/bin" -maxdepth 1 -name "nuclei" -type f | head -1)
+            if [[ -f "$bin" ]]; then
+                cp "$bin" /usr/local/bin/nuclei
+                chmod +x /usr/local/bin/nuclei
+                ok "nuclei installed via Go at /usr/local/bin/nuclei"
+            else
+                warn "nuclei Go build produced no binary"
+            fi
+        else
+            warn "nuclei Go install failed"
+        fi
+        rm -rf "$tmpdir"
+    fi
+    # Final check — die if we still don't have nuclei
+    command -v nuclei &>/dev/null \
+        || die "nuclei could not be installed.  It is required for vulnerability scanning.  Try manually: sudo apt-get install nuclei"
+fi
+
+# Pull nuclei templates (required before nuclei can scan for anything)
+NUCLEI_DIR="${REAL_HOME}/.local/nuclei-templates"
+if [[ -d "$NUCLEI_DIR" && -n "$(ls -A "$NUCLEI_DIR" 2>/dev/null)" ]]; then
+    ok "nuclei templates already present at ${NUCLEI_DIR}"
+else
+    info "Downloading nuclei templates (may take a few minutes)…"
+    HOME="${REAL_HOME}" nuclei -update-templates 2>/dev/null \
+        && ok "nuclei templates ready" \
+        || warn "nuclei template download failed — run: nuclei -update-templates"
 fi
 
 # =============================================================================
@@ -417,37 +477,133 @@ fi
 # =============================================================================
 # 8. Verification
 # =============================================================================
-step "8/9  Verification"
+step "8/9  Verification + auto-remediation"
 
-info "Running install verification tests (~45 seconds)…"
 cd "${SCRIPT_DIR}"
 
-if python3 -m pytest tests/test_requirements.py --noconftest -q --tb=line 2>&1; then
-    ok "All verification tests passed"
-else
-    warn "Some tests failed — see output above"
-    warn "Legion --web may still work; tool binary failures are non-fatal"
-fi
+# ── Helper: install a missing binary tool ─────────────────────────────────────
+_install_tool() {
+    local tool="$1"
+    info "    Attempting to install ${tool}…"
+    case "$tool" in
+        # Go-installed tools
+        pd-httpx)
+            _go_install "github.com/projectdiscovery/httpx/cmd/httpx@latest" "pd-httpx" ;;
+        katana)
+            _go_install "github.com/projectdiscovery/katana/cmd/katana@latest" "katana" ;;
+        gau)
+            _go_install "github.com/lc/gau/v2/cmd/gau@latest" "gau" ;;
+        waybackurls)
+            _go_install "github.com/tomnomnom/waybackurls@latest" "waybackurls" ;;
+        nomore403)
+            _go_install "github.com/devploit/nomore403@latest" "nomore403" ;;
+        urlfinder)
+            _go_install "github.com/projectdiscovery/urlfinder/cmd/urlfinder@latest" "urlfinder" ;;
+        nuclei)
+            apt-get install -y nuclei 2>/dev/null || \
+            _go_install "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest" "nuclei" ;;
+        kerbrute)
+            curl -fsSL https://github.com/ropnop/kerbrute/releases/latest/download/kerbrute_linux_amd64 \
+                -o /usr/local/bin/kerbrute 2>/dev/null && chmod +x /usr/local/bin/kerbrute ;;
+        rdp-sec-check)
+            apt-get install -y rdp-sec-check 2>/dev/null || true ;;
+        # Everything else: try apt
+        *)
+            apt-get install -y --ignore-missing "$tool" 2>/dev/null || true ;;
+    esac
+    command -v "$tool" &>/dev/null \
+        && ok "    ${tool} installed" \
+        || warn "    ${tool} could not be installed automatically — install manually"
+}
 
-echo ""
-info "Tool binary presence check:"
-MISSING=()
-for tool in nmap masscan feroxbuster gobuster nuclei netexec eyewitness hydra \
-            ssh-audit pd-httpx katana gau waybackurls nomore403 urlfinder \
-            kerbrute dnsrecon snmpwalk ldapsearch impacket-rpcdump; do
-    if command -v "$tool" &>/dev/null; then
-        ok "  $tool"
-    else
-        fail "  $tool — NOT FOUND"
-        MISSING+=("$tool")
+_go_install() {
+    local pkg="$1" dest="$2"
+    local tmpdir; tmpdir=$(mktemp -d)
+    GOPATH="$tmpdir" HOME=/root go install "$pkg" 2>/dev/null
+    local bin; bin=$(find "$tmpdir/bin" -maxdepth 1 -type f | head -1)
+    [[ -f "$bin" ]] && cp "$bin" "/usr/local/bin/$dest" && chmod +x "/usr/local/bin/$dest"
+    rm -rf "$tmpdir"
+}
+
+# ── Helper: pip-install a missing Python package ──────────────────────────────
+_install_pkg() {
+    local import_name="$1" pip_name="$2"
+    info "    Attempting pip install ${pip_name}…"
+    python3 -m pip install --break-system-packages --ignore-installed "${pip_name}" 2>/dev/null \
+        && python3 -c "import ${import_name}" 2>/dev/null \
+        && ok "    ${pip_name} installed" \
+        || warn "    ${pip_name} could not be installed — try: pip3 install --break-system-packages ${pip_name}"
+}
+
+# ── Run tests and auto-fix failures ──────────────────────────────────────────
+VERIFY_LOG=$(mktemp)
+MAX_ROUNDS=3
+ROUND=0
+ALL_PASS=false
+
+while [[ $ROUND -lt $MAX_ROUNDS ]]; do
+    ROUND=$(( ROUND + 1 ))
+    info "Verification round ${ROUND}/${MAX_ROUNDS}…"
+
+    python3 -m pytest tests/test_requirements.py --noconftest -q --tb=line 2>&1 \
+        | tee "$VERIFY_LOG"
+
+    if ! grep -q "^FAILED\|failed" "$VERIFY_LOG"; then
+        ALL_PASS=true
+        break
     fi
+
+    info "Failures detected — attempting auto-remediation before round $(( ROUND + 1 ))…"
+
+    # ── Fix missing Python package imports ────────────────────────────────────
+    # Test output format: "Cannot import 'X' (package 'Y')"
+    while IFS= read -r line; do
+        import_name=$(echo "$line" | grep -oP "import '\K[^']+")
+        pkg_name=$(echo "$line"    | grep -oP "package '\K[^']+")
+        [[ -z "$import_name" ]] && continue
+        [[ -z "$pkg_name"    ]] && pkg_name="$import_name"
+        fail "  Python import '${import_name}' missing — installing '${pkg_name}'…"
+        _install_pkg "$import_name" "$pkg_name"
+    done < <(grep "Cannot import" "$VERIFY_LOG" || true)
+
+    # ── Fix missing tool binaries ─────────────────────────────────────────────
+    # Test output format: "'toolname' not found in PATH"
+    while IFS= read -r line; do
+        tool=$(echo "$line" | grep -oP "'\K[^']+(?=' not found in PATH)")
+        [[ -z "$tool" ]] && continue
+        fail "  Binary '${tool}' missing — installing…"
+        _install_tool "$tool"
+    done < <(grep "not found in PATH" "$VERIFY_LOG" || true)
+
+    # ── Fix missing /opt scripts ──────────────────────────────────────────────
+    while IFS= read -r line; do
+        script=$(echo "$line" | grep -oP "/opt/\S+\.py")
+        [[ -z "$script" ]] && continue
+        repo=$(basename "$(dirname "$script")")
+        if [[ ! -f "$script" ]]; then
+            fail "  ${script} missing — cloning ${repo}…"
+            case "$repo" in
+                LeakSearch)
+                    git clone --depth 1 https://github.com/JoelGMSec/LeakSearch.git \
+                        /opt/LeakSearch 2>/dev/null && \
+                    python3 -m pip install --break-system-packages neotermcolor -q || true ;;
+                jexboss)
+                    git clone --depth 1 https://github.com/joaomatosf/jexboss.git \
+                        /opt/jexboss 2>/dev/null || true ;;
+            esac
+        fi
+    done < <(grep "not found\|missing\|does not exist" "$VERIFY_LOG" || true)
+
 done
 
-if [[ ${#MISSING[@]} -gt 0 ]]; then
-    warn "${#MISSING[@]} tool(s) not found: ${MISSING[*]}"
-    warn "Run 'sudo apt-get install ${MISSING[*]}' or re-run this installer"
+rm -f "$VERIFY_LOG"
+
+if $ALL_PASS; then
+    ok "All verification tests passed"
 else
-    ok "All checked tools are in PATH"
+    warn "Some tests still failing after ${MAX_ROUNDS} remediation rounds."
+    warn "Run manually to see what remains:"
+    warn "  sudo python3 -m pytest tests/test_requirements.py --noconftest -v"
 fi
 
 # =============================================================================
