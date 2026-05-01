@@ -135,30 +135,84 @@ Easy Edit covers every section of the config in typed, labeled forms:
 
 ## Requirements
 
-- **OS**: Kali Linux (recommended) or Ubuntu 20.04+
-- **Python**: 3.10+
-- **Browser**: Firefox (opened automatically; geckodriver required for Selenium tests)
-- **Tools**: nmap, hydra, feroxbuster, gobuster, nuclei, netexec, enum4linux-ng, ssh-audit, testssl, and others
-
-Install all tools at once:
-```bash
-sudo bash install_tools.sh
-```
-
-For AI analysis:
-```bash
-pip install "anthropic[vertex]"
-gcloud auth application-default login
-```
+| Requirement | Minimum | Notes |
+|---|---|---|
+| OS | Kali Linux 2024.1+ | Ubuntu 22.04+ also works; Kali has most tools pre-installed |
+| Python | 3.10+ | 3.11–3.13 tested |
+| Firefox | any recent ESR | Opened automatically; geckodriver needed for Selenium tests |
+| sudo | required | nmap, masscan, and several schedulers need root |
+| Disk | ~2 GB | Tools + Python packages + project databases |
 
 ---
 
 ## Installation
 
+### 1. Clone
+
 ```bash
 git clone https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
-pip install -r requirements.txt
+```
+
+### 2. Install Python dependencies
+
+Covers both Flask web mode and Qt6 GUI mode:
+
+```bash
+sudo pip3 install --break-system-packages -r requirements.txt
+```
+
+### 3. Install system tools
+
+Installs Go-based tools (pd-httpx, katana, gau, waybackurls, nomore403, urlfinder),
+GitHub binaries (kerbrute, rdp-sec-check), and third-party Python tools (jexboss, LeakSearch).
+Kali pre-installs the rest (nmap, feroxbuster, netexec, eyewitness, hydra, etc.).
+
+```bash
+sudo bash install_tools.sh
+```
+
+### 4. (Optional) AI tab — Vertex AI credentials
+
+The AI tab uses Anthropic Claude via Google Cloud Vertex AI.
+No API key is stored; authentication uses [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
+
+```bash
+# One-time: authenticate with gcloud (already done if you use Claude Code daily)
+gcloud auth application-default login
+```
+
+Configure your project in `~/.claude/settings.json`:
+```json
+{
+  "ANTHROPIC_VERTEX_PROJECT_ID": "your-gcp-project-id",
+  "CLOUD_ML_REGION": "global"
+}
+```
+
+### 5. (Optional) Selenium test suite — geckodriver
+
+Required only if you run `sudo bash run_tests.sh --selenium`.
+
+```bash
+# Kali: geckodriver is already at /usr/bin/geckodriver
+# Ubuntu: download from https://github.com/mozilla/geckodriver/releases
+# and place the binary in /usr/local/bin/geckodriver
+```
+
+### 6. Verify the install
+
+```bash
+sudo python3 -m pytest tests/test_requirements.py --noconftest -v
+# Expected: 93 passed (all Python imports, Flask start, Qt6 offscreen, tool binaries)
+```
+
+Or verify with Docker from a completely clean Kali image:
+
+```bash
+sudo docker build --no-cache -f Dockerfile.test -t legion-test .
+sudo docker run --rm legion-test
+# Expected: 22 passed, 71 skipped (tool binary tests skip inside Docker)
 ```
 
 ---
