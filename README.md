@@ -150,9 +150,18 @@ Easy Edit covers every section of the config in typed, labeled forms:
 
 The automated installer handles everything in one step: Python packages, system tools, geckodriver, Firefox profile, and optional AI tab setup.
 
+> **Important:** The Flask web UI lives on the `flask-clean` branch.
+> The default `master` branch is the original upstream Qt5 desktop app.
+> The `--branch flask-clean` flag below is **required** — without it you
+> will clone the wrong codebase and `python3 legion.py --web` will not exist.
+
 ```bash
-git clone https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
+
+# Confirm you are on the right branch before continuing
+git branch        # should show: * flask-clean
+
 sudo bash install.sh
 ```
 
@@ -169,11 +178,25 @@ sudo bash install.sh
 
 Use this if you need to understand what each step does, skip certain parts, or troubleshoot a failed automated install.
 
-### Step 1 — Clone the repository
+### Step 1 — Clone the repository onto the correct branch
+
+The repository has multiple branches. The Flask web UI is on **`flask-clean`**.
+The default `master` branch is the original upstream Qt5 desktop app — it does
+not have `--web` mode, `install.sh`, or `requirements.txt` in the correct state.
 
 ```bash
-git clone https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+# --branch flask-clean is mandatory
+git clone --branch flask-clean \
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
+
+# Verify you are on the right branch before doing anything else
+git branch
+# Output must show:   * flask-clean
+# If it shows master or anything else, run:  git checkout flask-clean
+
+git log --oneline -3
+# Should show recent commits starting with "v10.1xx" version tags
 ```
 
 ### Step 2 — Install Python packages
@@ -308,7 +331,9 @@ Docker gives you Legion plus all tools in a self-contained image. Scanning still
 ### Option A — Docker Compose (easiest)
 
 ```bash
-git clone https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+# --branch flask-clean is required (master is the Qt5 desktop app, not web)
+git clone --branch flask-clean \
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 
 # Build the image (takes 5–15 minutes; downloads all tools)

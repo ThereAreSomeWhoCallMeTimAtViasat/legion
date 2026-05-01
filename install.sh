@@ -66,6 +66,35 @@ echo "Working directory: ${SCRIPT_DIR}"
 echo ""
 
 # =============================================================================
+# Branch guard — must be on flask-clean
+# =============================================================================
+# The default 'master' branch is the original upstream Qt5 desktop app.
+# 'flask-clean' is the Flask web UI rewrite.  If you cloned without
+# --branch flask-clean you will be on the wrong codebase entirely.
+
+CURRENT_BRANCH=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+if [[ "${CURRENT_BRANCH}" != "flask-clean" ]]; then
+    echo -e "${RED}"
+    echo "  ┌─────────────────────────────────────────────────────────────────┐"
+    echo "  │  WRONG BRANCH: you are on '${CURRENT_BRANCH}'                           "
+    echo "  │                                                                 │"
+    echo "  │  The Flask web UI lives on the 'flask-clean' branch.           │"
+    echo "  │  The default 'master' branch is the original Qt5 desktop app   │"
+    echo "  │  and does not have --web mode or the correct requirements.txt. │"
+    echo "  │                                                                 │"
+    echo "  │  Fix:                                                           │"
+    echo "  │    git checkout flask-clean                                     │"
+    echo "  │    sudo bash install.sh                                         │"
+    echo "  │                                                                 │"
+    echo "  │  Or clone fresh with the correct branch:                       │"
+    echo "  │    git clone --branch flask-clean <repo-url>                   │"
+    echo "  └─────────────────────────────────────────────────────────────────┘"
+    echo -e "${NC}"
+    exit 1
+fi
+ok "Branch: ${CURRENT_BRANCH}"
+
+# =============================================================================
 # Step 1 — Prerequisites
 # =============================================================================
 step "Prerequisites"

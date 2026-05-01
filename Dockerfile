@@ -3,6 +3,13 @@
 # =============================================================================
 # Runs Legion in --web mode.  Exposes port 5000.
 #
+# IMPORTANT: Build from the flask-clean branch (not master):
+#   git clone --branch flask-clean <repo-url>
+#   cd legion
+#   sudo docker build -t legion .
+#
+# If you already cloned: git checkout flask-clean
+#
 # Quick start:
 #   sudo docker build -t legion .
 #   sudo docker run -d --name legion \
