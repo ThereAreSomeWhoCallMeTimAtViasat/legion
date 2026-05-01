@@ -2336,13 +2336,34 @@ class WebController:
         # Detect python-script-* host actions and route to real Python scripts
         # Qt6: PythonImporter.run() ran scripts/python/<name>.py with dbHost + session
         # Flask: run the script as a subprocess so it appears in the process table
+        # The conf key (name/action[1]) carries the python-script- prefix; the
+        # command field (action[2]) may contain a legacy echo placeholder — check
+        # the key first so routing works even with old conf entries.
         first_word = command.strip().split()[0] if command.strip() else ''
-        if first_word.startswith('python-script-'):
-            script_slug = first_word[len('python-script-'):]
-            script_path = os.path.join(
+        _py_prefix = 'python-script-'
+        if first_word.startswith(_py_prefix):
+            script_slug = first_word[len(_py_prefix):]
+        elif name.startswith(_py_prefix):
+            script_slug = name[len(_py_prefix):]
+        else:
+            script_slug = None
+        if script_slug is not None:
+            # re-assign first_word so the nmap check below works correctly
+            first_word = f'python-script-{script_slug}'
+            _scripts_dir = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                'scripts', 'python', f'{script_slug}.py'
+                'scripts', 'python'
             )
+            script_path = os.path.join(_scripts_dir, f'{script_slug}.py')
+            if not os.path.isfile(script_path):
+                # Conf key casing may not match file name (e.g. PyShodan→pyShodan.py).
+                # Walk the directory for a case-insensitive match.
+                _slug_lc = script_slug.lower()
+                for _fn in os.listdir(_scripts_dir):
+                    if _fn.lower() == f'{_slug_lc}.py':
+                        script_path = os.path.join(_scripts_dir, _fn)
+                        script_slug = _fn[:-3]   # strip .py, preserve actual casing
+                        break
             if os.path.isfile(script_path):
                 if script_slug == 'macvendors':
                     # macvendors.py takes MAC address — look up from host record
