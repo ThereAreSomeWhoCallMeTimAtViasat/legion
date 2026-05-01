@@ -97,77 +97,75 @@ info "Updating package index…"
 apt-get update -q
 ok "Package index updated"
 
-info "Installing system libraries, Python, Go, Firefox, and security tools…"
-info "(This may take several minutes on a slow connection)"
+info "Installing critical runtime packages (Python, Go, libs, Firefox)…"
+info "This block must succeed — if it fails the rest cannot continue."
 
+# ── Block A: Critical — must all be available; fail loud if not ──────────────
+# These are packages that legion.py itself needs at startup.
+# No --ignore-missing here: we want a clear failure if Go or Python cannot install.
 apt-get install -y \
-    `# ── Runtime support ────────────────────────────────────────────────` \
-    curl wget git ca-certificates unzip \
-    build-essential \
-    `# ── Python 3 ────────────────────────────────────────────────────────` \
+    curl wget git ca-certificates unzip build-essential \
     python3 python3-pip python3-dev \
-    `# ── Go (needed for pd-httpx, katana, gau, waybackurls, etc.) ───────` \
     golang-go \
-    `# ── Qt6 runtime libs (for PyQt6 import + offscreen tests) ──────────` \
+    libssl3 openssl \
     libgl1 libegl1 libglib2.0-0 libdbus-1-3 \
     libfontconfig1 libfreetype6 libx11-6 libxext6 libxrender1 \
     libxcb1 libxkbcommon0 libxcb-cursor0 \
-    `# ── Virtual display (eyewitness screenshooter) ─────────────────────` \
     xvfb x11-utils \
-    `# ── Firefox (auto-opened by legion --web) ──────────────────────────` \
-    firefox-esr \
-    `# ── Core scanning ───────────────────────────────────────────────────` \
+    firefox-esr
+
+ok "Critical packages installed (Python $(python3 --version | grep -oP '[\d.]+'), Go $(go version | grep -oP 'go[\d.]+'))"
+
+# Verify the non-negotiables came through before continuing
+for req in python3 go git curl; do
+    command -v "$req" &>/dev/null \
+        && ok "  $req → $(command -v $req)" \
+        || die "$req still missing after apt install — check apt sources and network, then retry"
+done
+
+# ── Block B: Security tools — install with --ignore-missing ─────────────────
+# Any individual package may be unavailable on older/different distros.
+# apt-get --ignore-missing skips missing packages and installs the rest.
+# This block never causes the script to abort.
+info "Installing security tools (--ignore-missing — individual failures are OK)…"
+
+apt-get install -y --ignore-missing \
+    `# Core scanning` \
     nmap masscan hping3 ike-scan \
-    `# ── Web application tools ───────────────────────────────────────────` \
+    `# Web tools` \
     feroxbuster gobuster ffuf nikto whatweb wafw00f \
     wpscan joomscan davtest sqlmap sslyze sslscan testssl \
-    `# ── Network reconnaissance ──────────────────────────────────────────` \
+    `# Network recon` \
     dnsrecon dnsenum nbtscan onesixtyone \
     snmpwalk snmpcheck \
     rpcinfo nfs-common \
     ldap-utils \
-    `# ── SMB / Windows ───────────────────────────────────────────────────` \
+    `# SMB / Windows` \
     netexec smbmap enum4linux-ng ldapdomaindump \
     smbclient \
-    `# ── Impacket suite (all binaries) ───────────────────────────────────` \
+    `# Impacket` \
     impacket-scripts \
-    `# ── Authentication / brute-force ────────────────────────────────────` \
-    hydra \
-    `# ── Screenshot engine ───────────────────────────────────────────────` \
+    `# Auth / brute` \
+    hydra medusa \
+    `# Screenshooter` \
     eyewitness \
-    `# ── Host reconnaissance ─────────────────────────────────────────────` \
+    `# Host recon` \
     exploitdb theharvester bloodhound-python \
-    `# ── Vulnerability assessment ────────────────────────────────────────` \
+    `# Vulnerability scanning` \
     nuclei \
-    `# ── SSH / SSL ───────────────────────────────────────────────────────` \
+    `# SSH / RDP` \
     ssh-audit \
-    `# ── Database clients ────────────────────────────────────────────────` \
+    `# Database clients` \
     redis-tools default-mysql-client postgresql-client \
-    `# ── Mail tools ──────────────────────────────────────────────────────` \
+    `# Mail` \
     swaks smtp-user-enum \
-    `# ── Legacy network tools ────────────────────────────────────────────` \
-    finger rsh-client rlogin \
-    `# ── Misc ────────────────────────────────────────────────────────────` \
-    nbtscan onesixtyone ike-scan finger \
-    net-tools \
-    2>/dev/null || {
-        warn "Some apt packages were not found — this is normal on Ubuntu"
-        warn "Re-running with --ignore-missing to install what is available…"
-        apt-get install -y --ignore-missing \
-            python3 python3-pip python3-dev golang-go curl wget git ca-certificates \
-            build-essential xvfb firefox-esr \
-            nmap masscan hping3 feroxbuster gobuster ffuf nikto sqlmap hydra \
-            eyewitness exploitdb sslyze sslscan testssl \
-            snmpwalk ldap-utils nfs-common 2>/dev/null || true
-    }
+    `# Network legacy (rsh-client may not exist on all distros — OK to skip)` \
+    finger \
+    `# Misc` \
+    net-tools nbtscan \
+    2>/dev/null || true   # apt exit code is ignored — missing packages are expected
 
-ok "All available apt packages installed"
-
-# Verify critical runtime requirements came through
-for req in python3 go git curl; do
-    command -v "$req" &>/dev/null && ok "  $req: $(command -v $req)" \
-        || die "$req not installed — apt-get install failed; check your network and try again"
-done
+ok "Security tool packages installed (some may have been skipped on this distro)"
 
 # =============================================================================
 # 2. Go-based tools
