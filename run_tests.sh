@@ -556,12 +556,18 @@ if $RUN_UNIT; then
         tests/test_terminal.py \
         tests/test_gap_implementations.py \
         tests/test_qt6_gaps.py \
-        tests/test_export_and_hydra.py
+        tests/test_export_and_hydra.py \
+        tests/test_requirements.py
     do
         # test_terminal.py: T7 live tests skip without LEGION_TEST_TARGET.
         # When a live target is given, skip it here — the T7 section runs it
         # with LEGION_TEST_TARGET so all 45 tests pass with no skips.
         if [[ "$f" == "tests/test_terminal.py" ]] && $RUN_LIVE; then
+            continue
+        fi
+        # test_requirements.py must skip the Selenium conftest fixtures
+        if [[ "$f" == "tests/test_requirements.py" ]]; then
+            run_pytest "requirements (packages+binaries)" tests/test_requirements.py --noconftest
             continue
         fi
         run_unit "$f"

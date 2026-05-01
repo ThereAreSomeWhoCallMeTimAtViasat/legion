@@ -1,47 +1,48 @@
-# Legion Flask Web UI — Python dependencies
+# Legion — Python dependencies for BOTH Flask web mode (--web) and Qt6 GUI mode
 # Install: pip3 install --break-system-packages -r requirements.txt
-#
 # Tested on Kali Linux with Python 3.11+
 
-# ── Web framework ──────────────────────────────────────────────────────────
-flask>=3.0.0
-werkzeug>=3.0.0          # Flask WSGI toolkit (also used directly for make_server)
-
-# ── Database ───────────────────────────────────────────────────────────────
+# ── Shared: database ORM ───────────────────────────────────────────────────
 SQLAlchemy>=1.4,<3.0     # ORM; tested on 1.4.x and 2.0.x
-six                       # unicode() shim used in db entities (from six import u as unicode)
+six                       # unicode() shim in db entities (from six import u as unicode)
 
-# ── HTTP / networking ──────────────────────────────────────────────────────
+# ── Shared: HTTP / networking ──────────────────────────────────────────────
 requests>=2.28.0
-urllib3>=2.0.0            # requests dependency; 2.x is compatible
+urllib3>=2.0.0
 
-# ── AI tab (Vertex AI / Anthropic) ────────────────────────────────────────
-anthropic>=0.20.0         # AnthropicVertex client used in app/ai/analyzer.py
-google-auth>=2.0.0        # ADC credentials required by anthropic[vertex]
-
-# ── Shodan integration (scripts/python/pyShodan.py) ───────────────────────
-pyShodan>=0.2.0           # Python Shodan API wrapper
-
-# ── ExploitDB integration ──────────────────────────────────────────────────
+# ── Shared: tool integrations ──────────────────────────────────────────────
 pyExploitDb>=0.2.0        # searchsploit / exploitdb host action
+pyShodan>=0.2.0           # pyShodan.py script — Python Shodan API wrapper
+neotermcolor>=2.0.0       # required by /opt/LeakSearch/LeakSearch.py
 
-# ── Terminal / startup UI ──────────────────────────────────────────────────
+# ── Shared: terminal / startup UI ─────────────────────────────────────────
 pyfiglet>=0.8.0
 colorama>=0.4.0
 termcolor>=2.0.0
-rich>=13.0.0              # colour output in run_tests.sh and test suite
+rich>=13.0.0              # colour test output and run_tests.sh
 
-# ── Browser automation (Selenium tests + eyewitness screenshooter) ─────────
-selenium>=4.9.0           # test suite and eyewitness Selenium module patching
+# ── Shared: browser automation (tests + eyewitness screenshooter) ──────────
+selenium>=4.9.0
 
-# ── LeakSearch tool dependency ─────────────────────────────────────────────
-neotermcolor>=2.0.0       # required by /opt/LeakSearch/LeakSearch.py
+# ── Flask web mode (--web) ────────────────────────────────────────────────
+flask>=3.0.0
+werkzeug>=3.0.0           # Flask WSGI toolkit; also used directly for make_server
 
-# ── Optional: Qt6 GUI mode (not needed for --web / Flask mode) ─────────────
-# PyQt6
-# qasync
+# ── Flask web mode: AI tab (Vertex AI / Anthropic) ────────────────────────
+anthropic>=0.20.0         # AnthropicVertex client in app/ai/analyzer.py
+google-auth>=2.0.0        # ADC credentials required by anthropic[vertex]
 
-# ── Development / testing only (not needed at runtime) ─────────────────────
+# ── Qt6 GUI mode ──────────────────────────────────────────────────────────
+PyQt6>=6.4.0              # Qt6 Python bindings — main GUI framework
+qasync>=0.23.0            # asyncio Qt6 event loop integration
+
+# ── Qt6 GUI mode: data processing ─────────────────────────────────────────
+pandas>=1.5.0             # used in Qt6 UI data models and OS classification
+
+# ── Qt6 GUI mode: version control (project git history features) ───────────
+GitPython>=3.1.0          # git repo introspection in Qt6 mode
+
+# ── Development / linting (not required at runtime) ───────────────────────
 # flake8
-# pytest
 # webdriver-manager
+# pytest
