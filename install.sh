@@ -2,22 +2,26 @@
 # =============================================================================
 # Legion — Full Automated Installer
 # =============================================================================
-# Installs everything needed to run Legion in web mode (--web) on Kali Linux
-# or Ubuntu 22.04+.  Safe to run more than once — all steps are idempotent.
+# Installs EVERYTHING needed to run Legion in web mode (--web) on Kali Linux
+# or Ubuntu 22.04+.  Completely self-contained — does not depend on any other
+# script in the repo.  Safe to run more than once (idempotent).
 #
 # Usage:
-#   sudo bash install.sh              # install everything
-#   sudo bash install.sh --no-tools   # skip system tools (Python only)
-#   sudo bash install.sh --no-ai      # skip Vertex AI setup prompt
+#   sudo bash install.sh           # full install
+#   sudo bash install.sh --no-ai  # skip Vertex AI setup prompt
 #
-# What this script does:
-#   1. Checks prerequisites (OS, Python version, sudo)
-#   2. Installs Python runtime dependencies (requirements.txt)
-#   3. Installs system security tools (apt + Go + GitHub + /opt)
-#   4. Installs geckodriver for Selenium tests and screenshooter
-#   5. Creates the Firefox profile directory used by Legion --web
-#   6. Verifies the installation with the built-in test suite
-#   7. Optionally walks through Vertex AI setup for the AI tab
+# What this installs:
+#   1.  apt packages  — system libs, python3, Go, Firefox, geckodriver, and
+#                       all 40+ security tools Legion calls (nmap, masscan,
+#                       feroxbuster, netexec, eyewitness, hydra, etc.)
+#   2.  Go binaries   — pd-httpx, katana, gau, waybackurls, nomore403, urlfinder
+#   3.  GitHub tools  — kerbrute (binary), rdp-sec-check (Perl)
+#   4.  /opt tools    — jexboss, LeakSearch (Python, cloned from GitHub)
+#   5.  Python pkgs   — requirements.txt (Flask + Qt6 + shared + AI)
+#   6.  nuclei tmpl   — template update so nuclei can actually scan
+#   7.  Firefox prof  — dedicated legion-profile so --web never conflicts
+#   8.  Verification  — runs tests/test_requirements.py to confirm everything
+#   9.  AI tab        — optional Vertex AI / gcloud setup prompt
 # =============================================================================
 
 set -euo pipefail
@@ -26,225 +30,406 @@ set -euo pipefail
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 
-ok()   { echo -e "  ${GREEN}✓${NC}  $*"; }
-fail() { echo -e "  ${RED}✗${NC}  $*"; }
-warn() { echo -e "  ${YELLOW}!${NC}  $*"; }
-info() { echo -e "  ${BLUE}→${NC}  $*"; }
-step() { echo -e "\n${BOLD}${BLUE}══ $* ${NC}"; }
-die()  { echo -e "\n${RED}ERROR: $*${NC}" >&2; exit 1; }
+ok()    { echo -e "  ${GREEN}✓${NC}  $*"; }
+fail()  { echo -e "  ${RED}✗${NC}  $*"; }
+warn()  { echo -e "  ${YELLOW}!${NC}  $*"; }
+info()  { echo -e "  ${BLUE}→${NC}  $*"; }
+step()  { echo -e "\n${BOLD}${BLUE}══ $* ${NC}"; }
+die()   { echo -e "\n${RED}FATAL: $*${NC}" >&2; exit 1; }
+try()   {   # try DESCRIPTION COMMAND…
+    local desc="$1"; shift
+    if "$@" &>/dev/null; then ok "$desc"; else warn "$desc (non-fatal, continuing)"; fi
+}
 
-# ── Argument parsing ──────────────────────────────────────────────────────────
-SKIP_TOOLS=false
+# ── Args ──────────────────────────────────────────────────────────────────────
 SKIP_AI=false
 for arg in "$@"; do
     case "$arg" in
-        --no-tools) SKIP_TOOLS=true ;;
-        --no-ai)    SKIP_AI=true ;;
+        --no-ai)   SKIP_AI=true ;;
         -h|--help)
-            echo "Usage: sudo bash install.sh [--no-tools] [--no-ai]"
-            echo "  --no-tools   skip system security tools (install Python only)"
-            echo "  --no-ai      skip Vertex AI setup prompt"
-            exit 0
-            ;;
+            echo "Usage: sudo bash install.sh [--no-ai]"
+            echo "  --no-ai   skip Vertex AI / gcloud setup prompt at the end"
+            exit 0 ;;
     esac
 done
 
-# ── Root check ────────────────────────────────────────────────────────────────
-[[ $EUID -eq 0 ]] || die "Run with sudo: sudo bash $0"
+# ── Root ──────────────────────────────────────────────────────────────────────
+[[ $EUID -eq 0 ]] || die "Run with sudo:  sudo bash $0"
 
-# Detect the non-root user who invoked sudo (for Firefox profile ownership)
-SUDO_USER_HOME="${HOME}"
-if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-    SUDO_USER_HOME=$(getent passwd "${SUDO_USER}" | cut -d: -f6)
-fi
+# Non-root caller (for profile/settings ownership)
+REAL_USER="${SUDO_USER:-root}"
+REAL_HOME=$(getent passwd "${REAL_USER}" | cut -d: -f6 2>/dev/null || echo "${HOME}")
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo ""
 echo -e "${BOLD}Legion — Automated Installer${NC}"
-echo "Working directory: ${SCRIPT_DIR}"
+echo -e "  Working directory : ${SCRIPT_DIR}"
+echo -e "  Running as        : root (real user: ${REAL_USER})"
 echo ""
 
-# =============================================================================
-# Branch guard — must be on flask-clean
-# =============================================================================
-# The default 'master' branch is the original upstream Qt5 desktop app.
-# 'flask-clean' is the Flask web UI rewrite.  If you cloned without
-# --branch flask-clean you will be on the wrong codebase entirely.
-
+# ── Branch guard ──────────────────────────────────────────────────────────────
 CURRENT_BRANCH=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 if [[ "${CURRENT_BRANCH}" != "flask-clean" ]]; then
     echo -e "${RED}"
-    echo "  ┌─────────────────────────────────────────────────────────────────┐"
-    echo "  │  WRONG BRANCH: you are on '${CURRENT_BRANCH}'                           "
-    echo "  │                                                                 │"
-    echo "  │  The Flask web UI lives on the 'flask-clean' branch.           │"
-    echo "  │  The default 'master' branch is the original Qt5 desktop app   │"
-    echo "  │  and does not have --web mode or the correct requirements.txt. │"
-    echo "  │                                                                 │"
-    echo "  │  Fix:                                                           │"
-    echo "  │    git checkout flask-clean                                     │"
-    echo "  │    sudo bash install.sh                                         │"
-    echo "  │                                                                 │"
-    echo "  │  Or clone fresh with the correct branch:                       │"
-    echo "  │    git clone --branch flask-clean <repo-url>                   │"
-    echo "  └─────────────────────────────────────────────────────────────────┘"
+    echo "  ╔═══════════════════════════════════════════════════════════════════╗"
+    echo "  ║  WRONG BRANCH  —  you are on '${CURRENT_BRANCH}'                         "
+    echo "  ║                                                                   ║"
+    echo "  ║  The Flask web UI (--web mode) lives on the 'flask-clean' branch.║"
+    echo "  ║  'master' is the original upstream Qt5 desktop app and will not  ║"
+    echo "  ║  work with this installer.                                        ║"
+    echo "  ║                                                                   ║"
+    echo "  ║  Fix:                                                             ║"
+    echo "  ║    git checkout flask-clean                                       ║"
+    echo "  ║    sudo bash install.sh                                           ║"
+    echo "  ╚═══════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     exit 1
 fi
 ok "Branch: ${CURRENT_BRANCH}"
 
 # =============================================================================
-# Step 1 — Prerequisites
+# 1. APT — update, then install EVERYTHING in one pass
 # =============================================================================
-step "Prerequisites"
+step "1/9  apt-get update + install all packages"
 
-# OS check
-if grep -qi kali /etc/os-release 2>/dev/null; then
-    ok "OS: Kali Linux"
-elif grep -qi ubuntu /etc/os-release 2>/dev/null; then
-    ok "OS: Ubuntu"
-    warn "Kali is recommended — many tools may not be in apt on Ubuntu"
-else
-    warn "OS not recognised — continuing anyway, but YMMV"
-fi
+info "Updating package index…"
+apt-get update -q
+ok "Package index updated"
 
-# Python version
-PY=$(python3 --version 2>/dev/null | grep -oP '[\d.]+' | head -1)
-PY_MAJOR=$(echo "$PY" | cut -d. -f1)
-PY_MINOR=$(echo "$PY" | cut -d. -f2)
-if [[ "$PY_MAJOR" -ge 3 && "$PY_MINOR" -ge 10 ]]; then
-    ok "Python $PY"
-else
-    die "Python 3.10+ required (found $PY). Install it first."
-fi
+info "Installing system libraries, Python, Go, Firefox, and security tools…"
+info "(This may take several minutes on a slow connection)"
 
-# pip
-python3 -m pip --version &>/dev/null || die "pip not found — install python3-pip first"
-ok "pip available"
+apt-get install -y \
+    `# ── Runtime support ────────────────────────────────────────────────` \
+    curl wget git ca-certificates unzip \
+    build-essential \
+    `# ── Python 3 ────────────────────────────────────────────────────────` \
+    python3 python3-pip python3-dev \
+    `# ── Go (needed for pd-httpx, katana, gau, waybackurls, etc.) ───────` \
+    golang-go \
+    `# ── Qt6 runtime libs (for PyQt6 import + offscreen tests) ──────────` \
+    libgl1 libegl1 libglib2.0-0 libdbus-1-3 \
+    libfontconfig1 libfreetype6 libx11-6 libxext6 libxrender1 \
+    libxcb1 libxkbcommon0 libxcb-cursor0 \
+    `# ── Virtual display (eyewitness screenshooter) ─────────────────────` \
+    xvfb x11-utils \
+    `# ── Firefox (auto-opened by legion --web) ──────────────────────────` \
+    firefox-esr \
+    `# ── Core scanning ───────────────────────────────────────────────────` \
+    nmap masscan hping3 ike-scan \
+    `# ── Web application tools ───────────────────────────────────────────` \
+    feroxbuster gobuster ffuf nikto whatweb wafw00f \
+    wpscan joomscan davtest sqlmap sslyze sslscan testssl \
+    `# ── Network reconnaissance ──────────────────────────────────────────` \
+    dnsrecon dnsenum nbtscan onesixtyone \
+    snmpwalk snmpcheck \
+    rpcinfo nfs-common \
+    ldap-utils \
+    `# ── SMB / Windows ───────────────────────────────────────────────────` \
+    netexec smbmap enum4linux-ng ldapdomaindump \
+    smbclient \
+    `# ── Impacket suite (all binaries) ───────────────────────────────────` \
+    impacket-scripts \
+    `# ── Authentication / brute-force ────────────────────────────────────` \
+    hydra \
+    `# ── Screenshot engine ───────────────────────────────────────────────` \
+    eyewitness \
+    `# ── Host reconnaissance ─────────────────────────────────────────────` \
+    exploitdb theharvester bloodhound-python \
+    `# ── Vulnerability assessment ────────────────────────────────────────` \
+    nuclei \
+    `# ── SSH / SSL ───────────────────────────────────────────────────────` \
+    ssh-audit \
+    `# ── Database clients ────────────────────────────────────────────────` \
+    redis-tools default-mysql-client postgresql-client \
+    `# ── Mail tools ──────────────────────────────────────────────────────` \
+    swaks smtp-user-enum \
+    `# ── Legacy network tools ────────────────────────────────────────────` \
+    finger rsh-client rlogin \
+    `# ── Misc ────────────────────────────────────────────────────────────` \
+    nbtscan onesixtyone ike-scan finger \
+    net-tools \
+    2>/dev/null || {
+        warn "Some apt packages were not found — this is normal on Ubuntu"
+        warn "Re-running with --ignore-missing to install what is available…"
+        apt-get install -y --ignore-missing \
+            python3 python3-pip python3-dev golang-go curl wget git ca-certificates \
+            build-essential xvfb firefox-esr \
+            nmap masscan hping3 feroxbuster gobuster ffuf nikto sqlmap hydra \
+            eyewitness exploitdb sslyze sslscan testssl \
+            snmpwalk ldap-utils nfs-common 2>/dev/null || true
+    }
 
-# Go (for Go-based tools)
-if command -v go &>/dev/null; then
-    ok "Go $(go version | grep -oP 'go[\d.]+' | head -1)"
-else
-    warn "Go not found — Go-based tools will be skipped (pd-httpx, katana, gau, etc.)"
-    warn "Install Go: sudo apt-get install golang-go"
-fi
+ok "All available apt packages installed"
 
-# =============================================================================
-# Step 2 — Python packages
-# =============================================================================
-step "Python packages  (requirements.txt)"
-
-cd "${SCRIPT_DIR}"
-if [[ ! -f requirements.txt ]]; then
-    die "requirements.txt not found in ${SCRIPT_DIR}"
-fi
-
-info "Installing all Python dependencies (Flask + Qt6 + shared)…"
-if python3 -m pip install --break-system-packages -r requirements.txt -q; then
-    ok "requirements.txt installed"
-else
-    fail "pip install failed — check the output above"
-    exit 1
-fi
-
-# Verify critical imports work
-info "Verifying critical imports…"
-IMPORT_ERRORS=()
-for pkg in flask sqlalchemy PyQt6.QtCore anthropic; do
-    if python3 -c "import ${pkg}" 2>/dev/null; then
-        ok "  import ${pkg}"
-    else
-        IMPORT_ERRORS+=("${pkg}")
-        fail "  import ${pkg} — FAILED"
-    fi
+# Verify critical runtime requirements came through
+for req in python3 go git curl; do
+    command -v "$req" &>/dev/null && ok "  $req: $(command -v $req)" \
+        || die "$req not installed — apt-get install failed; check your network and try again"
 done
-[[ ${#IMPORT_ERRORS[@]} -gt 0 ]] && warn "Some imports failed — the app may still run in web mode"
 
 # =============================================================================
-# Step 3 — System security tools
+# 2. Go-based tools
 # =============================================================================
-if $SKIP_TOOLS; then
-    warn "Skipping system tools (--no-tools specified)"
-else
-    step "System security tools  (install_tools.sh)"
-    if [[ -f "${SCRIPT_DIR}/install_tools.sh" ]]; then
-        bash "${SCRIPT_DIR}/install_tools.sh"
-    else
-        warn "install_tools.sh not found — skipping tool installation"
+step "2/9  Go-based tools  (pd-httpx, katana, gau, waybackurls, nomore403, urlfinder)"
+
+GO_TOOLS=(
+    "github.com/projectdiscovery/httpx/cmd/httpx@latest:pd-httpx"
+    "github.com/projectdiscovery/katana/cmd/katana@latest:katana"
+    "github.com/lc/gau/v2/cmd/gau@latest:gau"
+    "github.com/tomnomnom/waybackurls@latest:waybackurls"
+    "github.com/devploit/nomore403@latest:nomore403"
+    "github.com/projectdiscovery/urlfinder/cmd/urlfinder@latest:urlfinder"
+)
+
+for pkg_dest in "${GO_TOOLS[@]}"; do
+    pkg="${pkg_dest%%:*}"
+    dest="${pkg_dest##*:}"
+    if command -v "$dest" &>/dev/null; then
+        ok "$dest already installed at $(command -v $dest)"
+        continue
     fi
-fi
+    info "go install $pkg → $dest…"
+    tmpdir=$(mktemp -d)
+    if GOPATH="$tmpdir" HOME=/root go install "$pkg" 2>/dev/null; then
+        bin=$(find "$tmpdir/bin" -maxdepth 1 -type f | head -1)
+        if [[ -f "$bin" ]]; then
+            cp "$bin" "/usr/local/bin/$dest"
+            chmod +x "/usr/local/bin/$dest"
+            ok "$dest installed at /usr/local/bin/$dest"
+        else
+            warn "$dest: binary not found after go install — skipping"
+        fi
+    else
+        warn "$dest: go install failed — skipping (non-fatal)"
+    fi
+    rm -rf "$tmpdir"
+done
 
 # =============================================================================
-# Step 4 — geckodriver (screenshooter + Selenium tests)
+# 3. GitHub binary tools
 # =============================================================================
-step "geckodriver"
+step "3/9  GitHub binary tools  (kerbrute, rdp-sec-check)"
 
-if command -v geckodriver &>/dev/null; then
-    ok "geckodriver already at $(command -v geckodriver)  ($(geckodriver --version 2>&1 | head -1))"
+# kerbrute
+if command -v kerbrute &>/dev/null; then
+    ok "kerbrute already at $(command -v kerbrute)"
 else
-    info "Installing geckodriver…"
-    GECKODRIVER_URL=""
+    info "Downloading kerbrute…"
     ARCH=$(uname -m)
     case "$ARCH" in
-        x86_64)  GECKODRIVER_URL="https://github.com/mozilla/geckodriver/releases/latest/download/geckodriver-v0.35.0-linux64.tar.gz" ;;
-        aarch64) GECKODRIVER_URL="https://github.com/mozilla/geckodriver/releases/latest/download/geckodriver-v0.35.0-linux-aarch64.tar.gz" ;;
-        *)       warn "Unknown arch $ARCH — download geckodriver manually from https://github.com/mozilla/geckodriver/releases" ;;
+        x86_64)  KERB_FILE="kerbrute_linux_amd64" ;;
+        aarch64) KERB_FILE="kerbrute_linux_arm64" ;;
+        *)        warn "Unknown arch $ARCH — skipping kerbrute"; KERB_FILE="" ;;
     esac
-
-    if [[ -n "$GECKODRIVER_URL" ]]; then
-        TMP_DIR=$(mktemp -d)
-        if curl -fsSL "$GECKODRIVER_URL" | tar xz -C "$TMP_DIR" 2>/dev/null; then
-            mv "$TMP_DIR/geckodriver" /usr/local/bin/geckodriver
-            chmod +x /usr/local/bin/geckodriver
-            rm -rf "$TMP_DIR"
-            ok "geckodriver installed at /usr/local/bin/geckodriver"
+    if [[ -n "$KERB_FILE" ]]; then
+        URL="https://github.com/ropnop/kerbrute/releases/latest/download/${KERB_FILE}"
+        if curl -fsSL "$URL" -o /usr/local/bin/kerbrute 2>/dev/null; then
+            chmod +x /usr/local/bin/kerbrute
+            ok "kerbrute installed at /usr/local/bin/kerbrute"
         else
-            warn "Failed to download geckodriver — install manually"
-            rm -rf "$TMP_DIR"
+            warn "kerbrute download failed — skipping (non-fatal)"
+        fi
+    fi
+fi
+
+# rdp-sec-check
+if command -v rdp-sec-check &>/dev/null; then
+    ok "rdp-sec-check already at $(command -v rdp-sec-check)"
+else
+    info "Installing rdp-sec-check…"
+    if apt-get install -y rdp-sec-check 2>/dev/null; then
+        ok "rdp-sec-check installed via apt"
+    else
+        info "Not in apt — cloning from GitHub…"
+        RDP_DIR=/opt/rdp-sec-check
+        if git clone --depth 1 https://github.com/CiscoCXSecurity/rdp-sec-check.git \
+                "$RDP_DIR" 2>/dev/null; then
+            command -v cpanm &>/dev/null && \
+                cpanm --quiet Encoding::BER 2>/dev/null || true
+            printf '#!/bin/bash\nexec perl /opt/rdp-sec-check/rdp-sec-check.pl "$@"\n' \
+                > /usr/local/bin/rdp-sec-check
+            chmod +x /usr/local/bin/rdp-sec-check
+            ok "rdp-sec-check installed at /usr/local/bin/rdp-sec-check"
+        else
+            warn "rdp-sec-check clone failed — skipping (non-fatal)"
         fi
     fi
 fi
 
 # =============================================================================
-# Step 5 — Firefox profile for Legion --web
+# 4. /opt tools  (jexboss, LeakSearch)
 # =============================================================================
-step "Firefox profile"
+step "4/9  /opt tools  (jexboss, LeakSearch)"
 
-PROFILE_DIR="${SUDO_USER_HOME}/.mozilla/firefox/legion-profile"
-if [[ -d "$PROFILE_DIR" ]]; then
-    ok "Legion Firefox profile already exists: ${PROFILE_DIR}"
+# jexboss
+if [[ -f /opt/jexboss/jexboss.py ]]; then
+    ok "jexboss already at /opt/jexboss"
 else
-    info "Creating dedicated Firefox profile for Legion --web…"
-    mkdir -p "$PROFILE_DIR"
-    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-        chown -R "${SUDO_USER}:${SUDO_USER}" "${SUDO_USER_HOME}/.mozilla" 2>/dev/null || true
+    info "Cloning jexboss…"
+    if git clone --depth 1 https://github.com/joaomatosf/jexboss.git \
+            /opt/jexboss 2>/dev/null; then
+        [[ -f /opt/jexboss/requires.txt ]] && \
+            python3 -m pip install --break-system-packages -q \
+                -r /opt/jexboss/requires.txt 2>/dev/null || true
+        ok "jexboss installed at /opt/jexboss/jexboss.py"
+    else
+        warn "jexboss clone failed — skipping (non-fatal)"
     fi
-    ok "Firefox profile created: ${PROFILE_DIR}"
 fi
 
-# =============================================================================
-# Step 6 — Verify the installation
-# =============================================================================
-step "Verification"
-
-info "Running install verification tests (this takes ~30 seconds)…"
-cd "${SCRIPT_DIR}"
-if python3 -m pytest tests/test_requirements.py --noconftest -q --tb=short 2>&1 | tail -5; then
-    ok "All tests passed"
+# LeakSearch
+if [[ -f /opt/LeakSearch/LeakSearch.py ]]; then
+    ok "LeakSearch already at /opt/LeakSearch"
 else
-    warn "Some tests failed — check the output above. Legion may still run."
+    info "Cloning LeakSearch…"
+    if git clone --depth 1 https://github.com/JoelGMSec/LeakSearch.git \
+            /opt/LeakSearch 2>/dev/null; then
+        [[ -f /opt/LeakSearch/requirements.txt ]] && \
+            python3 -m pip install --break-system-packages -q \
+                -r /opt/LeakSearch/requirements.txt 2>/dev/null || true
+        ok "LeakSearch installed at /opt/LeakSearch/LeakSearch.py"
+    else
+        warn "LeakSearch clone failed — skipping (non-fatal)"
+    fi
+fi
+
+# neotermcolor — required by LeakSearch at runtime
+if python3 -c "import neotermcolor" 2>/dev/null; then
+    ok "neotermcolor already installed"
+else
+    info "Installing neotermcolor (LeakSearch dependency)…"
+    python3 -m pip install --break-system-packages -q neotermcolor && \
+        ok "neotermcolor installed" || warn "neotermcolor install failed (non-fatal)"
 fi
 
 # =============================================================================
-# Step 7 — AI tab setup (optional)
+# 5. Python packages  (requirements.txt)
+# =============================================================================
+step "5/9  Python packages  (requirements.txt)"
+
+cd "${SCRIPT_DIR}"
+[[ -f requirements.txt ]] || die "requirements.txt not found in ${SCRIPT_DIR}"
+
+info "Installing Flask + Qt6 + shared + AI Python dependencies…"
+python3 -m pip install --break-system-packages -q -r requirements.txt \
+    && ok "requirements.txt installed" \
+    || die "pip install -r requirements.txt failed — check the error above"
+
+info "Verifying critical imports…"
+ALL_OK=true
+for pkg in flask sqlalchemy requests PyQt6.QtCore anthropic; do
+    if python3 -c "import ${pkg}" 2>/dev/null; then
+        ok "  import ${pkg}"
+    else
+        fail "  import ${pkg} — FAILED"
+        ALL_OK=false
+    fi
+done
+$ALL_OK || warn "Some imports failed — check pip output above; web mode may still work"
+
+# =============================================================================
+# 6. nuclei templates
+# =============================================================================
+step "6/9  nuclei templates"
+
+if command -v nuclei &>/dev/null; then
+    NUCLEI_DIR="${REAL_HOME}/.local/nuclei-templates"
+    if [[ -d "$NUCLEI_DIR" && -n "$(ls -A "$NUCLEI_DIR" 2>/dev/null)" ]]; then
+        ok "nuclei templates already present at ${NUCLEI_DIR}"
+    else
+        info "Downloading nuclei templates (may take a minute)…"
+        HOME="${REAL_HOME}" nuclei -update-templates 2>/dev/null && \
+            ok "nuclei templates ready" || \
+            warn "nuclei template download failed — run 'nuclei -update-templates' manually"
+    fi
+else
+    warn "nuclei not found — skipping template download"
+fi
+
+# =============================================================================
+# 7. geckodriver + Firefox profile
+# =============================================================================
+step "7/9  geckodriver + Firefox profile"
+
+if command -v geckodriver &>/dev/null; then
+    ok "geckodriver already at $(command -v geckodriver)  ($(geckodriver --version 2>&1 | head -1))"
+else
+    info "Installing geckodriver…"
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)  GD_ARCH="linux64" ;;
+        aarch64) GD_ARCH="linux-aarch64" ;;
+        *)        GD_ARCH="linux64"; warn "Assuming linux64 for geckodriver" ;;
+    esac
+    GD_URL="https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-${GD_ARCH}.tar.gz"
+    TMP=$(mktemp -d)
+    if curl -fsSL "$GD_URL" | tar xz -C "$TMP" 2>/dev/null && [[ -f "$TMP/geckodriver" ]]; then
+        mv "$TMP/geckodriver" /usr/local/bin/geckodriver
+        chmod +x /usr/local/bin/geckodriver
+        ok "geckodriver installed at /usr/local/bin/geckodriver"
+    else
+        warn "geckodriver download failed — Selenium tests will not work"
+    fi
+    rm -rf "$TMP"
+fi
+
+PROFILE_DIR="${REAL_HOME}/.mozilla/firefox/legion-profile"
+if [[ -d "$PROFILE_DIR" ]]; then
+    ok "Legion Firefox profile already exists"
+else
+    mkdir -p "$PROFILE_DIR"
+    [[ "$REAL_USER" != "root" ]] && \
+        chown -R "${REAL_USER}:${REAL_USER}" "${REAL_HOME}/.mozilla" 2>/dev/null || true
+    ok "Firefox profile created at ${PROFILE_DIR}"
+fi
+
+# =============================================================================
+# 8. Verification
+# =============================================================================
+step "8/9  Verification"
+
+info "Running install verification tests (~45 seconds)…"
+cd "${SCRIPT_DIR}"
+
+if python3 -m pytest tests/test_requirements.py --noconftest -q --tb=line 2>&1; then
+    ok "All verification tests passed"
+else
+    warn "Some tests failed — see output above"
+    warn "Legion --web may still work; tool binary failures are non-fatal"
+fi
+
+echo ""
+info "Tool binary presence check:"
+MISSING=()
+for tool in nmap masscan feroxbuster gobuster nuclei netexec eyewitness hydra \
+            ssh-audit pd-httpx katana gau waybackurls nomore403 urlfinder \
+            kerbrute dnsrecon snmpwalk ldapsearch impacket-rpcdump; do
+    if command -v "$tool" &>/dev/null; then
+        ok "  $tool"
+    else
+        fail "  $tool — NOT FOUND"
+        MISSING+=("$tool")
+    fi
+done
+
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+    warn "${#MISSING[@]} tool(s) not found: ${MISSING[*]}"
+    warn "Run 'sudo apt-get install ${MISSING[*]}' or re-run this installer"
+else
+    ok "All checked tools are in PATH"
+fi
+
+# =============================================================================
+# 9. AI tab setup (optional)
 # =============================================================================
 if ! $SKIP_AI; then
-    step "AI tab setup (optional)"
+    step "9/9  AI tab  (Vertex AI — optional)"
     echo ""
     echo "  The AI tab uses Anthropic Claude via Google Cloud Vertex AI."
     echo "  You need a GCP project with the Vertex AI API enabled."
+    echo "  Authentication uses Application Default Credentials (no API key stored)."
     echo ""
     read -r -p "  Configure AI tab now? [y/N] " SETUP_AI
     if [[ "${SETUP_AI,,}" == "y" ]]; then
@@ -253,19 +438,20 @@ if ! $SKIP_AI; then
         read -r -p "  Vertex AI region [global]: " GCP_REGION
         GCP_REGION="${GCP_REGION:-global}"
 
-        CLAUDE_SETTINGS="${SUDO_USER_HOME}/.claude/settings.json"
+        CLAUDE_SETTINGS="${REAL_HOME}/.claude/settings.json"
         mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
 
-        # Merge into existing settings.json or create new
         if [[ -f "$CLAUDE_SETTINGS" ]]; then
             python3 - "$CLAUDE_SETTINGS" "$GCP_PROJECT" "$GCP_REGION" <<'PYEOF'
 import sys, json
 path, project, region = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as f: cfg = json.load(f)
+try:
+    with open(path) as f: cfg = json.load(f)
+except Exception:
+    cfg = {}
 cfg['ANTHROPIC_VERTEX_PROJECT_ID'] = project
 cfg['CLOUD_ML_REGION'] = region
 with open(path, 'w') as f: json.dump(cfg, f, indent=2)
-print(f"  Updated {path}")
 PYEOF
         else
             cat > "$CLAUDE_SETTINGS" <<EOF
@@ -274,20 +460,20 @@ PYEOF
   "CLOUD_ML_REGION": "${GCP_REGION}"
 }
 EOF
-            info "Created ${CLAUDE_SETTINGS}"
         fi
-        [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && \
-            chown -R "${SUDO_USER}:${SUDO_USER}" "$(dirname "$CLAUDE_SETTINGS")" 2>/dev/null || true
+        [[ "$REAL_USER" != "root" ]] && \
+            chown -R "${REAL_USER}:${REAL_USER}" "$(dirname "$CLAUDE_SETTINGS")" 2>/dev/null || true
 
         echo ""
-        info "Next: authenticate with Google Cloud:"
+        ok "AI settings written to ${CLAUDE_SETTINGS}"
+        echo ""
+        info "Next — authenticate with Google Cloud (run as your normal user, not root):"
         echo ""
         echo "      gcloud auth application-default login"
         echo ""
-        ok "AI tab configuration written to ${CLAUDE_SETTINGS}"
     else
-        info "Skipped — run 'gcloud auth application-default login' and set"
-        info "ANTHROPIC_VERTEX_PROJECT_ID in ~/.claude/settings.json when ready."
+        info "Skipped — configure later by editing ~/.claude/settings.json"
+        info "and running: gcloud auth application-default login"
     fi
 fi
 
@@ -295,18 +481,19 @@ fi
 # Done
 # =============================================================================
 echo ""
-echo -e "${BOLD}${GREEN}Installation complete.${NC}"
+echo -e "${BOLD}${GREEN}╔═══════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${GREEN}║       Legion installation complete        ║${NC}"
+echo -e "${BOLD}${GREEN}╚═══════════════════════════════════════════╝${NC}"
 echo ""
-echo "  Start Legion (web mode, opens Firefox automatically):"
-echo -e "    ${BOLD}sudo python3 legion.py --web${NC}"
+echo -e "  ${BOLD}Start (opens Firefox automatically):${NC}"
+echo    "    sudo python3 legion.py --web"
 echo ""
-echo "  Custom port:"
-echo -e "    ${BOLD}sudo python3 legion.py --web --port 8080${NC}"
+echo -e "  ${BOLD}Custom port:${NC}"
+echo    "    sudo python3 legion.py --web --port 8080"
 echo ""
-echo "  No automatic browser:"
-echo -e "    ${BOLD}sudo python3 legion.py --web --no-browser${NC}"
-echo "    then open  http://127.0.0.1:5000  in Firefox"
+echo -e "  ${BOLD}Headless (open http://127.0.0.1:5000 yourself):${NC}"
+echo    "    sudo python3 legion.py --web --no-browser"
 echo ""
-echo "  Qt6 GUI mode (requires X11 display):"
-echo -e "    ${BOLD}sudo python3 legion.py${NC}"
+echo -e "  ${BOLD}Qt6 desktop GUI (requires X11 display):${NC}"
+echo    "    sudo python3 legion.py"
 echo ""
