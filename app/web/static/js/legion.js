@@ -4708,7 +4708,42 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 postJson('/api/workspace/hosts/' + hostId + '/action', {
                     action: action.action, ip: hostIp, action_index: action.action_index || 0
-                }).then(function() { pollSnapshot(); });
+                }).then(function() {
+                    /* After purge or delete: clear all UI state tied to this host.
+                       Qt6 equivalent: view.clearViewsForHost(ip). */
+                    if (action.action === 'purge' || action.action === 'delete') {
+                        /* Clear lower output window and deselect process */
+                        var po = $('plain-output');
+                        if (po) po.textContent = '';
+                        L.selectedProcessId = null;
+
+                        /* Remove all dynamic tool tabs for this host from the tab bar */
+                        var bar = $('right-tab-bar');
+                        var dynContainer = $('dynamic-tabs-container');
+                        if (bar) {
+                            bar.querySelectorAll('.dynamic-tab').forEach(function(btn) {
+                                btn.remove();
+                            });
+                        }
+                        if (dynContainer) dynContainer.innerHTML = '';
+
+                        /* Clear unread-tab indicators for this host */
+                        var host = L.hosts.find(function(h) { return String(h.id) === String(hostId); });
+                        if (host && L._hostUnreadTabs) {
+                            delete L._hostUnreadTabs[host.id];
+                        }
+
+                        /* For delete: also deselect the host row and reset right panel */
+                        if (action.action === 'delete') {
+                            L.selectedHostIp = null;
+                            L.selectedHostId = null;
+                            /* Reset right-panel tabs to Services (first static tab) */
+                            var firstTab = bar && bar.querySelector('.tab-btn:not(.dynamic-tab)');
+                            if (firstTab) firstTab.click();
+                        }
+                    }
+                    pollSnapshot();
+                });
             });
         });
     });

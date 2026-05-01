@@ -2187,20 +2187,50 @@ class WebController:
             return {'action': 'delete', 'ip': ip}
 
         if action_name == 'purge':
-            # Purge: kill processes + delete scan data but keep host + notes
+            # Purge: delete scan data but keep host row + notes (ready for rescan).
+            # Apply same robustness fixes as delete (v10.154).
+
+            # 1. Drain queue first — killProcess() calls checkProcessQueue() internally
+            if hasattr(self, 'fastProcessQueue'):
+                temp = queue_module.Queue()
+                while not self.fastProcessQueue.empty():
+                    try:
+                        p = self.fastProcessQueue.get_nowait()
+                        if getattr(p, 'hostIp', '') != ip:
+                            temp.put(p)
+                    except Exception:
+                        break
+                while not temp.empty():
+                    self.fastProcessQueue.put(temp.get_nowait())
+
+            # 2. Kill and immediately evict from _active_processes
             for proc_id, proc in list(self._active_processes.items()):
                 if getattr(proc, 'hostIp', '') == ip:
                     self.killProcess(proc_id)
+                    self._active_processes.pop(proc_id, None)
+
+            # 3. Delete scan data — keep hostObj and note rows
             try:
                 from sqlalchemy import text
                 session = repositoryContainer.hostRepository.dbAdapter.session()
                 try:
-                    session.execute(text("DELETE FROM process_output WHERE id IN (SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM process_matches WHERE process_id IN "
+                        "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM process_output WHERE id IN "
+                        "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
                     session.execute(text("DELETE FROM process WHERE hostIp = :ip"), {"ip": ip})
-                    session.execute(text("DELETE FROM l1ScriptObj WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
-                    session.execute(text("DELETE FROM cve WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
-                    session.execute(text("DELETE FROM portObj WHERE hostId = (SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
-                    # Keep host + notes
+                    session.execute(text(
+                        "DELETE FROM l1ScriptObj WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM cve WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM portObj WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    # Keep hostObj + note rows
                     session.commit()
                 finally:
                     session.close()
