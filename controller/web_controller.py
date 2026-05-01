@@ -2119,6 +2119,64 @@ class WebController:
             return {'action': 'nmap-staged', 'ip': ip}
 
         if action_name == 'rescan':
+            # Clear all duplicate-blocking data before rescanning so checkDuplicate
+            # does not skip any scheduler tools or screenshooter on the new scan.
+            # Rescan = purge scan data (keep host + notes) + start new staged nmap.
+
+            # 1. Drain queue first
+            if hasattr(self, 'fastProcessQueue'):
+                temp = queue_module.Queue()
+                while not self.fastProcessQueue.empty():
+                    try:
+                        p = self.fastProcessQueue.get_nowait()
+                        if getattr(p, 'hostIp', '') != ip:
+                            temp.put(p)
+                    except Exception:
+                        break
+                while not temp.empty():
+                    self.fastProcessQueue.put(temp.get_nowait())
+
+            # 2. Kill and evict active processes for this host
+            for proc_id, proc in list(self._active_processes.items()):
+                if getattr(proc, 'hostIp', '') == ip:
+                    self.killProcess(proc_id)
+                    self._active_processes.pop(proc_id, None)
+
+            # 3. Clear _screenshots_taken so screenshooter re-runs on new ports
+            if hasattr(self, '_screenshots_taken'):
+                self._screenshots_taken = {
+                    k for k in self._screenshots_taken
+                    if not k.startswith(f"{ip}:")
+                }
+
+            # 4. Delete old scan data — keep hostObj and note rows
+            try:
+                from sqlalchemy import text
+                session = repositoryContainer.hostRepository.dbAdapter.session()
+                try:
+                    session.execute(text(
+                        "DELETE FROM process_matches WHERE hostIp = :ip"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM process_output WHERE id IN "
+                        "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
+                    session.execute(text("DELETE FROM process WHERE hostIp = :ip"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM l1ScriptObj WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM cve WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.execute(text(
+                        "DELETE FROM portObj WHERE hostId = "
+                        "(SELECT id FROM hostObj WHERE ip = :ip)"), {"ip": ip})
+                    session.commit()
+                finally:
+                    session.close()
+                log.info(f"[WebController] Rescan: cleared old scan data for {ip}")
+            except Exception as e:
+                log.error(f"[WebController] Rescan pre-clear error: {e}")
+
+            # 5. Start fresh staged nmap
             self.runStagedNmap(ip, discovery=False)
             return {'action': 'rescan', 'ip': ip}
 
