@@ -2123,9 +2123,9 @@ class WebController:
             return {'action': 'rescan', 'ip': ip}
 
         if action_name == 'delete':
-            # Qt6: add to screenshooter blacklist so in-flight screenshots are discarded
-            self._deleted_hosts.add(ip)
-            log.info(f"[WebController] Host {ip} added to _deleted_hosts blacklist")
+            # _deleted_hosts added AFTER successful DB transaction — if the delete
+            # fails the host must not be permanently blacklisted.
+            pass
 
             # 1. Drain the queue FIRST so killProcess()'s internal checkProcessQueue()
             #    call cannot start a newly-queued process for this host.
@@ -2150,14 +2150,13 @@ class WebController:
                     self._active_processes.pop(proc_id, None)
 
             # 3. Delete all process and host data from DB in one transaction.
-            #    process_matches is also deleted so no orphaned match rows remain.
+            #    process_matches is keyed by hostIp (not process_id).
             try:
                 from sqlalchemy import text
                 session = repositoryContainer.hostRepository.dbAdapter.session()
                 try:
                     session.execute(text(
-                        "DELETE FROM process_matches WHERE process_id IN "
-                        "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
+                        "DELETE FROM process_matches WHERE hostIp = :ip"), {"ip": ip})
                     session.execute(text(
                         "DELETE FROM process_output WHERE id IN "
                         "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
@@ -2181,6 +2180,8 @@ class WebController:
                     session.commit()
                 finally:
                     session.close()
+                # Add to screenshooter blacklist only after successful delete
+                self._deleted_hosts.add(ip)
                 log.info(f"[WebController] Deleted host {ip} and all related data")
             except Exception as e:
                 log.error(f"[WebController] Delete host error: {e}")
@@ -2215,8 +2216,7 @@ class WebController:
                 session = repositoryContainer.hostRepository.dbAdapter.session()
                 try:
                     session.execute(text(
-                        "DELETE FROM process_matches WHERE process_id IN "
-                        "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
+                        "DELETE FROM process_matches WHERE hostIp = :ip"), {"ip": ip})
                     session.execute(text(
                         "DELETE FROM process_output WHERE id IN "
                         "(SELECT id FROM process WHERE hostIp = :ip)"), {"ip": ip})
