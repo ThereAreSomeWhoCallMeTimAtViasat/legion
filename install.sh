@@ -159,13 +159,44 @@ apt-get install -y --ignore-missing \
     redis-tools default-mysql-client postgresql-client \
     `# Mail` \
     swaks smtp-user-enum \
-    `# Network legacy (rsh-client may not exist on all distros — OK to skip)` \
+    `# Network legacy` \
     finger \
     `# Misc` \
     net-tools nbtscan \
     2>/dev/null || true   # apt exit code is ignored — missing packages are expected
 
 ok "Security tool packages installed (some may have been skipped on this distro)"
+
+# ── rsh-client / rlogin — install separately with full fallback ───────────────
+# rsh-client is a legitimate Kali package (the upstream Kali legion package
+# depends on it). On some systems the "referred to by another package" error
+# fires if the package index is partially broken.  We try three strategies:
+#   1. Normal install
+#   2. --fix-broken to repair any broken deps first, then retry
+#   3. Fall back to the rsh-redone-client alternative if available
+if dpkg -l rsh-client &>/dev/null 2>&1; then
+    ok "rsh-client already installed"
+else
+    info "Installing rsh-client (legion terminal actions for rsh/rlogin)…"
+    if apt-get install -y rsh-client rlogin 2>/dev/null; then
+        ok "rsh-client + rlogin installed"
+    else
+        info "Standard install failed — trying --fix-broken…"
+        apt-get install -f -y 2>/dev/null || true
+        if apt-get install -y rsh-client 2>/dev/null; then
+            ok "rsh-client installed after --fix-broken"
+        else
+            info "rsh-client unavailable — trying rsh-redone-client as alternative…"
+            if apt-get install -y rsh-redone-client 2>/dev/null; then
+                ok "rsh-redone-client installed as rsh-client alternative"
+            else
+                warn "rsh-client could not be installed on this system."
+                warn "To fix manually:  sudo apt-get install -f && sudo apt-get install rsh-client"
+                warn "The rsh/rlogin terminal actions in Legion will not work until it is installed."
+            fi
+        fi
+    fi
+fi
 
 # =============================================================================
 # 2. Go-based tools
