@@ -4549,29 +4549,64 @@ document.addEventListener('DOMContentLoaded', function() {
                 var btn = document.createElement('button');
                 btn.textContent = item.label + ' ▸';
                 btn.style.cssText = 'display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);font:inherit;padding:4px 12px;cursor:pointer;';
+
+                /* Submenu uses position:fixed + appended to body so the parent
+                   list's overflow-y:auto clipping cannot hide it. */
                 var subDiv = document.createElement('div');
                 subDiv.className = 'ctx-sub';
-                subDiv.style.cssText = 'display:none;position:absolute;left:100%;top:0;background:var(--midlight);border:1px solid var(--border);min-width:180px;box-shadow:2px 4px 8px rgba(0,0,0,.5);';
-                btn.addEventListener('mouseenter', function() {
+                subDiv.style.cssText = 'display:none;position:fixed;z-index:301;' +
+                    'background:var(--midlight);border:1px solid var(--border);' +
+                    'min-width:180px;box-shadow:2px 4px 8px rgba(0,0,0,.5);';
+                document.body.appendChild(subDiv);
+
+                function _positionSub() {
+                    var btnRect = btn.getBoundingClientRect();
                     subDiv.style.display = 'block';
+                    subDiv.style.top  = btnRect.top + 'px';
+                    subDiv.style.left = btnRect.right + 'px';
+                    subDiv.style.right  = 'auto';
+                    subDiv.style.bottom = 'auto';
                     var r = subDiv.getBoundingClientRect();
-                    subDiv.style.left  = (r.right  > window.innerWidth)  ? 'auto' : '100%';
-                    subDiv.style.right = (r.right  > window.innerWidth)  ? '100%' : 'auto';
-                    subDiv.style.top   = (r.bottom > window.innerHeight) ? 'auto' : '0';
-                    subDiv.style.bottom= (r.bottom > window.innerHeight) ? '0'    : 'auto';
+                    if (r.right > window.innerWidth) {
+                        subDiv.style.left  = 'auto';
+                        subDiv.style.right = (window.innerWidth - btnRect.left) + 'px';
+                    }
+                    if (r.bottom > window.innerHeight) {
+                        subDiv.style.top    = 'auto';
+                        subDiv.style.bottom = (window.innerHeight - btnRect.bottom) + 'px';
+                    }
+                }
+
+                /* Show on hover and on click (click stops propagation so the
+                   document dismiss-handler does not kill the whole menu). */
+                btn.addEventListener('mouseenter', _positionSub);
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    if (subDiv.style.display === 'none') { _positionSub(); }
+                    else { subDiv.style.display = 'none'; }
                 });
+                btn.addEventListener('mouseenter', function() {
+                    this.style.background = 'var(--highlight)'; this.style.color = '#fff';
+                });
+                btn.addEventListener('mouseleave', function() {
+                    this.style.background = 'none'; this.style.color = 'var(--text)';
+                });
+
                 sub.addEventListener('mouseleave', function() { subDiv.style.display = 'none'; });
+
                 item.submenu.forEach(function(si) {
                     var sbtn = document.createElement('button');
                     sbtn.textContent = si.label;
                     sbtn.style.cssText = 'display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);font:inherit;padding:4px 12px;cursor:pointer;';
-                    sbtn.addEventListener('click', function() { menu.remove(); onAction(si); });
+                    sbtn.addEventListener('click', function() { subDiv.remove(); menu.remove(); onAction(si); });
                     sbtn.addEventListener('mouseenter', function() { this.style.background='var(--highlight)'; this.style.color='#fff'; });
                     sbtn.addEventListener('mouseleave', function() { this.style.background='none'; this.style.color='var(--text)'; });
                     subDiv.appendChild(sbtn);
                 });
                 sub.appendChild(btn);
-                sub.appendChild(subDiv);
+                /* subDiv is on document.body — clean it up when the main menu is removed */
+                var _origRemove = menu.remove.bind(menu);
+                menu.remove = function() { subDiv.remove(); _origRemove(); };
                 list.appendChild(sub);
             } else {
                 var btn2 = document.createElement('button');
