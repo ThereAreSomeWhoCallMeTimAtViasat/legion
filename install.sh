@@ -189,6 +189,18 @@ sudo apt-get install -y --ignore-missing \
 
 ok "Security tool packages done (some may be skipped on non-Kali)"
 
+# testssl.sh — dedicated install step so it is never silently dropped by --ignore-missing
+if command -v testssl &>/dev/null; then
+    ok "testssl already installed at $(command -v testssl)"
+else
+    info "Installing testssl.sh (apt package name: testssl.sh, binary: testssl)…"
+    if sudo apt-get install -y testssl.sh 2>/dev/null; then
+        ok "testssl.sh installed — binary at $(command -v testssl)"
+    else
+        warn "testssl.sh apt install failed — run manually: sudo apt-get install testssl.sh"
+    fi
+fi
+
 # rsh-client — own call with 3-stage fallback (has dep conflicts on some systems)
 if dpkg -l rsh-client &>/dev/null 2>&1; then
     ok "rsh-client already installed"
@@ -300,27 +312,63 @@ cd "${SCRIPT_DIR}"
 
 info "Installing Flask + Qt6 + shared + AI Python dependencies…"
 
-# mitmproxy (Kali apt) pins asgiref/tornado/urwid/wsproto — causes conflicts.
-# Strategy: normal install first; on failure force --ignore-installed.
+# Kali installs asgiref, tornado, urwid, wsproto as system Debian packages.
+# pip 26 fails with "uninstall-no-record-file" when it tries to upgrade them
+# because Debian packages have no pip RECORD file.
+# Fix: --ignore-installed skips the uninstall step entirely and installs fresh
+# copies to the pip-managed location.  Both copies coexist; Python uses pip's.
+# We do NOT use -q so that "Installing collected packages / Uninstalling X"
+# lines are visible — the user can see exactly what is happening.
+
 PIP_LOG=$(mktemp)
-if sudo python3 -m pip install --break-system-packages -r requirements.txt 2>&1 | tee "$PIP_LOG"; then
+
+info "Running: pip install --break-system-packages --ignore-installed -r requirements.txt"
+echo ""
+
+if sudo python3 -m pip install \
+        --break-system-packages \
+        --ignore-installed \
+        --root-user-action=ignore \
+        -r requirements.txt 2>&1 \
+        | grep -E "^Collecting|^Downloading|Installing collected|Successfully installed|Successfully uninstalled|Attempting uninstall|Found existing|error:|ERROR:|WARNING:|^$" \
+        | tee "$PIP_LOG"; then
     ok "requirements.txt installed"
 else
-    warn "pip install had conflicts (often mitmproxy version pins) — retrying with --ignore-installed…"
-    CONFLICTS=$(grep -oP "(?<=has requirement )\S+(?=,)" "$PIP_LOG" | sort -u | tr '\n' ' ' || true)
-    if [[ -n "$CONFLICTS" ]]; then
-        info "Force-installing conflicting packages: ${CONFLICTS}"
-        # shellcheck disable=SC2086
-        sudo python3 -m pip install --break-system-packages --ignore-installed $CONFLICTS 2>/dev/null || true
-    fi
-    if sudo python3 -m pip install --break-system-packages --ignore-installed \
-            -r requirements.txt 2>&1; then
-        ok "requirements.txt installed (--ignore-installed resolved conflicts)"
+    echo ""
+    warn "pip install exited non-zero — checking error type…"
+
+    # pip 26 + Debian packages: "uninstall-no-record-file"
+    # Retry with --force-reinstall which overwrites without needing to uninstall
+    if grep -q "uninstall-no-record-file\|no-record-file" "$PIP_LOG" 2>/dev/null; then
+        warn "Debian-managed packages blocking pip uninstall — retrying with --force-reinstall…"
+        if sudo python3 -m pip install \
+                --break-system-packages \
+                --ignore-installed \
+                --force-reinstall \
+                --root-user-action=ignore \
+                -r requirements.txt 2>&1 \
+                | grep -E "^Collecting|Installing collected|Successfully installed|error:|ERROR:" \
+                | tee -a "$PIP_LOG"; then
+            ok "requirements.txt installed (--force-reinstall resolved Debian package conflict)"
+        else
+            die "pip install failed after --force-reinstall.\nRun manually:\n  sudo python3 -m pip install --break-system-packages --ignore-installed -r requirements.txt"
+        fi
     else
-        die "pip install failed.  Run manually:\n  sudo python3 -m pip install --break-system-packages -r requirements.txt"
+        die "pip install failed.\nRun manually:\n  sudo python3 -m pip install --break-system-packages --ignore-installed -r requirements.txt"
     fi
 fi
+
+echo ""
 rm -f "$PIP_LOG"
+
+# pip may print "ERROR: pip's dependency resolver does not currently take into
+# account all packages..." followed by mitmproxy version warnings.  This is a
+# cosmetic warning — pip exits 0 and the packages ARE installed correctly.
+# mitmproxy's Kali apt version pins asgiref/tornado/urwid/wsproto; we install
+# pip-managed copies alongside the Debian ones; Python uses the pip copies.
+info "(Note: any 'dependency resolver' ERROR lines above are pip warnings, not failures.)"
+info "  If you see mitmproxy conflict lines, mitmproxy still works as a binary;"
+info "  only its pinned Python packages have been upgraded to versions Legion needs."
 
 info "Verifying critical imports — installing any still missing…"
 for pkg in flask sqlalchemy requests PyQt6.QtCore anthropic; do
