@@ -40,10 +40,16 @@ REAL_USER="${SUDO_USER:-root}"
 REAL_HOME=$(getent passwd "${REAL_USER}" | cut -d: -f6 2>/dev/null || echo "${HOME}")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── Install log — capture everything to a file for the final health check ──────
+INSTALL_LOG="/tmp/legion-install-$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "${INSTALL_LOG}") 2>&1
+echo "Install log: ${INSTALL_LOG}"
+
 echo ""
 echo -e "${BOLD}Legion — Automated Installer${NC}"
 echo -e "  Working directory : ${SCRIPT_DIR}"
 echo -e "  Running as        : root  (real user: ${REAL_USER})"
+echo -e "  Install log       : ${INSTALL_LOG}"
 echo ""
 
 # ── Branch guard ──────────────────────────────────────────────────────────────
@@ -153,7 +159,7 @@ _install_pkg() {
 # =============================================================================
 # 1. apt-get update + install all packages
 # =============================================================================
-step "1/9  apt-get update + install packages"
+step "1/10  apt-get update + install packages"
 
 info "Updating package index…"
 sudo apt-get update -q
@@ -240,7 +246,7 @@ fi
 # =============================================================================
 # 2. Go-based tools
 # =============================================================================
-step "2/9  Go-based tools"
+step "2/10  Go-based tools"
 
 declare -A GO_TOOLS=(
     [pd-httpx]="github.com/projectdiscovery/httpx/cmd/httpx@latest"
@@ -262,7 +268,7 @@ done
 # =============================================================================
 # 3. GitHub binary tools
 # =============================================================================
-step "3/9  GitHub binary tools"
+step "3/10  GitHub binary tools"
 
 if command -v kerbrute &>/dev/null; then
     ok "kerbrute already at $(command -v kerbrute)"
@@ -279,7 +285,7 @@ fi
 # =============================================================================
 # 4. /opt tools
 # =============================================================================
-step "4/9  /opt tools  (jexboss, LeakSearch)"
+step "4/10  /opt tools  (jexboss, LeakSearch)"
 
 if [[ -f /opt/jexboss/jexboss.py ]]; then
     ok "jexboss already at /opt/jexboss"
@@ -336,7 +342,7 @@ fi
 # every package.  The system Python and all Kali tools are completely
 # unaffected.  `pip check` on either side reports zero conflicts.
 # =============================================================================
-step "5/9  Python virtual environment + packages"
+step "5/10  Python virtual environment + packages"
 
 LEGION_VENV=/opt/legion-venv
 cd "${SCRIPT_DIR}"
@@ -418,7 +424,7 @@ ok "Symlink: /usr/local/bin/legion-python3 → ${VENV_PY}"
 # =============================================================================
 # 6. nuclei + templates
 # =============================================================================
-step "6/9  nuclei + templates"
+step "6/10  nuclei + templates"
 
 if command -v nuclei &>/dev/null; then
     ok "nuclei already at $(command -v nuclei)"
@@ -447,7 +453,7 @@ fi
 # =============================================================================
 # 7. geckodriver + Firefox profile
 # =============================================================================
-step "7/9  geckodriver + Firefox profile"
+step "7/10  geckodriver + Firefox profile"
 
 if command -v geckodriver &>/dev/null; then
     ok "geckodriver already at $(command -v geckodriver)  ($(geckodriver --version 2>&1 | head -1))"
@@ -480,7 +486,7 @@ fi
 # =============================================================================
 # 8. Verification + auto-remediation
 # =============================================================================
-step "8/9  Verification + auto-remediation"
+step "8/10  Verification + auto-remediation"
 
 # pytest is needed for the verification tests but is not in requirements.txt
 # (it is a test-only tool, not a Legion runtime dependency).
@@ -579,7 +585,7 @@ fi
 # 9. AI tab setup (optional)
 # =============================================================================
 if ! $SKIP_AI; then
-    step "9/9  AI tab  (Vertex AI — optional)"
+    step "9/10  AI tab  (Vertex AI — optional)"
     echo ""
     echo "  The AI tab uses Anthropic Claude via Google Cloud Vertex AI."
     echo "  Requires a GCP project with the Vertex AI API enabled."
@@ -625,6 +631,322 @@ EOF
         info "  gcloud auth application-default login"
     fi
 fi
+
+# =============================================================================
+# 10. Final environment health check
+# =============================================================================
+step "10/10  Final environment health check"
+set +e   # never abort on a check failure — report everything, let user decide
+
+_CHECK_PASS=0
+_CHECK_WARN=0
+_CHECK_FAIL=0
+
+_chk_ok()   { ok   "$*";   (( _CHECK_PASS++ )) || true; }
+_chk_warn() { warn "$*";   (( _CHECK_WARN++ )) || true; }
+_chk_fail() { fail "$*";   (( _CHECK_FAIL++ )) || true; }
+
+# ── Helper: is this a Docker container? ──────────────────────────────────────
+_in_docker() { [[ -f /.dockerenv ]]; }
+
+# ── Helper: is this a real Kali install? ─────────────────────────────────────
+_on_kali() {
+    [[ -f /etc/os-release ]] && grep -qi kali /etc/os-release
+}
+
+echo ""
+echo -e "  ${BOLD}── Venv structure ──────────────────────────────${NC}"
+
+# 1. Venv directory exists
+if [[ -d "${LEGION_VENV}" ]]; then
+    _chk_ok  "Venv directory exists: ${LEGION_VENV}"
+else
+    _chk_fail "Venv directory MISSING: ${LEGION_VENV}"
+    _chk_fail "  → Re-run: sudo bash install.sh"
+fi
+
+# 2. Venv python3 binary
+if [[ -f "${LEGION_VENV}/bin/python3" ]]; then
+    _chk_ok  "Venv python3 binary present"
+else
+    _chk_fail "Venv python3 binary MISSING: ${LEGION_VENV}/bin/python3"
+fi
+
+# 3. Venv pip binary
+if [[ -f "${LEGION_VENV}/bin/pip" ]]; then
+    _chk_ok  "Venv pip binary present"
+else
+    _chk_fail "Venv pip binary MISSING: ${LEGION_VENV}/bin/pip"
+fi
+
+# 4. sys.prefix is actually the venv (not system python)
+if [[ -f "${VENV_PY}" ]]; then
+    _venv_prefix=$("${VENV_PY}" -c "import sys; print(sys.prefix)" 2>/dev/null || true)
+    if [[ "${_venv_prefix}" == "${LEGION_VENV}" ]]; then
+        _chk_ok  "Venv python sys.prefix = ${LEGION_VENV}"
+    else
+        _chk_fail "Venv python sys.prefix is wrong: '${_venv_prefix}' (expected '${LEGION_VENV}')"
+    fi
+fi
+
+# 5. include-system-site-packages must be false (isolation)
+if [[ -f "${LEGION_VENV}/pyvenv.cfg" ]]; then
+    if grep -q "include-system-site-packages = false" "${LEGION_VENV}/pyvenv.cfg"; then
+        _chk_ok  "Venv is isolated (include-system-site-packages = false)"
+    else
+        _chk_fail "Venv is NOT isolated — system site-packages leak in (pyvenv.cfg)"
+    fi
+fi
+
+# 6. legion-python3 symlink
+if [[ -L /usr/local/bin/legion-python3 ]]; then
+    _link_target=$(readlink /usr/local/bin/legion-python3)
+    if [[ "${_link_target}" == "${LEGION_VENV}/bin/python3" ]]; then
+        _chk_ok  "legion-python3 symlink → ${LEGION_VENV}/bin/python3"
+    else
+        _chk_warn "legion-python3 symlink points to wrong target: ${_link_target}"
+    fi
+else
+    _chk_warn "legion-python3 symlink missing at /usr/local/bin/legion-python3"
+fi
+
+echo ""
+echo -e "  ${BOLD}── Python packages (venv) ──────────────────────${NC}"
+
+# 7. pip check inside venv — zero broken requirements
+if [[ -f "${VENV_PIP}" ]]; then
+    _pip_check_out=$("${VENV_PIP}" check 2>&1)
+    if echo "${_pip_check_out}" | grep -q "No broken requirements"; then
+        _chk_ok  "pip check: No broken requirements in Legion venv"
+    else
+        _chk_warn "pip check found issues in venv:"
+        echo "${_pip_check_out}" | grep -v "^$" | while IFS= read -r ln; do
+            echo "         ${YELLOW}!${NC} ${ln}"
+        done
+    fi
+fi
+
+# 8. Critical package imports from venv
+_FLASK_PKGS=( flask werkzeug anthropic "google.auth" )
+_QT6_PKGS=(  "PyQt6.QtCore" qasync pandas git )
+_SHARED_PKGS=( sqlalchemy six requests urllib3 selenium pyfiglet colorama termcolor rich neotermcolor )
+
+_check_imports() {
+    local label="$1"; shift
+    local pkgs=("$@")
+    local all_ok=true
+    for pkg in "${pkgs[@]}"; do
+        if "${VENV_PY}" -c "import ${pkg}" 2>/dev/null; then
+            : # silent pass
+        else
+            _chk_fail "  import ${pkg} FAILED (${label})"
+            all_ok=false
+        fi
+    done
+    $all_ok && _chk_ok "${label} packages all importable"
+}
+
+[[ -f "${VENV_PY}" ]] && {
+    _check_imports "Flask web mode"  "${_FLASK_PKGS[@]}"
+    _check_imports "Qt6 GUI mode"    "${_QT6_PKGS[@]}"
+    _check_imports "Shared"          "${_SHARED_PKGS[@]}"
+}
+
+# 9. Legion's own modules importable from venv
+if [[ -f "${VENV_PY}" && -f "${SCRIPT_DIR}/legion.py" ]]; then
+    _legion_import_err=$( cd "${SCRIPT_DIR}" && \
+        "${VENV_PY}" -c "
+import sys
+sys.path.insert(0, '.')
+try:
+    from app.web.routes import web_bp
+    from controller.web_controller import WebController
+    from db.SqliteDbAdapter import SqliteDbAdapter
+    print('OK')
+except Exception as e:
+    print(f'FAIL: {e}')
+" 2>&1 )
+    if [[ "${_legion_import_err}" == "OK" ]]; then
+        _chk_ok  "Legion core modules importable (routes, WebController, SqliteDbAdapter)"
+    else
+        _chk_fail "Legion core module import failed: ${_legion_import_err}"
+    fi
+fi
+
+echo ""
+echo -e "  ${BOLD}── Tools ───────────────────────────────────────${NC}"
+
+if _in_docker; then
+    _chk_warn "Docker container detected — tool binary checks skipped"
+elif _on_kali; then
+    # Tools that have been specifically problematic this session
+    _CRITICAL_TOOLS=(
+        nmap masscan hping3
+        feroxbuster gobuster ffuf nikto whatweb
+        sqlmap sslyze sslscan
+        netexec smbmap enum4linux-ng ldapsearch rpcclient smbclient
+        hydra searchsploit eyewitness
+        dnsrecon dnsenum nbtscan
+        snmpwalk onesixtyone
+        impacket-rpcdump
+        ssh-audit
+        redis-cli mysql psql
+        dig finger
+    )
+    _missing_tools=()
+    for _t in "${_CRITICAL_TOOLS[@]}"; do
+        command -v "${_t}" &>/dev/null || _missing_tools+=("${_t}")
+    done
+    if [[ ${#_missing_tools[@]} -eq 0 ]]; then
+        _chk_ok "All critical tool binaries present in PATH"
+    else
+        for _t in "${_missing_tools[@]}"; do
+            _chk_fail "Tool not found in PATH: ${_t}"
+        done
+    fi
+
+    # rsh-client specifically — was a troublesome install this session
+    if command -v rsh &>/dev/null && command -v rlogin &>/dev/null; then
+        _chk_ok  "rsh and rlogin present (rsh-client)"
+    else
+        _chk_warn "rsh / rlogin not found — rsh-client or rsh-redone-client may be missing"
+        _chk_warn "  → sudo apt-get install rsh-redone-client"
+    fi
+
+    # testssl — package is testssl.sh, binary is testssl
+    if command -v testssl &>/dev/null; then
+        _chk_ok  "testssl present (package: testssl.sh)"
+    else
+        _chk_fail "testssl not found — package name is testssl.sh (not testssl)"
+        _chk_fail "  → sudo apt-get install testssl.sh"
+    fi
+
+    # Go tools
+    _GO_TOOLS=( pd-httpx katana gau waybackurls nomore403 urlfinder )
+    _missing_go=()
+    for _t in "${_GO_TOOLS[@]}"; do
+        command -v "${_t}" &>/dev/null || _missing_go+=("${_t}")
+    done
+    if [[ ${#_missing_go[@]} -eq 0 ]]; then
+        _chk_ok  "All Go tools present in PATH"
+    else
+        for _t in "${_missing_go[@]}"; do
+            _chk_warn "Go tool not found: ${_t} (run: sudo bash install.sh to reinstall Go tools)"
+        done
+    fi
+
+    # /opt scripts
+    [[ -f /opt/LeakSearch/LeakSearch.py ]] \
+        && _chk_ok  "/opt/LeakSearch/LeakSearch.py present" \
+        || _chk_warn "/opt/LeakSearch/LeakSearch.py missing — run: sudo bash install.sh"
+    [[ -f /opt/jexboss/jexboss.py ]] \
+        && _chk_ok  "/opt/jexboss/jexboss.py present" \
+        || _chk_warn "/opt/jexboss/jexboss.py missing — run: sudo bash install.sh"
+else
+    _chk_warn "Not a Kali install — tool binary checks skipped"
+fi
+
+echo ""
+echo -e "  ${BOLD}── Install log analysis ────────────────────────${NC}"
+echo    "     Log file: ${INSTALL_LOG}"
+echo ""
+
+# Scan the install log for known error patterns from this session's troubleshooting
+_LOG_ISSUES=0
+
+_log_check() {
+    local description="$1"
+    local pattern="$2"
+    local fix="$3"
+    if grep -qE "${pattern}" "${INSTALL_LOG}" 2>/dev/null; then
+        _chk_warn "LOG: ${description}"
+        _chk_warn "     Fix: ${fix}"
+        (( _LOG_ISSUES++ )) || true
+    fi
+}
+
+_log_check \
+    "ensurepip not available — python3-venv was missing during install" \
+    "ensurepip is not available|No module named ensurepip" \
+    "sudo apt-get install python3-venv"
+
+_log_check \
+    "pip dependency resolver conflict (likely mitmproxy/Kali tool)" \
+    "dependency resolver does not currently|ResolutionImpossible|Cannot install.*and.*because" \
+    "Conflicts are expected on Kali — Legion venv isolates them. Run: /opt/legion-venv/bin/pip check"
+
+_log_check \
+    "pip uninstall-no-record-file (Debian-managed package conflict)" \
+    "uninstall-no-record-file|no-record-file" \
+    "Use --ignore-installed flag or install into the venv instead of system Python"
+
+_log_check \
+    "'No module named pytest' — pytest missing from venv during verification" \
+    "No module named pytest" \
+    "sudo /opt/legion-venv/bin/pip install pytest"
+
+_log_check \
+    "rsh-client install conflict" \
+    "rsh-client.*referred by|referred by.*rsh-client" \
+    "sudo apt-get install rsh-redone-client"
+
+_log_check \
+    "testssl package not found (correct name is testssl.sh)" \
+    "Unable to locate package testssl[^.]|testssl: command not found" \
+    "sudo apt-get install testssl.sh"
+
+_log_check \
+    "Go not installed — Go tools (pd-httpx, katana, gau, etc.) were skipped" \
+    "go: command not found|golang.*not installed|go install.*failed" \
+    "sudo apt-get install golang-go  # or snap install go --classic"
+
+_log_check \
+    "Address already in use — another Legion instance was running on that port" \
+    "Address already in use|OSError.*98.*address already" \
+    "sudo pkill -f legion.py  # then retry"
+
+_log_check \
+    "geckodriver not found — Selenium tests will fail" \
+    "geckodriver.*not found|No such file.*geckodriver" \
+    "Install was attempted in step 7; check: ls -la /usr/local/bin/geckodriver"
+
+_log_check \
+    "Branch check failed — wrong git branch (should be flask-clean)" \
+    "WARNING.*not on flask-clean|wrong branch" \
+    "sudo git checkout flask-clean"
+
+_log_check \
+    "process_matches wrong column — old bug, should be fixed in current code" \
+    "no such column: process_id.*process_matches|OperationalError.*process_id" \
+    "Update to latest flask-clean branch: sudo git pull"
+
+if [[ $_LOG_ISSUES -eq 0 ]]; then
+    _chk_ok "No known error patterns found in install log"
+fi
+
+# ── Final summary ─────────────────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}── Health check summary ────────────────────────${NC}"
+echo ""
+echo -e "  ${GREEN}✓${NC} Passed  : ${_CHECK_PASS}"
+if [[ $_CHECK_WARN -gt 0 ]]; then
+    echo -e "  ${YELLOW}!${NC} Warnings: ${_CHECK_WARN}"
+fi
+if [[ $_CHECK_FAIL -gt 0 ]]; then
+    echo -e "  ${RED}✗${NC} Failed  : ${_CHECK_FAIL}"
+fi
+echo ""
+if [[ $_CHECK_FAIL -eq 0 && $_CHECK_WARN -eq 0 ]]; then
+    echo -e "  ${GREEN}${BOLD}Environment is fully healthy.${NC}"
+elif [[ $_CHECK_FAIL -eq 0 ]]; then
+    echo -e "  ${YELLOW}${BOLD}Environment is functional with warnings — review items above.${NC}"
+else
+    echo -e "  ${RED}${BOLD}${_CHECK_FAIL} check(s) failed — review items above before running Legion.${NC}"
+fi
+echo ""
+echo -e "  Full install log saved to: ${INSTALL_LOG}"
+
+set -e
 
 # =============================================================================
 # Done
