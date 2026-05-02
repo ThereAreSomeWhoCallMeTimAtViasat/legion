@@ -169,8 +169,7 @@ sudo bash install.sh
 
 | Flag | Effect |
 |---|---|
-| `--no-tools` | Skip system security tools (install Python packages only) |
-| `--no-ai` | Skip the Vertex AI setup prompt |
+| `--no-ai` | Skip the Vertex AI / gcloud setup prompt at the end |
 
 ---
 
@@ -222,37 +221,38 @@ If this fails, check:
 
 ### Step 3 — Install system security tools
 
-Kali Linux already includes most of the 50+ tools Legion uses (nmap, feroxbuster, netexec, eyewitness, hydra, enum4linux-ng, etc.).  This script installs the ones that are not in Kali's apt repos:
+`install.sh` handles everything in one pass. If you are doing a manual install,
+run it with `sudo` — it installs apt packages, Go binaries, GitHub tools, and
+Python `/opt` tools, all requiring root:
+
+```bash
+sudo bash install.sh --no-ai
+```
+
+What it installs beyond what Kali pre-includes:
 
 | Tool | Method | Purpose |
 |---|---|---|
-| pd-httpx | Go | HTTP technology detection |
-| katana | Go | Web crawler |
-| gau | Go | Passive URL collection |
-| waybackurls | Go | Wayback Machine URL fetch |
-| nomore403 | Go | 403 bypass checker |
-| urlfinder | Go | URL extraction |
-| kerbrute | GitHub binary | Kerberos user enum |
-| rdp-sec-check | apt / GitHub | RDP security audit |
-| jexboss | GitHub clone | JBoss vulnerability scanner |
-| LeakSearch | GitHub clone | Credential leak search |
-| nuclei templates | nuclei CLI | Template download for nuclei scans |
+| `golang-go` | apt | Required for all Go-based tools |
+| `pd-httpx` | Go | HTTP technology detection |
+| `katana` | Go | Web crawler |
+| `gau` | Go | Passive URL collection |
+| `waybackurls` | Go | Wayback Machine URL fetch |
+| `nomore403` | Go | 403 bypass checker |
+| `urlfinder` | Go | URL extraction |
+| `kerbrute` | GitHub binary | Kerberos user enum |
+| `rdp-sec-check` | apt / GitHub Perl | RDP security audit |
+| `jexboss` | `sudo git clone` → `/opt/jexboss` | JBoss vulnerability scanner |
+| `LeakSearch` | `sudo git clone` → `/opt/LeakSearch` | Credential leak search |
+| `nuclei templates` | `nuclei -update-templates` | Required before nuclei can scan |
 
-```bash
-sudo bash install_tools.sh
-```
-
-Expected runtime: 2–10 minutes depending on network speed.
-
-**Verify Go is installed first** — the script needs it:
-```bash
-go version          # should show go1.20 or later
-# If not: sudo apt-get install golang-go
-```
+All individual install commands inside the script run with `sudo` — apt-get,
+git clone, pip install, go install, curl, cp, chmod.  Expected runtime:
+5–15 minutes depending on network speed.
 
 **Verify individual tools after install:**
 ```bash
-for t in pd-httpx katana gau waybackurls nomore403 urlfinder kerbrute rdp-sec-check; do
+for t in pd-httpx katana gau waybackurls nomore403 urlfinder kerbrute nuclei ssh-audit; do
     command -v $t && echo "✓ $t" || echo "✗ $t — missing"
 done
 ```
@@ -265,7 +265,8 @@ done
 ```bash
 # Find the latest release at https://github.com/mozilla/geckodriver/releases
 GECKODRIVER_VERSION="v0.35.0"
-curl -fsSL "https://github.com/mozilla/geckodriver/releases/download/${GECKODRIVER_VERSION}/geckodriver-${GECKODRIVER_VERSION}-linux64.tar.gz" \
+sudo curl -fsSL \
+    "https://github.com/mozilla/geckodriver/releases/download/${GECKODRIVER_VERSION}/geckodriver-${GECKODRIVER_VERSION}-linux64.tar.gz" \
     | sudo tar xz -C /usr/local/bin
 sudo chmod +x /usr/local/bin/geckodriver
 geckodriver --version   # verify
@@ -320,7 +321,9 @@ tests/test_requirements.py::test_kali_apt_tool_present[nmap] PASSED
 93 passed in ~45s
 ```
 
-If some tool binary tests fail, run `sudo bash install_tools.sh` and try again.
+If some tool binary tests fail, run `sudo bash install.sh --no-ai` — step 8 of
+the installer automatically detects failed tests, installs the missing tools,
+and retries up to three times.
 
 ---
 
