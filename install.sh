@@ -28,6 +28,14 @@ done
 
 [[ $EUID -eq 0 ]] || die "Run with sudo:  sudo bash $0"
 
+# In Docker / root-only environments, sudo is not installed — define a shim
+# so every 'sudo cmd' in this script just runs 'cmd' directly.
+if ! command -v sudo &>/dev/null; then
+    sudo() { "$@"; }
+    export -f sudo
+    info "sudo not found — running as root, shim active"
+fi
+
 REAL_USER="${SUDO_USER:-root}"
 REAL_HOME=$(getent passwd "${REAL_USER}" | cut -d: -f6 2>/dev/null || echo "${HOME}")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
