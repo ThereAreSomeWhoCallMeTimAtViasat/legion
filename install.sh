@@ -39,18 +39,26 @@ echo -e "  Running as        : root  (real user: ${REAL_USER})"
 echo ""
 
 # ── Branch guard ──────────────────────────────────────────────────────────────
-CURRENT_BRANCH=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-if [[ "${CURRENT_BRANCH}" != "flask-clean" ]]; then
-    echo -e "${RED}"
-    echo "  ╔═══════════════════════════════════════════════════════════════════╗"
-    echo "  ║  WRONG BRANCH: you are on '${CURRENT_BRANCH}'                          "
-    echo "  ║  The Flask web UI lives on the 'flask-clean' branch.             ║"
-    echo "  ║  Fix:  git checkout flask-clean && sudo bash install.sh          ║"
-    echo "  ╚═══════════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    exit 1
+# git may not be installed yet in a fresh container — skip the check if absent.
+if ! command -v git &>/dev/null; then
+    warn "git not installed yet — skipping branch check (will install in step 1)"
+else
+    CURRENT_BRANCH=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    if [[ "${CURRENT_BRANCH}" == "unknown" ]]; then
+        warn "Cannot determine git branch — skipping branch check"
+    elif [[ "${CURRENT_BRANCH}" != "flask-clean" ]]; then
+        echo -e "${RED}"
+        echo "  ╔═══════════════════════════════════════════════════════════════════╗"
+        echo "  ║  WRONG BRANCH: you are on '${CURRENT_BRANCH}'                          "
+        echo "  ║  The Flask web UI lives on the 'flask-clean' branch.             ║"
+        echo "  ║  Fix:  sudo git checkout flask-clean && sudo bash install.sh     ║"
+        echo "  ╚═══════════════════════════════════════════════════════════════════╝"
+        echo -e "${NC}"
+        exit 1
+    else
+        ok "Branch: ${CURRENT_BRANCH}"
+    fi
 fi
-ok "Branch: ${CURRENT_BRANCH}"
 
 # =============================================================================
 # Shared helpers (declared early so step 8 can call them too)
