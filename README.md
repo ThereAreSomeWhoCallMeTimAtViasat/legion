@@ -160,7 +160,7 @@ sudo git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimA
 cd legion
 
 # Confirm you are on the right branch before continuing
-git branch        # should show: * flask-clean
+sudo git branch        # should show: * flask-clean
 
 sudo bash install.sh
 ```
@@ -190,11 +190,11 @@ sudo git clone --branch flask-clean \
 cd legion
 
 # Verify you are on the right branch before doing anything else
-git branch
+sudo git branch
 # Output must show:   * flask-clean
 # If it shows master or anything else, run:  sudo git checkout flask-clean
 
-git log --oneline -3
+sudo git log --oneline -3
 # Should show recent commits starting with "v10.1xx" version tags
 ```
 
