@@ -156,7 +156,7 @@ The automated installer handles everything in one step: Python packages, system 
 > will clone the wrong codebase and `python3 legion.py --web` will not exist.
 
 ```bash
-git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+sudo git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 
 # Confirm you are on the right branch before continuing
@@ -185,14 +185,14 @@ not have `--web` mode, `install.sh`, or `requirements.txt` in the correct state.
 
 ```bash
 # --branch flask-clean is mandatory
-git clone --branch flask-clean \
+sudo git clone --branch flask-clean \
     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 
 # Verify you are on the right branch before doing anything else
 git branch
 # Output must show:   * flask-clean
-# If it shows master or anything else, run:  git checkout flask-clean
+# If it shows master or anything else, run:  sudo git checkout flask-clean
 
 git log --oneline -3
 # Should show recent commits starting with "v10.1xx" version tags
@@ -247,7 +247,7 @@ What it installs beyond what Kali pre-includes:
 | `nuclei templates` | `nuclei -update-templates` | Required before nuclei can scan |
 
 All individual install commands inside the script run with `sudo` — apt-get,
-git clone, pip install, go install, curl, cp, chmod.  Expected runtime:
+sudo git clone, sudo pip install, go install, curl, cp, chmod.  Expected runtime:
 5–15 minutes depending on network speed.
 
 **Verify individual tools after install:**
@@ -335,7 +335,7 @@ Docker gives you Legion plus all tools in a self-contained image. Scanning still
 
 ```bash
 # --branch flask-clean is required (master is the Qt5 desktop app, not web)
-git clone --branch flask-clean \
+sudo git clone --branch flask-clean \
     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 
