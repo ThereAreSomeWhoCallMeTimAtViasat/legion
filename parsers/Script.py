@@ -7,7 +7,18 @@ __version__=  '0.1'
 __modified_by = 'ketchup'
 
 import parsers.CVE as CVE
-from pyExploitDb import PyExploitDb
+
+# pyExploitDb ships as 'pyExploitDb' (apt/CamelCase) or 'pyexploitdb' (pip/lowercase).
+# Both expose the same PyExploitDb class.  Fall back gracefully if neither is installed.
+PY_EXPLOIT_DB_IMPORT_ERROR = None
+try:
+    from pyExploitDb import PyExploitDb
+except ImportError:
+    try:
+        from pyexploitdb import PyExploitDb
+    except ImportError as _e:
+        PyExploitDb = None
+        PY_EXPLOIT_DB_IMPORT_ERROR = str(_e)
 
 log = getAppLogger()
 
