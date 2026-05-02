@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 LEGION (https://shanewilliamscott.com)
 Copyright (c) 2025 Shane William Scott
@@ -16,6 +16,16 @@ Copyright (c) 2025 Shane William Scott
 
 Author(s): Shane Scott (sscott@shanewilliamscott.com), Dmitriy Dubson (d.dubson@gmail.com)
 """
+# Self-bootstrap: if install.sh created a Legion venv and we're not already
+# running inside it, re-exec with the venv python.  This makes
+# "sudo python3 legion.py --web" work without any changes to user habits.
+# Uses sys.prefix (not realpath) because venv python often symlinks to the
+# same underlying binary as system python — only sys.prefix differs reliably.
+import sys, os as _os
+_VENV = '/opt/legion-venv'
+if _os.path.isfile(f'{_VENV}/bin/python3') and not sys.prefix.startswith(_VENV):
+    _os.execv(f'{_VENV}/bin/python3', [f'{_VENV}/bin/python3'] + sys.argv)
+
 import shutil
 
 from app.ApplicationInfo import getConsoleLogo

@@ -59,6 +59,17 @@ $RUN_UNIT || $RUN_SELENIUM || $RUN_LIVE || $RUN_STORIES || { RUN_UNIT=true; RUN_
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ── Python interpreter — use venv when available ───────────────────────────────
+# install.sh creates /opt/legion-venv with all Legion packages isolated from
+# Kali system tools.  Fall back to plain python3 for dev environments without
+# the venv (e.g. CI, Docker Dockerfile.test which installs packages directly).
+LEGION_VENV=/opt/legion-venv
+if [[ -f "${LEGION_VENV}/bin/python3" ]]; then
+    PYTHON="${LEGION_VENV}/bin/python3"
+else
+    PYTHON="python3"
+fi
+
 # ── Sync repo legion.conf → live conf before any test run ─────────────────────
 # Tests that use create_test_app() / Settings(AppSettings()) read from the live
 # conf at ~/.local/share/legion/legion.conf.  Without this sync, tests run
@@ -198,9 +209,9 @@ _us_start_servers() {
 
     # --no-prompt: skip the interactive "kill/continue/abort" dialog if another
     # instance is somehow still detected (e.g. from a previous interrupted run)
-    python3 legion.py --web --port "$US_PORT_A" --no-prompt > /tmp/legion-us-a.log 2>&1 &
+    "$PYTHON" legion.py --web --port "$US_PORT_A" --no-prompt > /tmp/legion-us-a.log 2>&1 &
     US_PID_A=$!
-    python3 legion.py --web --port "$US_PORT_B" --no-prompt > /tmp/legion-us-b.log 2>&1 &
+    "$PYTHON" legion.py --web --port "$US_PORT_B" --no-prompt > /tmp/legion-us-b.log 2>&1 &
     US_PID_B=$!
 
     # Wait for both to bind (up to 15 s)
@@ -208,16 +219,16 @@ _us_start_servers() {
     while [[ $waited -lt 15 ]]; do
         sleep 1; waited=$(( waited + 1 ))
         ok_a=$(curl -s --max-time 2 "http://127.0.0.1:${US_PORT_A}/api/snapshot" \
-               | python3 -c "import sys,json; json.load(sys.stdin); print('ok')" 2>/dev/null || true)
+               | "$PYTHON" -c "import sys,json; json.load(sys.stdin); print('ok')" 2>/dev/null || true)
         ok_b=$(curl -s --max-time 2 "http://127.0.0.1:${US_PORT_B}/api/snapshot" \
-               | python3 -c "import sys,json; json.load(sys.stdin); print('ok')" 2>/dev/null || true)
+               | "$PYTHON" -c "import sys,json; json.load(sys.stdin); print('ok')" 2>/dev/null || true)
         [[ "$ok_a" == "ok" && "$ok_b" == "ok" ]] && break
     done
     [[ "$ok_a" != "ok" ]] && echo "  ${YELLOW}WARNING: :${US_PORT_A} did not start in time${NC}" >&2
     [[ "$ok_b" != "ok" ]] && echo "  ${YELLOW}WARNING: :${US_PORT_B} did not start in time${NC}" >&2
 
     # Seed 5085 with a test host
-    python3 - <<'PYEOF' 2>/dev/null
+    "$PYTHON" - <<'PYEOF' 2>/dev/null
 import requests, tempfile, os
 xml = '''<?xml version="1.0"?>
 <nmaprun>
@@ -301,7 +312,7 @@ _gen_reports() {
         while [[ $_t -lt 20 ]]; do
             local _running
             _running=$(curl -s "http://127.0.0.1:${US_PORT_A}/api/snapshot" \
-                | python3 -c "import sys,json; d=json.load(sys.stdin);
+                | "$PYTHON" -c "import sys,json; d=json.load(sys.stdin);
                 print(sum(1 for p in d.get('processes',[]) if p.get('status') in ('Running','Waiting')))" \
                 2>/dev/null || echo "0")
             [[ "$_running" == "0" ]] && break
@@ -311,9 +322,9 @@ _gen_reports() {
         # US55 uses --port-a/--port-b (two-instance test); all others use --port
         local out
         if [[ "$us" == "US55" ]]; then
-            out=$(python3 "$script" --port-a "$US_PORT_A" --port-b "$US_PORT_B" 2>&1)
+            out=$("$PYTHON" "$script" --port-a "$US_PORT_A" --port-b "$US_PORT_B" 2>&1)
         else
-            out=$(python3 "$script" --port "$US_PORT_A" 2>&1)
+            out=$("$PYTHON" "$script" --port "$US_PORT_A" 2>&1)
         fi
         if [[ $? -eq 0 ]]; then
             local html; html=$(echo "$out" | grep "^Report:" | tail -1 | awk '{print $2}')
@@ -331,7 +342,7 @@ _gen_reports() {
             [[ -f "$script" ]] || continue
             local us; us=$(basename "$script" .py | sed 's/generate_report_//')
             printf "    %-32s " "${us} (live:${live_target})"
-            local out; out=$(python3 "$script" --port "$US_PORT_A" \
+            local out; out=$("$PYTHON" "$script" --port "$US_PORT_A" \
                              --target "$live_target" 2>&1)
             if [[ $? -eq 0 ]]; then
                 local html; html=$(echo "$out" | grep "^Report:" | tail -1 | awk '{print $2}')
@@ -432,7 +443,7 @@ run_unit() {
 
     spinner_start "$name"
     local out rc
-    out=$(sudo python3 "$file" 2>&1); rc=$?
+    out=$(sudo "$PYTHON" "$file" 2>&1); rc=$?
     spinner_stop
 
     local rl secs p f s
@@ -486,7 +497,7 @@ run_pytest() {
 
     spinner_start "$name"
     local out rc
-    out=$(sudo python3 -m pytest "${args[@]}" --tb=no -q 2>&1); rc=$?
+    out=$(sudo "$PYTHON" -m pytest "${args[@]}" --tb=no -q 2>&1); rc=$?
     spinner_stop
 
     local secs=$(( $(date +%s) - t0 ))
@@ -593,7 +604,7 @@ if $RUN_LIVE; then
     local_name="test_terminal T7  target=$LIVE_TARGET"
     t0=$(date +%s)
     spinner_start "$local_name"
-    t7_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" python3 tests/test_terminal.py 2>&1) || true
+    t7_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" "$PYTHON" tests/test_terminal.py 2>&1) || true
     spinner_stop
     t7_line=$(echo "$t7_out" | grep "^Results:" | tail -1)
     t7_p=$(_extract "$t7_line" "passed")
@@ -620,7 +631,7 @@ if $RUN_LIVE; then
                          LEGION_SSH_PORT=22 \
                          LEGION_MYSQL_PORT=3306 \
                          LEGION_FTP_PORT=21 \
-                    python3 tests/test_export_and_hydra.py 2>&1) || true
+                    "$PYTHON" tests/test_export_and_hydra.py 2>&1) || true
     spinner_stop
     hydra_line=$(echo "$hydra_out" | grep "^Results:" | tail -1)
     hydra_p=$(_extract "$hydra_line" "passed")
@@ -692,7 +703,7 @@ if $RUN_LIVE; then
     # Run pytest with -v --tb=short so each test result prints immediately.
     # tee streams to terminal AND saves to log for summary parsing.
     sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
-        python3 -m pytest tests/test_selenium_ui.py -m live \
+        "$PYTHON" -m pytest tests/test_selenium_ui.py -m live \
         -v --tb=short --no-header 2>&1 | tee "$_live_log"
     _live_rc=${PIPESTATUS[0]}
 
@@ -741,7 +752,7 @@ if $RUN_STORIES; then
         pkill -f "firefox" 2>/dev/null || true; sleep 2
 
         # Reseed the server (may have been reset during offline run)
-        python3 - <<'PYEOF' 2>/dev/null
+        "$PYTHON" - <<'PYEOF' 2>/dev/null
 import requests, tempfile, os
 xml = '''<?xml version="1.0"?>
 <nmaprun>
@@ -767,7 +778,7 @@ PYEOF
         spinner_start "$_us_live_name"
         _us_live_out=$(
             sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
-                python3 -m pytest tests/test_user_stories.py \
+                "$PYTHON" -m pytest tests/test_user_stories.py \
                 -k "NmapProgress or ScreenshotTab" \
                 --tb=no -q 2>&1) || true
         spinner_stop
