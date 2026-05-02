@@ -450,6 +450,13 @@ else
         || warn "nuclei template download failed — run: nuclei -update-templates"
 fi
 
+# Fix ownership — templates downloaded as root but should be owned by the real user
+if [[ -d "$NUCLEI_DIR" && "${REAL_USER}" != "root" ]]; then
+    sudo chown -R "${REAL_USER}:${REAL_USER}" "$NUCLEI_DIR" 2>/dev/null \
+        && ok "nuclei templates ownership set to ${REAL_USER}" \
+        || warn "could not chown nuclei templates — run: sudo chown -R ${REAL_USER}:${REAL_USER} ${NUCLEI_DIR}"
+fi
+
 # =============================================================================
 # 7. geckodriver + Firefox profile
 # =============================================================================
@@ -633,156 +640,260 @@ EOF
 fi
 
 # =============================================================================
-# 10. Final environment health check
+# 10. Final environment health check + self-healing
 # =============================================================================
 step "10/10  Final environment health check"
-set +e   # never abort on a check failure — report everything, let user decide
+set +e   # never abort — check and heal everything, then summarise
 
 _CHECK_PASS=0
 _CHECK_WARN=0
 _CHECK_FAIL=0
+_HEAL_COUNT=0
 
-_chk_ok()   { ok   "$*";   (( _CHECK_PASS++ )) || true; }
-_chk_warn() { warn "$*";   (( _CHECK_WARN++ )) || true; }
-_chk_fail() { fail "$*";   (( _CHECK_FAIL++ )) || true; }
+_chk_ok()   { ok   "$*"; (( _CHECK_PASS++ )) || true; }
+_chk_warn() { warn "$*"; (( _CHECK_WARN++ )) || true; }
+_chk_fail() { fail "$*"; (( _CHECK_FAIL++ )) || true; }
+_healed()   { ok   "  HEALED: $*"; (( _HEAL_COUNT++ )) || true; (( _CHECK_FAIL-- )) || true; (( _CHECK_PASS++ )) || true; }
 
-# ── Helper: is this a Docker container? ──────────────────────────────────────
 _in_docker() { [[ -f /.dockerenv ]]; }
+_on_kali()   { [[ -f /etc/os-release ]] && grep -qi kali /etc/os-release; }
 
-# ── Helper: is this a real Kali install? ─────────────────────────────────────
-_on_kali() {
-    [[ -f /etc/os-release ]] && grep -qi kali /etc/os-release
-}
-
+# ── Venv structure ────────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}── Venv structure ──────────────────────────────${NC}"
 
-# 1. Venv directory exists
-if [[ -d "${LEGION_VENV}" ]]; then
-    _chk_ok  "Venv directory exists: ${LEGION_VENV}"
+# 1. Venv directory + python3 + pip — if missing, recreate the whole venv
+if [[ ! -d "${LEGION_VENV}" ]] || [[ ! -f "${LEGION_VENV}/bin/python3" ]] || [[ ! -f "${LEGION_VENV}/bin/pip" ]]; then
+    _chk_fail "Venv incomplete or missing at ${LEGION_VENV} — rebuilding…"
+    sudo apt-get install -y python3-venv -q 2>/dev/null || true
+    sudo rm -rf "${LEGION_VENV}"
+    if sudo python3 -m venv "${LEGION_VENV}" 2>/dev/null; then
+        sudo "${LEGION_VENV}/bin/pip" install --root-user-action=ignore -q --upgrade pip 2>/dev/null || true
+        sudo "${LEGION_VENV}/bin/pip" install --root-user-action=ignore -q -r "${SCRIPT_DIR}/requirements.txt" 2>/dev/null \
+            && _healed "Venv rebuilt and packages reinstalled" \
+            || _chk_fail "Venv rebuild: pip install failed — run: sudo bash install.sh"
+    else
+        _chk_fail "Venv rebuild failed — run: sudo apt-get install python3-venv && sudo bash install.sh"
+    fi
 else
-    _chk_fail "Venv directory MISSING: ${LEGION_VENV}"
-    _chk_fail "  → Re-run: sudo bash install.sh"
+    _chk_ok "Venv directory, python3, pip all present"
 fi
 
-# 2. Venv python3 binary
-if [[ -f "${LEGION_VENV}/bin/python3" ]]; then
-    _chk_ok  "Venv python3 binary present"
-else
-    _chk_fail "Venv python3 binary MISSING: ${LEGION_VENV}/bin/python3"
-fi
-
-# 3. Venv pip binary
-if [[ -f "${LEGION_VENV}/bin/pip" ]]; then
-    _chk_ok  "Venv pip binary present"
-else
-    _chk_fail "Venv pip binary MISSING: ${LEGION_VENV}/bin/pip"
-fi
-
-# 4. sys.prefix is actually the venv (not system python)
+# 2. sys.prefix is the venv (not system python sneaking through)
 if [[ -f "${VENV_PY}" ]]; then
     _venv_prefix=$("${VENV_PY}" -c "import sys; print(sys.prefix)" 2>/dev/null || true)
     if [[ "${_venv_prefix}" == "${LEGION_VENV}" ]]; then
-        _chk_ok  "Venv python sys.prefix = ${LEGION_VENV}"
+        _chk_ok  "Venv python sys.prefix correct"
     else
-        _chk_fail "Venv python sys.prefix is wrong: '${_venv_prefix}' (expected '${LEGION_VENV}')"
+        _chk_fail "Venv python sys.prefix is '${_venv_prefix}' — expected '${LEGION_VENV}'"
     fi
 fi
 
-# 5. include-system-site-packages must be false (isolation)
+# 3. Venv is isolated (system site-packages must NOT leak in)
 if [[ -f "${LEGION_VENV}/pyvenv.cfg" ]]; then
     if grep -q "include-system-site-packages = false" "${LEGION_VENV}/pyvenv.cfg"; then
-        _chk_ok  "Venv is isolated (include-system-site-packages = false)"
+        _chk_ok "Venv is isolated (include-system-site-packages = false)"
     else
-        _chk_fail "Venv is NOT isolated — system site-packages leak in (pyvenv.cfg)"
+        _chk_fail "Venv is NOT isolated — rebuilding with isolation…"
+        sudo rm -rf "${LEGION_VENV}"
+        sudo python3 -m venv "${LEGION_VENV}" 2>/dev/null \
+            && _healed "Venv rebuilt with isolation" \
+            || _chk_fail "Venv rebuild failed"
     fi
 fi
 
-# 6. legion-python3 symlink
+# 4. legion-python3 symlink
 if [[ -L /usr/local/bin/legion-python3 ]]; then
     _link_target=$(readlink /usr/local/bin/legion-python3)
     if [[ "${_link_target}" == "${LEGION_VENV}/bin/python3" ]]; then
-        _chk_ok  "legion-python3 symlink → ${LEGION_VENV}/bin/python3"
+        _chk_ok  "legion-python3 symlink correct"
     else
-        _chk_warn "legion-python3 symlink points to wrong target: ${_link_target}"
+        _chk_fail "legion-python3 symlink wrong target '${_link_target}' — fixing…"
+        sudo ln -sf "${VENV_PY}" /usr/local/bin/legion-python3 \
+            && _healed "legion-python3 symlink corrected" \
+            || _chk_fail "Could not fix symlink"
     fi
 else
-    _chk_warn "legion-python3 symlink missing at /usr/local/bin/legion-python3"
+    _chk_fail "legion-python3 symlink missing — creating…"
+    sudo ln -sf "${VENV_PY}" /usr/local/bin/legion-python3 \
+        && _healed "legion-python3 symlink created" \
+        || _chk_fail "Could not create symlink"
 fi
 
+# ── Python packages ───────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}── Python packages (venv) ──────────────────────${NC}"
 
-# 7. pip check inside venv — zero broken requirements
+# 5. pip check — zero broken requirements
 if [[ -f "${VENV_PIP}" ]]; then
     _pip_check_out=$("${VENV_PIP}" check 2>&1)
     if echo "${_pip_check_out}" | grep -q "No broken requirements"; then
-        _chk_ok  "pip check: No broken requirements in Legion venv"
+        _chk_ok "pip check: No broken requirements in venv"
     else
-        _chk_warn "pip check found issues in venv:"
-        echo "${_pip_check_out}" | grep -v "^$" | while IFS= read -r ln; do
-            echo "         ${YELLOW}!${NC} ${ln}"
+        _chk_warn "pip check found issues — attempting reinstall of requirements…"
+        sudo "${VENV_PIP}" install --root-user-action=ignore -q -r "${SCRIPT_DIR}/requirements.txt" 2>/dev/null || true
+        _pip_check_out2=$("${VENV_PIP}" check 2>&1)
+        if echo "${_pip_check_out2}" | grep -q "No broken requirements"; then
+            _healed "pip check now clean after reinstall"
+        else
+            echo "${_pip_check_out2}" | while IFS= read -r ln; do [[ -n "$ln" ]] && warn "  ${ln}"; done
+            _chk_warn "pip check still has issues — may be benign on Kali with system tools"
+        fi
+    fi
+fi
+
+# 6. Package imports — check each group, pip-install any that fail
+_try_import_heal() {
+    local pkg="$1" pip_name="$2"
+    if ! "${VENV_PY}" -c "import ${pkg}" 2>/dev/null; then
+        warn "  import ${pkg} failed — installing ${pip_name}…"
+        sudo "${VENV_PIP}" install --root-user-action=ignore -q "${pip_name}" 2>/dev/null || true
+        if "${VENV_PY}" -c "import ${pkg}" 2>/dev/null; then
+            _healed "import ${pkg} now works"
+        else
+            _chk_fail "import ${pkg} still failing after pip install ${pip_name}"
+        fi
+    fi
+}
+
+if [[ -f "${VENV_PY}" ]]; then
+    _all_pkgs_ok=true
+
+    for _pkg_pair in \
+        "flask:flask" "werkzeug:werkzeug" "anthropic:anthropic" "google.auth:google-auth" \
+        "PyQt6.QtCore:PyQt6" "qasync:qasync" "pandas:pandas" "git:GitPython" \
+        "sqlalchemy:sqlalchemy" "six:six" "requests:requests" "urllib3:urllib3" \
+        "selenium:selenium" "pyfiglet:pyfiglet" "colorama:colorama" \
+        "termcolor:termcolor" "rich:rich" "neotermcolor:neotermcolor" \
+        "pyExploitDb:pyExploitDb" "pyShodan:pyShodan"
+    do
+        _pkg="${_pkg_pair%%:*}"
+        _pip="${_pkg_pair##*:}"
+        if ! "${VENV_PY}" -c "import ${_pkg}" 2>/dev/null; then
+            _all_pkgs_ok=false
+            _try_import_heal "${_pkg}" "${_pip}"
+        fi
+    done
+
+    $all_pkgs_ok 2>/dev/null || true
+    # Final pass — report any still failing
+    _still_fail=()
+    for _pkg_pair in \
+        "flask:flask" "werkzeug:werkzeug" "anthropic:anthropic" "google.auth:google-auth" \
+        "PyQt6.QtCore:PyQt6" "qasync:qasync" "pandas:pandas" "git:GitPython" \
+        "sqlalchemy:sqlalchemy" "six:six" "requests:requests" "urllib3:urllib3" \
+        "selenium:selenium" "pyfiglet:pyfiglet" "colorama:colorama" \
+        "termcolor:termcolor" "rich:rich" "neotermcolor:neotermcolor" \
+        "pyExploitDb:pyExploitDb" "pyShodan:pyShodan"
+    do
+        _pkg="${_pkg_pair%%:*}"
+        "${VENV_PY}" -c "import ${_pkg}" 2>/dev/null || _still_fail+=("${_pkg}")
+    done
+    if [[ ${#_still_fail[@]} -eq 0 ]]; then
+        _chk_ok "All required Python packages importable from venv"
+    else
+        for _p in "${_still_fail[@]}"; do
+            _chk_fail "import ${_p} still failing — run: sudo /opt/legion-venv/bin/pip install ${_p}"
         done
     fi
 fi
 
-# 8. Critical package imports from venv
-_FLASK_PKGS=( flask werkzeug anthropic "google.auth" )
-_QT6_PKGS=(  "PyQt6.QtCore" qasync pandas git )
-_SHARED_PKGS=( sqlalchemy six requests urllib3 selenium pyfiglet colorama termcolor rich neotermcolor )
-
-_check_imports() {
-    local label="$1"; shift
-    local pkgs=("$@")
-    local all_ok=true
-    for pkg in "${pkgs[@]}"; do
-        if "${VENV_PY}" -c "import ${pkg}" 2>/dev/null; then
-            : # silent pass
-        else
-            _chk_fail "  import ${pkg} FAILED (${label})"
-            all_ok=false
-        fi
-    done
-    $all_ok && _chk_ok "${label} packages all importable"
-}
-
-[[ -f "${VENV_PY}" ]] && {
-    _check_imports "Flask web mode"  "${_FLASK_PKGS[@]}"
-    _check_imports "Qt6 GUI mode"    "${_QT6_PKGS[@]}"
-    _check_imports "Shared"          "${_SHARED_PKGS[@]}"
-}
-
-# 9. Legion's own modules importable from venv
+# 7. Legion core modules importable (using correct class names from the source)
 if [[ -f "${VENV_PY}" && -f "${SCRIPT_DIR}/legion.py" ]]; then
-    _legion_import_err=$( cd "${SCRIPT_DIR}" && \
-        "${VENV_PY}" -c "
+    _legion_out=$( cd "${SCRIPT_DIR}" && "${VENV_PY}" -c "
+import sys, traceback
+sys.path.insert(0, '.')
+errors = []
+tests = [
+    ('from db.SqliteDbAdapter import Database',           'db.SqliteDbAdapter.Database'),
+    ('from controller.web_controller import WebController','controller.web_controller.WebController'),
+    ('from app.web.routes import web_bp',                 'app.web.routes.web_bp'),
+]
+for stmt, label in tests:
+    try:
+        exec(stmt)
+    except Exception as e:
+        errors.append(f'{label}: {e}')
+if errors:
+    for e in errors: print(f'FAIL: {e}')
+else:
+    print('OK')
+" 2>&1 )
+    if [[ "${_legion_out}" == "OK" ]]; then
+        _chk_ok "Legion core modules importable (Database, WebController, web_bp)"
+    else
+        # Attempt self-heal: reinstall requirements and retry once
+        _chk_fail "Legion core module import failed:"
+        echo "${_legion_out}" | while IFS= read -r ln; do [[ -n "$ln" ]] && fail "    ${ln}"; done
+        info "  Attempting heal: reinstalling requirements into venv…"
+        sudo "${VENV_PIP}" install --root-user-action=ignore -q -r "${SCRIPT_DIR}/requirements.txt" 2>/dev/null || true
+        _legion_out2=$( cd "${SCRIPT_DIR}" && "${VENV_PY}" -c "
 import sys
 sys.path.insert(0, '.')
-try:
-    from app.web.routes import web_bp
-    from controller.web_controller import WebController
-    from db.SqliteDbAdapter import SqliteDbAdapter
-    print('OK')
-except Exception as e:
-    print(f'FAIL: {e}')
+errors = []
+for stmt in [
+    'from db.SqliteDbAdapter import Database',
+    'from controller.web_controller import WebController',
+    'from app.web.routes import web_bp',
+]:
+    try: exec(stmt)
+    except Exception as e: errors.append(str(e))
+print('OK' if not errors else 'FAIL: ' + '; '.join(errors))
 " 2>&1 )
-    if [[ "${_legion_import_err}" == "OK" ]]; then
-        _chk_ok  "Legion core modules importable (routes, WebController, SqliteDbAdapter)"
-    else
-        _chk_fail "Legion core module import failed: ${_legion_import_err}"
+        if [[ "${_legion_out2}" == "OK" ]]; then
+            _healed "Legion core modules now importable after reinstall"
+        else
+            _chk_fail "Legion core modules still failing: ${_legion_out2}"
+            _chk_fail "  Check: cd ${SCRIPT_DIR} && sudo /opt/legion-venv/bin/python3 -c \"import sys; sys.path.insert(0,'.'); from db.SqliteDbAdapter import Database\""
+        fi
     fi
 fi
 
+# 8. Nuclei templates present and owned by real user
+echo ""
+echo -e "  ${BOLD}── Nuclei templates ────────────────────────────${NC}"
+NUCLEI_CHK_DIR="${REAL_HOME}/.local/nuclei-templates"
+if [[ -d "${NUCLEI_CHK_DIR}" ]]; then
+    _tmpl_count=$(find "${NUCLEI_CHK_DIR}" -name "*.yaml" 2>/dev/null | wc -l)
+    if [[ "${_tmpl_count}" -gt 1000 ]]; then
+        _chk_ok "nuclei templates present (${_tmpl_count} yaml files)"
+    else
+        _chk_warn "nuclei template count low (${_tmpl_count}) — re-downloading…"
+        HOME="${REAL_HOME}" nuclei -update-templates 2>/dev/null \
+            && _healed "nuclei templates updated" \
+            || _chk_warn "nuclei template download failed — run: nuclei -update-templates"
+    fi
+    # Fix ownership
+    if [[ "${REAL_USER}" != "root" ]]; then
+        _owner=$(stat -c '%U' "${NUCLEI_CHK_DIR}" 2>/dev/null || true)
+        if [[ "${_owner}" != "${REAL_USER}" ]]; then
+            _chk_fail "nuclei templates owned by '${_owner}' not '${REAL_USER}' — fixing…"
+            sudo chown -R "${REAL_USER}:${REAL_USER}" "${NUCLEI_CHK_DIR}" \
+                && _healed "nuclei templates ownership corrected to ${REAL_USER}" \
+                || _chk_fail "chown failed — run: sudo chown -R ${REAL_USER}:${REAL_USER} ${NUCLEI_CHK_DIR}"
+        else
+            _chk_ok "nuclei templates owned by ${REAL_USER}"
+        fi
+    else
+        _chk_ok "Running as root — nuclei templates ownership not applicable"
+    fi
+else
+    _chk_fail "nuclei templates directory missing — downloading…"
+    HOME="${REAL_HOME}" nuclei -update-templates 2>/dev/null \
+        && _healed "nuclei templates downloaded" \
+        || _chk_fail "nuclei template download failed — run: nuclei -update-templates"
+fi
+
+# ── Tools (Kali only) ─────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}── Tools ───────────────────────────────────────${NC}"
 
 if _in_docker; then
     _chk_warn "Docker container detected — tool binary checks skipped"
 elif _on_kali; then
-    # Tools that have been specifically problematic this session
     _CRITICAL_TOOLS=(
         nmap masscan hping3
-        feroxbuster gobuster ffuf nikto whatweb
+        feroxbuster gobuster ffuf nikto whatweb wafw00f wpscan
         sqlmap sslyze sslscan
         netexec smbmap enum4linux-ng ldapsearch rpcclient smbclient
         hydra searchsploit eyewitness
@@ -797,70 +908,101 @@ elif _on_kali; then
     for _t in "${_CRITICAL_TOOLS[@]}"; do
         command -v "${_t}" &>/dev/null || _missing_tools+=("${_t}")
     done
-    if [[ ${#_missing_tools[@]} -eq 0 ]]; then
-        _chk_ok "All critical tool binaries present in PATH"
-    else
+    if [[ ${#_missing_tools[@]} -gt 0 ]]; then
+        info "  Missing tools — attempting self-heal via apt…"
         for _t in "${_missing_tools[@]}"; do
-            _chk_fail "Tool not found in PATH: ${_t}"
+            _install_tool "${_t}"
         done
+        # Re-check after heal attempt
+        _still_missing=()
+        for _t in "${_missing_tools[@]}"; do
+            command -v "${_t}" &>/dev/null || _still_missing+=("${_t}")
+        done
+        if [[ ${#_still_missing[@]} -eq 0 ]]; then
+            _healed "All missing tools installed"
+        else
+            for _t in "${_still_missing[@]}"; do
+                _chk_fail "Tool still missing after heal attempt: ${_t}"
+            done
+        fi
+    else
+        _chk_ok "All critical tool binaries present in PATH"
     fi
 
-    # rsh-client specifically — was a troublesome install this session
+    # rsh / rlogin
     if command -v rsh &>/dev/null && command -v rlogin &>/dev/null; then
-        _chk_ok  "rsh and rlogin present (rsh-client)"
+        _chk_ok "rsh and rlogin present"
     else
-        _chk_warn "rsh / rlogin not found — rsh-client or rsh-redone-client may be missing"
-        _chk_warn "  → sudo apt-get install rsh-redone-client"
+        _chk_fail "rsh / rlogin missing — installing rsh-redone-client…"
+        sudo apt-get install -y rsh-redone-client 2>/dev/null \
+            && _healed "rsh-redone-client installed" \
+            || { sudo apt-get install -y rsh-client 2>/dev/null && _healed "rsh-client installed"; } \
+            || _chk_fail "Could not install rsh — try: sudo apt-get install rsh-redone-client"
     fi
 
     # testssl — package is testssl.sh, binary is testssl
     if command -v testssl &>/dev/null; then
-        _chk_ok  "testssl present (package: testssl.sh)"
+        _chk_ok "testssl present"
     else
-        _chk_fail "testssl not found — package name is testssl.sh (not testssl)"
-        _chk_fail "  → sudo apt-get install testssl.sh"
+        _chk_fail "testssl missing (apt package is testssl.sh) — installing…"
+        sudo apt-get install -y testssl.sh 2>/dev/null \
+            && _healed "testssl.sh installed" \
+            || _chk_fail "testssl.sh install failed — try: sudo apt-get install testssl.sh"
     fi
 
-    # Go tools
+    # Go tools — heal individually
     _GO_TOOLS=( pd-httpx katana gau waybackurls nomore403 urlfinder )
     _missing_go=()
     for _t in "${_GO_TOOLS[@]}"; do
         command -v "${_t}" &>/dev/null || _missing_go+=("${_t}")
     done
-    if [[ ${#_missing_go[@]} -eq 0 ]]; then
-        _chk_ok  "All Go tools present in PATH"
-    else
+    if [[ ${#_missing_go[@]} -gt 0 ]]; then
+        info "  Missing Go tools — reinstalling…"
+        for _t in "${_missing_go[@]}"; do _install_tool "${_t}"; done
+        _still_missing_go=()
         for _t in "${_missing_go[@]}"; do
-            _chk_warn "Go tool not found: ${_t} (run: sudo bash install.sh to reinstall Go tools)"
+            command -v "${_t}" &>/dev/null || _still_missing_go+=("${_t}")
         done
+        [[ ${#_still_missing_go[@]} -eq 0 ]] \
+            && _healed "All Go tools installed" \
+            || { for _t in "${_still_missing_go[@]}"; do _chk_warn "Go tool still missing: ${_t}"; done; }
+    else
+        _chk_ok "All Go tools present"
     fi
 
     # /opt scripts
-    [[ -f /opt/LeakSearch/LeakSearch.py ]] \
-        && _chk_ok  "/opt/LeakSearch/LeakSearch.py present" \
-        || _chk_warn "/opt/LeakSearch/LeakSearch.py missing — run: sudo bash install.sh"
-    [[ -f /opt/jexboss/jexboss.py ]] \
-        && _chk_ok  "/opt/jexboss/jexboss.py present" \
-        || _chk_warn "/opt/jexboss/jexboss.py missing — run: sudo bash install.sh"
+    if [[ -f /opt/LeakSearch/LeakSearch.py ]]; then
+        _chk_ok "/opt/LeakSearch/LeakSearch.py present"
+    else
+        _chk_fail "/opt/LeakSearch/LeakSearch.py missing — cloning…"
+        sudo git clone --depth 1 https://github.com/JoelGMSec/LeakSearch.git /opt/LeakSearch 2>/dev/null \
+            && _healed "LeakSearch cloned" \
+            || _chk_fail "LeakSearch clone failed"
+    fi
+    if [[ -f /opt/jexboss/jexboss.py ]]; then
+        _chk_ok "/opt/jexboss/jexboss.py present"
+    else
+        _chk_fail "/opt/jexboss/jexboss.py missing — cloning…"
+        sudo git clone --depth 1 https://github.com/joaomatosf/jexboss.git /opt/jexboss 2>/dev/null \
+            && _healed "jexboss cloned" \
+            || _chk_fail "jexboss clone failed"
+    fi
 else
     _chk_warn "Not a Kali install — tool binary checks skipped"
 fi
 
+# ── Install log pattern analysis ──────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}── Install log analysis ────────────────────────${NC}"
 echo    "     Log file: ${INSTALL_LOG}"
 echo ""
 
-# Scan the install log for known error patterns from this session's troubleshooting
 _LOG_ISSUES=0
-
 _log_check() {
-    local description="$1"
-    local pattern="$2"
-    local fix="$3"
+    local description="$1" pattern="$2" fix="$3"
     if grep -qE "${pattern}" "${INSTALL_LOG}" 2>/dev/null; then
         _chk_warn "LOG: ${description}"
-        _chk_warn "     Fix: ${fix}"
+        warn      "     Fix: ${fix}"
         (( _LOG_ISSUES++ )) || true
     fi
 }
@@ -868,20 +1010,20 @@ _log_check() {
 _log_check \
     "ensurepip not available — python3-venv was missing during install" \
     "ensurepip is not available|No module named ensurepip" \
-    "sudo apt-get install python3-venv"
+    "sudo apt-get install python3-venv && sudo bash install.sh"
 
 _log_check \
-    "pip dependency resolver conflict (likely mitmproxy/Kali tool)" \
+    "pip dependency resolver conflict (mitmproxy/Kali tool version pins)" \
     "dependency resolver does not currently|ResolutionImpossible|Cannot install.*and.*because" \
-    "Conflicts are expected on Kali — Legion venv isolates them. Run: /opt/legion-venv/bin/pip check"
+    "Run: /opt/legion-venv/bin/pip check  (should be clean — system conflicts don't affect the venv)"
 
 _log_check \
-    "pip uninstall-no-record-file (Debian-managed package conflict)" \
+    "pip uninstall-no-record-file (Debian-managed package)" \
     "uninstall-no-record-file|no-record-file" \
-    "Use --ignore-installed flag or install into the venv instead of system Python"
+    "Use venv (already done) — this error only appears on system-python installs"
 
 _log_check \
-    "'No module named pytest' — pytest missing from venv during verification" \
+    "No module named pytest — pytest missing from venv during step 8" \
     "No module named pytest" \
     "sudo /opt/legion-venv/bin/pip install pytest"
 
@@ -892,54 +1034,49 @@ _log_check \
 
 _log_check \
     "testssl package not found (correct name is testssl.sh)" \
-    "Unable to locate package testssl[^.]|testssl: command not found" \
+    "Unable to locate package testssl[^.]" \
     "sudo apt-get install testssl.sh"
 
 _log_check \
-    "Go not installed — Go tools (pd-httpx, katana, gau, etc.) were skipped" \
-    "go: command not found|golang.*not installed|go install.*failed" \
-    "sudo apt-get install golang-go  # or snap install go --classic"
+    "Go not installed — Go tools skipped" \
+    "go: command not found|golang.*not installed" \
+    "sudo apt-get install golang-go"
 
 _log_check \
-    "Address already in use — another Legion instance was running on that port" \
+    "Address already in use — another Legion instance was on that port" \
     "Address already in use|OSError.*98.*address already" \
-    "sudo pkill -f legion.py  # then retry"
+    "sudo pkill -f legion.py"
 
 _log_check \
     "geckodriver not found — Selenium tests will fail" \
     "geckodriver.*not found|No such file.*geckodriver" \
-    "Install was attempted in step 7; check: ls -la /usr/local/bin/geckodriver"
+    "Check: ls -la /usr/local/bin/geckodriver  (step 7 attempted install)"
 
 _log_check \
-    "Branch check failed — wrong git branch (should be flask-clean)" \
+    "Wrong git branch — should be flask-clean" \
     "WARNING.*not on flask-clean|wrong branch" \
-    "sudo git checkout flask-clean"
+    "sudo git checkout flask-clean && sudo bash install.sh"
 
 _log_check \
-    "process_matches wrong column — old bug, should be fixed in current code" \
+    "process_matches wrong column — old bug (fixed in current code)" \
     "no such column: process_id.*process_matches|OperationalError.*process_id" \
-    "Update to latest flask-clean branch: sudo git pull"
+    "sudo git pull  (update to latest flask-clean)"
 
-if [[ $_LOG_ISSUES -eq 0 ]]; then
-    _chk_ok "No known error patterns found in install log"
-fi
+[[ $_LOG_ISSUES -eq 0 ]] && _chk_ok "No known error patterns found in install log"
 
 # ── Final summary ─────────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}── Health check summary ────────────────────────${NC}"
 echo ""
-echo -e "  ${GREEN}✓${NC} Passed  : ${_CHECK_PASS}"
-if [[ $_CHECK_WARN -gt 0 ]]; then
-    echo -e "  ${YELLOW}!${NC} Warnings: ${_CHECK_WARN}"
-fi
-if [[ $_CHECK_FAIL -gt 0 ]]; then
-    echo -e "  ${RED}✗${NC} Failed  : ${_CHECK_FAIL}"
-fi
+echo -e "  ${GREEN}✓${NC} Passed   : ${_CHECK_PASS}"
+[[ $_HEAL_COUNT -gt 0 ]] && echo -e "  ${GREEN}⚕${NC} Healed   : ${_HEAL_COUNT}"
+[[ $_CHECK_WARN -gt 0 ]] && echo -e "  ${YELLOW}!${NC} Warnings : ${_CHECK_WARN}"
+[[ $_CHECK_FAIL -gt 0 ]] && echo -e "  ${RED}✗${NC} Failed   : ${_CHECK_FAIL}"
 echo ""
 if [[ $_CHECK_FAIL -eq 0 && $_CHECK_WARN -eq 0 ]]; then
     echo -e "  ${GREEN}${BOLD}Environment is fully healthy.${NC}"
 elif [[ $_CHECK_FAIL -eq 0 ]]; then
-    echo -e "  ${YELLOW}${BOLD}Environment is functional with warnings — review items above.${NC}"
+    echo -e "  ${YELLOW}${BOLD}Environment is functional with minor warnings.${NC}"
 else
     echo -e "  ${RED}${BOLD}${_CHECK_FAIL} check(s) failed — review items above before running Legion.${NC}"
 fi
