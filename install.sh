@@ -469,6 +469,16 @@ fi
 # =============================================================================
 step "8/9  Verification + auto-remediation"
 
+# pytest is needed for the verification tests but is not in requirements.txt
+# (it is a test-only tool, not a Legion runtime dependency).
+if ! python3 -m pytest --version &>/dev/null 2>&1; then
+    info "Installing pytest for verification tests…"
+    sudo python3 -m pip install --break-system-packages --ignore-installed \
+        --root-user-action=ignore pytest -q 2>/dev/null \
+        && ok "pytest installed" \
+        || warn "pytest install failed — skipping verification (non-fatal)"
+fi
+
 cd "${SCRIPT_DIR}"
 
 # ── Disable errexit for the whole step — failures here must be handled, not abort ──
