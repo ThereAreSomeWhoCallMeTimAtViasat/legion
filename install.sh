@@ -145,7 +145,7 @@ _install_pkg() {
     # pip-install a Python package that failed to import
     local import_name="$1" pip_name="$2"
     info "  pip install ${pip_name}…"
-    sudo python3 -m pip install --break-system-packages --ignore-installed "${pip_name}" 2>/dev/null \
+    sudo "${VENV_PIP:-python3 -m pip}" install "${pip_name}" 2>/dev/null \
         && ok "  ${pip_name} installed" \
         || warn "  ${pip_name}: pip install failed — try manually: sudo pip3 install ${pip_name}"
 }
@@ -319,88 +319,97 @@ else
 fi
 
 # =============================================================================
-# 5. Python packages
+# 5. Python packages — installed into a dedicated virtual environment
 # =============================================================================
-step "5/9  Python packages  (requirements.txt)"
+# WHY A VENV?
+# A full Kali installation contains 30+ security tools (mitmproxy, awscli,
+# theharvester, impacket, ciphey, pacu, pyppeteer, faradaysec, etc.) that
+# each declare strict version pins for shared packages like urllib3, requests,
+# rich, flask, werkzeug, click, and greenlet.  These pins are contradictory —
+# no single set of globally-installed package versions can satisfy all of them.
+#
+# Installing Legion's packages into the system site-packages (--break-system-
+# packages) upgrades shared libraries and breaks those Kali tools; downgrading
+# to their versions breaks Legion.
+#
+# A virtual environment at LEGION_VENV gives Legion its own isolated copy of
+# every package.  The system Python and all Kali tools are completely
+# unaffected.  `pip check` on either side reports zero conflicts.
+# =============================================================================
+step "5/9  Python virtual environment + packages"
 
+LEGION_VENV=/opt/legion-venv
 cd "${SCRIPT_DIR}"
 [[ -f requirements.txt ]] || die "requirements.txt not found in ${SCRIPT_DIR}"
 
-info "Installing Flask + Qt6 + shared + AI Python dependencies…"
+# Ensure python3-venv is available
+if ! python3 -m venv --help &>/dev/null 2>&1; then
+    info "Installing python3-venv…"
+    sudo apt-get install -y python3-venv 2>/dev/null \
+        && ok "python3-venv installed" \
+        || die "python3-venv unavailable — cannot create virtual environment"
+fi
 
-# Kali installs asgiref, tornado, urwid, wsproto as system Debian packages.
-# pip 26 fails with "uninstall-no-record-file" when it tries to upgrade them
-# because Debian packages have no pip RECORD file.
-# Fix: --ignore-installed skips the uninstall step entirely and installs fresh
-# copies to the pip-managed location.  Both copies coexist; Python uses pip's.
-# We do NOT use -q so that "Installing collected packages / Uninstalling X"
-# lines are visible — the user can see exactly what is happening.
+# Create (or reuse) the venv
+if [[ -f "${LEGION_VENV}/bin/python3" ]]; then
+    ok "Virtual environment already exists at ${LEGION_VENV}"
+else
+    info "Creating virtual environment at ${LEGION_VENV}…"
+    sudo python3 -m venv "${LEGION_VENV}"
+    ok "Virtual environment created"
+fi
 
-PIP_LOG=$(mktemp)
+VENV_PY="${LEGION_VENV}/bin/python3"
+VENV_PIP="${LEGION_VENV}/bin/pip"
 
-info "Running: pip install --break-system-packages --ignore-installed -r requirements.txt"
+# Upgrade pip inside the venv first
+info "Upgrading pip inside venv…"
+sudo "${VENV_PY}" -m pip install --quiet --upgrade pip 2>/dev/null || true
+
+# Install all requirements into the venv
+info "Installing Flask + Qt6 + shared + AI dependencies into venv…"
 echo ""
 
-if sudo python3 -m pip install \
-        --break-system-packages \
-        --ignore-installed \
+if sudo "${VENV_PIP}" install \
         --root-user-action=ignore \
         -r requirements.txt 2>&1 \
-        | grep -E "^Collecting|^Downloading|Installing collected|Successfully installed|Successfully uninstalled|Attempting uninstall|Found existing|error:|ERROR:|WARNING:|^$" \
-        | tee "$PIP_LOG"; then
-    ok "requirements.txt installed"
+        | grep -E "^Collecting|Installing collected|Successfully installed|Successfully uninstalled|error:|ERROR:"; then
+    ok "requirements.txt installed into ${LEGION_VENV}"
 else
-    echo ""
-    warn "pip install exited non-zero — checking error type…"
-
-    # pip 26 + Debian packages: "uninstall-no-record-file"
-    # Retry with --force-reinstall which overwrites without needing to uninstall
-    if grep -q "uninstall-no-record-file\|no-record-file" "$PIP_LOG" 2>/dev/null; then
-        warn "Debian-managed packages blocking pip uninstall — retrying with --force-reinstall…"
-        if sudo python3 -m pip install \
-                --break-system-packages \
-                --ignore-installed \
-                --force-reinstall \
-                --root-user-action=ignore \
-                -r requirements.txt 2>&1 \
-                | grep -E "^Collecting|Installing collected|Successfully installed|error:|ERROR:" \
-                | tee -a "$PIP_LOG"; then
-            ok "requirements.txt installed (--force-reinstall resolved Debian package conflict)"
-        else
-            die "pip install failed after --force-reinstall.\nRun manually:\n  sudo python3 -m pip install --break-system-packages --ignore-installed -r requirements.txt"
-        fi
-    else
-        die "pip install failed.\nRun manually:\n  sudo python3 -m pip install --break-system-packages --ignore-installed -r requirements.txt"
-    fi
+    die "pip install into venv failed.\nRun manually:\n  sudo ${VENV_PIP} install -r requirements.txt"
 fi
 
 echo ""
-rm -f "$PIP_LOG"
 
-# pip may print "ERROR: pip's dependency resolver does not currently take into
-# account all packages..." followed by mitmproxy version warnings.  This is a
-# cosmetic warning — pip exits 0 and the packages ARE installed correctly.
-# mitmproxy's Kali apt version pins asgiref/tornado/urwid/wsproto; we install
-# pip-managed copies alongside the Debian ones; Python uses the pip copies.
-info "(Note: any 'dependency resolver' ERROR lines above are pip warnings, not failures.)"
-info "  If you see mitmproxy conflict lines, mitmproxy still works as a binary;"
-info "  only its pinned Python packages have been upgraded to versions Legion needs."
+# Verify no conflicts inside the venv
+info "Running pip check inside venv (should be zero conflicts)…"
+CONFLICT_OUTPUT=$(sudo "${VENV_PIP}" check 2>&1)
+if echo "${CONFLICT_OUTPUT}" | grep -q "No broken requirements"; then
+    ok "pip check: No broken requirements — zero conflicts in Legion venv"
+else
+    warn "pip check found issues inside the venv:"
+    echo "${CONFLICT_OUTPUT}" | head -20
+    warn "These may need attention — Legion may still run correctly"
+fi
 
-info "Verifying critical imports — installing any still missing…"
+# Verify critical imports using the VENV python
+info "Verifying critical imports inside venv…"
 for pkg in flask sqlalchemy requests PyQt6.QtCore anthropic; do
-    if python3 -c "import ${pkg}" 2>/dev/null; then
+    if sudo "${VENV_PY}" -c "import ${pkg}" 2>/dev/null; then
         ok "  import ${pkg}"
     else
-        warn "  import ${pkg} failed — installing…"
+        warn "  import ${pkg} FAILED inside venv — attempting fix…"
         case "$pkg" in PyQt6.QtCore) pip_name="PyQt6" ;; *) pip_name="$pkg" ;; esac
-        sudo python3 -m pip install --break-system-packages --ignore-installed "${pip_name}" 2>/dev/null || true
-        if python3 -c "import ${pkg}" 2>/dev/null; then
-            ok "  import ${pkg} — fixed"
-        else
-            die "  Cannot import ${pkg}.  Check pip output above."
-        fi
+        sudo "${VENV_PIP}" install "${pip_name}" 2>/dev/null || true
+        sudo "${VENV_PY}" -c "import ${pkg}" 2>/dev/null \
+            && ok "  import ${pkg} — fixed" \
+            || die "  Cannot import ${pkg} in venv.  Check output above."
     fi
 done
+
+# Create a convenience symlink so 'legion-python3' always uses the venv
+sudo ln -sf "${VENV_PY}" /usr/local/bin/legion-python3 2>/dev/null || true
+ok "Symlink: /usr/local/bin/legion-python3 → ${VENV_PY}"
 
 # =============================================================================
 # 6. nuclei + templates
@@ -471,10 +480,9 @@ step "8/9  Verification + auto-remediation"
 
 # pytest is needed for the verification tests but is not in requirements.txt
 # (it is a test-only tool, not a Legion runtime dependency).
-if ! python3 -m pytest --version &>/dev/null 2>&1; then
+if ! "${VENV_PY}" -m pytest --version &>/dev/null 2>&1; then
     info "Installing pytest for verification tests…"
-    sudo python3 -m pip install --break-system-packages --ignore-installed \
-        --root-user-action=ignore pytest -q 2>/dev/null \
+    sudo "${VENV_PIP}" install --root-user-action=ignore pytest -q 2>/dev/null \
         && ok "pytest installed" \
         || warn "pytest install failed — skipping verification (non-fatal)"
 fi
@@ -494,7 +502,7 @@ while [[ $ROUND -lt $MAX_ROUNDS ]]; do
     info "Verification round ${ROUND}/${MAX_ROUNDS}…"
 
     # Run tests — capture output without letting a non-zero exit kill the script
-    sudo python3 -m pytest tests/test_requirements.py --noconftest -q --tb=line \
+    sudo "${VENV_PY}" -m pytest tests/test_requirements.py --noconftest -q --tb=line \
         > "$VERIFY_LOG" 2>&1
     pytest_exit=$?
 
@@ -559,7 +567,7 @@ if $ALL_PASS; then
 else
     warn "Some tests still failing after ${MAX_ROUNDS} remediation rounds."
     warn "Run this to see what remains:"
-    warn "  sudo python3 -m pytest tests/test_requirements.py --noconftest -v"
+    warn "  sudo "${VENV_PY}" -m pytest tests/test_requirements.py --noconftest -v"
     warn "The installer will continue — Legion --web may still work."
 fi
 
@@ -622,15 +630,18 @@ echo -e "${BOLD}${GREEN}╔═════════════════�
 echo -e "${BOLD}${GREEN}║      Legion installation complete          ║${NC}"
 echo -e "${BOLD}${GREEN}╚════════════════════════════════════════════╝${NC}"
 echo ""
+echo -e "  ${BOLD}Legion uses a dedicated Python venv at:${NC}  ${LEGION_VENV}"
+echo    "  The 'legion-python3' symlink always points to it."
+echo ""
 echo -e "  ${BOLD}Start (opens Firefox automatically):${NC}"
-echo    "    sudo python3 legion.py --web"
+echo    "    sudo legion-python3 legion.py --web"
 echo ""
 echo -e "  ${BOLD}Custom port:${NC}"
-echo    "    sudo python3 legion.py --web --port 8080"
+echo    "    sudo legion-python3 legion.py --web --port 8080"
 echo ""
 echo -e "  ${BOLD}Headless (open http://127.0.0.1:5000 yourself):${NC}"
-echo    "    sudo python3 legion.py --web --no-browser"
+echo    "    sudo legion-python3 legion.py --web --no-browser"
 echo ""
 echo -e "  ${BOLD}Qt6 desktop GUI (requires X11 display):${NC}"
-echo    "    sudo python3 legion.py"
+echo    "    sudo legion-python3 legion.py"
 echo ""
