@@ -743,51 +743,68 @@ if [[ -f "${VENV_PIP}" ]]; then
 fi
 
 # 6. Package imports — check each group, pip-install any that fail
+# Format: "import_name|alt_import:pip_package_name"
+# alt_import handles case where pip and apt install under different module names
+# e.g. pyExploitDb (apt CamelCase) vs pyexploitdb (pip lowercase)
+_can_import() {
+    local mod
+    for mod in $(echo "$1" | tr '|' ' '); do
+        "${VENV_PY}" -c "import ${mod}" 2>/dev/null && return 0
+    done
+    return 1
+}
+
 _try_import_heal() {
-    local pkg="$1" pip_name="$2"
-    if ! "${VENV_PY}" -c "import ${pkg}" 2>/dev/null; then
-        warn "  import ${pkg} failed — installing ${pip_name}…"
+    local pkg_spec="$1" pip_name="$2"
+    if ! _can_import "${pkg_spec}"; then
+        local display="${pkg_spec%%|*}"
+        warn "  import ${display} failed — installing ${pip_name}…"
         sudo "${VENV_PIP}" install --root-user-action=ignore -q "${pip_name}" 2>/dev/null || true
-        if "${VENV_PY}" -c "import ${pkg}" 2>/dev/null; then
-            _healed "import ${pkg} now works"
+        if _can_import "${pkg_spec}"; then
+            _healed "import ${display} now works"
         else
-            _chk_fail "import ${pkg} still failing after pip install ${pip_name}"
+            _chk_fail "import ${display} still failing after pip install ${pip_name}"
         fi
     fi
 }
 
 if [[ -f "${VENV_PY}" ]]; then
-    _all_pkgs_ok=true
+    # pkg_spec:pip_name — use | in pkg_spec for alternative import names
+    _PKG_PAIRS=(
+        "flask:flask"
+        "werkzeug:werkzeug"
+        "anthropic:anthropic"
+        "google.auth:google-auth"
+        "PyQt6.QtCore:PyQt6"
+        "qasync:qasync"
+        "pandas:pandas"
+        "git:GitPython"
+        "sqlalchemy:sqlalchemy"
+        "six:six"
+        "requests:requests"
+        "urllib3:urllib3"
+        "selenium:selenium"
+        "pyfiglet:pyfiglet"
+        "colorama:colorama"
+        "termcolor:termcolor"
+        "rich:rich"
+        "neotermcolor:neotermcolor"
+        "pyExploitDb|pyexploitdb:pyExploitDb"
+        "pyShodan:pyShodan"
+    )
 
-    for _pkg_pair in \
-        "flask:flask" "werkzeug:werkzeug" "anthropic:anthropic" "google.auth:google-auth" \
-        "PyQt6.QtCore:PyQt6" "qasync:qasync" "pandas:pandas" "git:GitPython" \
-        "sqlalchemy:sqlalchemy" "six:six" "requests:requests" "urllib3:urllib3" \
-        "selenium:selenium" "pyfiglet:pyfiglet" "colorama:colorama" \
-        "termcolor:termcolor" "rich:rich" "neotermcolor:neotermcolor" \
-        "pyExploitDb:pyExploitDb" "pyShodan:pyShodan"
-    do
-        _pkg="${_pkg_pair%%:*}"
+    for _pkg_pair in "${_PKG_PAIRS[@]}"; do
+        _spec="${_pkg_pair%%:*}"
         _pip="${_pkg_pair##*:}"
-        if ! "${VENV_PY}" -c "import ${_pkg}" 2>/dev/null; then
-            _all_pkgs_ok=false
-            _try_import_heal "${_pkg}" "${_pip}"
-        fi
+        _can_import "${_spec}" || _try_import_heal "${_spec}" "${_pip}"
     done
 
-    $all_pkgs_ok 2>/dev/null || true
     # Final pass — report any still failing
     _still_fail=()
-    for _pkg_pair in \
-        "flask:flask" "werkzeug:werkzeug" "anthropic:anthropic" "google.auth:google-auth" \
-        "PyQt6.QtCore:PyQt6" "qasync:qasync" "pandas:pandas" "git:GitPython" \
-        "sqlalchemy:sqlalchemy" "six:six" "requests:requests" "urllib3:urllib3" \
-        "selenium:selenium" "pyfiglet:pyfiglet" "colorama:colorama" \
-        "termcolor:termcolor" "rich:rich" "neotermcolor:neotermcolor" \
-        "pyExploitDb:pyExploitDb" "pyShodan:pyShodan"
-    do
-        _pkg="${_pkg_pair%%:*}"
-        "${VENV_PY}" -c "import ${_pkg}" 2>/dev/null || _still_fail+=("${_pkg}")
+    for _pkg_pair in "${_PKG_PAIRS[@]}"; do
+        _spec="${_pkg_pair%%:*}"
+        _display="${_spec%%|*}"
+        _can_import "${_spec}" || _still_fail+=("${_display}")
     done
     if [[ ${#_still_fail[@]} -eq 0 ]]; then
         _chk_ok "All required Python packages importable from venv"
