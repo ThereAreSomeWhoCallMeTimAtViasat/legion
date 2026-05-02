@@ -59,6 +59,12 @@ $RUN_UNIT || $RUN_SELENIUM || $RUN_LIVE || $RUN_STORIES || { RUN_UNIT=true; RUN_
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ── Sudo shim — Docker containers run as root without sudo installed ───────────
+if ! command -v sudo &>/dev/null; then
+    sudo() { "$@"; }
+    export -f sudo
+fi
+
 # ── Python interpreter — use venv when available ───────────────────────────────
 # install.sh creates /opt/legion-venv with all Legion packages isolated from
 # Kali system tools.  Fall back to plain python3 for dev environments without
