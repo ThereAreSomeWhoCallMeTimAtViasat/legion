@@ -26,6 +26,27 @@ _VENV = '/opt/legion-venv'
 if _os.path.isfile(f'{_VENV}/bin/python3') and not sys.prefix.startswith(_VENV):
     _os.execv(f'{_VENV}/bin/python3', [f'{_VENV}/bin/python3'] + sys.argv)
 
+# Venv doesn't exist — check whether essential packages are available.
+# If not, give an actionable error instead of a confusing ModuleNotFoundError.
+if not sys.prefix.startswith(_VENV):
+    try:
+        import flask  # noqa: F401
+    except ImportError:
+        print(
+            "\n  ERROR: Legion's Python packages are not installed.\n"
+            "\n"
+            "  The virtual environment at /opt/legion-venv does not exist.\n"
+            "  Run the installer first:\n"
+            "\n"
+            "      sudo bash install.sh\n"
+            "\n"
+            "  Then retry:\n"
+            "\n"
+            "      sudo python3 legion.py --web\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
 import shutil
 
 from app.ApplicationInfo import getConsoleLogo

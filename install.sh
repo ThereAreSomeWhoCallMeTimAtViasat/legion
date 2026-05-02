@@ -342,12 +342,15 @@ LEGION_VENV=/opt/legion-venv
 cd "${SCRIPT_DIR}"
 [[ -f requirements.txt ]] || die "requirements.txt not found in ${SCRIPT_DIR}"
 
-# Ensure python3-venv is available
-if ! python3 -m venv --help &>/dev/null 2>&1; then
-    info "Installing python3-venv…"
-    sudo apt-get install -y python3-venv 2>/dev/null \
+# Ensure python3-venv is available.
+# NOTE: "python3 -m venv --help" exits 0 even WITHOUT python3-venv installed
+# because --help is handled before ensurepip is needed.  The correct test is
+# whether ensurepip (the piece that's missing) can be imported.
+if ! python3 -c "import ensurepip" &>/dev/null 2>&1; then
+    info "Installing python3-venv (ensurepip not found)…"
+    sudo apt-get install -y python3-venv \
         && ok "python3-venv installed" \
-        || die "python3-venv unavailable — cannot create virtual environment"
+        || die "python3-venv unavailable — cannot create virtual environment.\nTry: sudo apt-get install python3-venv"
 fi
 
 # Create (or reuse) the venv
@@ -355,7 +358,8 @@ if [[ -f "${LEGION_VENV}/bin/python3" ]]; then
     ok "Virtual environment already exists at ${LEGION_VENV}"
 else
     info "Creating virtual environment at ${LEGION_VENV}…"
-    sudo python3 -m venv "${LEGION_VENV}"
+    sudo python3 -m venv "${LEGION_VENV}" \
+        || die "Failed to create virtual environment at ${LEGION_VENV}.\nTry: sudo apt-get install python3-venv python3-pip"
     ok "Virtual environment created"
 fi
 
