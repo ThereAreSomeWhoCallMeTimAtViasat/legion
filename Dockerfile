@@ -38,7 +38,7 @@ RUN apt-get update -q && apt-get install -y \
     xvfb firefox-esr \
     nmap masscan hping3 ike-scan \
     feroxbuster gobuster ffuf nikto whatweb wafw00f \
-    wpscan joomscan davtest sqlmap sslyze sslscan testssl \
+    wpscan joomscan davtest sqlmap sslyze sslscan testssl.sh \
     dnsrecon dnsenum nbtscan onesixtyone snmpwalk snmpcheck \
     rpcinfo nfs-common ldap-utils \
     netexec smbmap enum4linux-ng ldapdomaindump smbclient \

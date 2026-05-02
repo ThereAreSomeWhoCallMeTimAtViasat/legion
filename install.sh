@@ -171,7 +171,7 @@ info "Installing security tools (--ignore-missing — individual gaps are OK)…
 sudo apt-get install -y --ignore-missing \
     nmap masscan hping3 ike-scan \
     feroxbuster gobuster ffuf nikto whatweb wafw00f \
-    wpscan joomscan davtest sqlmap sslyze sslscan testssl \
+    wpscan joomscan davtest sqlmap sslyze sslscan testssl.sh \
     dnsrecon dnsenum nbtscan onesixtyone \
     snmpwalk snmpcheck rpcinfo nfs-common ldap-utils \
     netexec smbmap enum4linux-ng ldapdomaindump smbclient \
