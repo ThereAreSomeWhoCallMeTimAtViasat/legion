@@ -187,11 +187,26 @@ for req in python3 go git curl; do
         || die "$req missing after apt — check network / apt sources and retry"
 done
 
+# nmap is Legion's core dependency — install separately with explicit verification
+info "Installing nmap (Legion core dependency)…"
+if ! command -v nmap &>/dev/null; then
+    sudo apt-get install -y nmap \
+        && ok "nmap installed at $(command -v nmap)" \
+        || {
+            warn "nmap apt install failed — trying with --fix-missing…"
+            sudo apt-get install -y --fix-missing nmap 2>/dev/null \
+                && ok "nmap installed via --fix-missing" \
+                || die "nmap could not be installed. Legion requires nmap. Try: sudo apt-get install nmap"
+        }
+else
+    ok "nmap already at $(command -v nmap)"
+fi
+
 info "Installing security tools (--ignore-missing — individual gaps are OK)…"
 
 # Block B — security tools: individual failures are tolerated
 sudo apt-get install -y --ignore-missing \
-    nmap masscan hping3 ike-scan \
+    masscan hping3 ike-scan \
     feroxbuster gobuster ffuf nikto whatweb wafw00f \
     wpscan joomscan davtest sqlmap sslyze sslscan testssl.sh \
     dnsrecon dnsenum nbtscan onesixtyone \

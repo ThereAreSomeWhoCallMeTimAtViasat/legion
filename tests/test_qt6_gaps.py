@@ -194,6 +194,9 @@ print("="*60 + "\n")
 
 def test_a2_xml_copied_to_output_folder():
     """After a non-staged nmap scan, the XML is copied to the project outputFolder."""
+    import shutil as _sh
+    if not _sh.which('nmap'):
+        return "SKIP"
     wc.start()
     output_folder = logic.activeProject.properties.outputFolder
     # Count XML files before
@@ -223,6 +226,9 @@ test("A2.1: nmap XML appears in outputFolder after nmap run", test_a2_xml_copied
 
 def test_a2_xml_copy_integration():
     """Running nmap via runCommand results in XML appearing in outputFolder."""
+    import shutil as _sh
+    if not _sh.which('nmap'):
+        return "SKIP"
     wc.start()
     output_folder = logic.activeProject.properties.outputFolder
     os.makedirs(output_folder, exist_ok=True)
