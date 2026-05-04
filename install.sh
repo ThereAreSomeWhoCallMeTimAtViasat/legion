@@ -472,6 +472,47 @@ if [[ -d "$NUCLEI_DIR" && "${REAL_USER}" != "root" ]]; then
         || warn "could not chown nuclei templates — run: sudo chown -R ${REAL_USER}:${REAL_USER} ${NUCLEI_DIR}"
 fi
 
+# Patch eyewitness selenium_module.py for Selenium 4 compatibility.
+# The Kali apt package still uses the Selenium 3 DesiredCapabilities API
+# which was removed in Selenium 4.  The venv installs selenium>=4.9.0 so
+# without this patch eyewitness fails with WebDriverError on every screenshot.
+# Changes: DesiredCapabilities → options.accept_insecure_certs; remove
+# service_log_path kwarg (also gone in Selenium 4).
+EW_MOD="/usr/share/eyewitness/modules/selenium_module.py"
+if [[ -f "$EW_MOD" ]]; then
+    if grep -q "DesiredCapabilities" "$EW_MOD"; then
+        info "Patching eyewitness for Selenium 4 API…"
+        sudo python3 - "$EW_MOD" << 'PYEOF'
+import sys, re
+path = sys.argv[1]
+src  = open(path).read()
+# Remove deprecated import
+src = re.sub(r'\n[ \t]*from selenium\.webdriver\.common\.desired_capabilities import DesiredCapabilities\n', '\n', src)
+# Replace driver construction block — handles variations in whitespace/ordering
+src = re.sub(
+    r'capabilities\s*=\s*DesiredCapabilities\.FIREFOX\.copy\(\).*?'
+    r'driver\s*=\s*webdriver\.Firefox\([^)]*service_log_path[^)]*\)',
+    'options = Options()\n        options.add_argument("--headless")\n'
+    '        options.accept_insecure_certs = True\n'
+    '        profile.update_preferences()\n'
+    '        driver = webdriver.Firefox(profile, options=options)',
+    src, flags=re.DOTALL
+)
+# Fallback: remove service_log_path kwarg if still present
+src = re.sub(r',\s*service_log_path\s*=\s*[^\)]+', '', src)
+open(path, 'w').write(src)
+print('ok')
+PYEOF
+        [[ $? -eq 0 ]] \
+            && ok "eyewitness selenium_module.py patched for Selenium 4" \
+            || warn "eyewitness patch failed — screenshots may not work"
+    else
+        ok "eyewitness already patched (no DesiredCapabilities found)"
+    fi
+else
+    warn "eyewitness not found at ${EW_MOD} — skipping patch (install eyewitness first)"
+fi
+
 # =============================================================================
 # 7. geckodriver + Firefox profile
 # =============================================================================
