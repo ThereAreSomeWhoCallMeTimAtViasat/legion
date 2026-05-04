@@ -33,6 +33,11 @@ def create_test_app():
     logic.createNewTemporaryProject()
 
     settings = Settings(AppSettings())
+    # Disable scheduler so seeding a test host doesn't spawn real background
+    # tool processes (nikto, whatweb, gobuster, etc.) that race against the
+    # test's project-switch operations (new-temp, save-as, open) and cause
+    # "no such table" SQLite errors when they land on a transitioning engine.
+    settings.general_enable_scheduler = False
     wc = WebController(logic, settings)
     wc.start()
 
