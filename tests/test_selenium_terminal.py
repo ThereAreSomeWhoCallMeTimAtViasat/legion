@@ -116,7 +116,8 @@ class TestOutputPanelSwitch:
                 }
             }
         """, name_fragment)
-        time.sleep(POLL)
+        # loadProcessOutput() runs async after the click — the caller tests a
+        # specific display state, so waits are deferred to each test method.
 
     def test_plain_output_div_exists(self, term_driver):
         """#plain-output div must exist inside #process-output-inline."""
@@ -131,34 +132,33 @@ class TestOutputPanelSwitch:
     def test_regular_process_shows_plain(self, term_driver):
         """Clicking a regular (echo) process shows #plain-output, hides #terminal-output."""
         self._click_process_by_name(term_driver, 'plain-proc')
-        time.sleep(POLL)
+        W(term_driver, 5).until(lambda d:
+            d.find_element(By.ID, 'plain-output').value_of_css_property('display') != 'none')
         plain = term_driver.find_element(By.ID, 'plain-output')
         terminal = term_driver.find_element(By.ID, 'terminal-output')
-        plain_display = plain.value_of_css_property('display')
-        terminal_display = terminal.value_of_css_property('display')
-        assert plain_display != 'none', \
-            f"#plain-output should be visible for regular process, display={plain_display}"
-        assert terminal_display == 'none', \
-            f"#terminal-output should be hidden for regular process, display={terminal_display}"
+        assert plain.value_of_css_property('display') != 'none', \
+            f"#plain-output should be visible for regular process"
+        assert terminal.value_of_css_property('display') == 'none', \
+            f"#terminal-output should be hidden for regular process"
 
     def test_interactive_process_shows_terminal(self, term_driver):
         """Clicking an Interactive (bash) process shows #terminal-output, hides #plain-output."""
         self._click_process_by_name(term_driver, 'interactive-proc')
-        time.sleep(POLL)
+        W(term_driver, 5).until(lambda d:
+            d.find_element(By.ID, 'terminal-output').value_of_css_property('display') != 'none')
         plain = term_driver.find_element(By.ID, 'plain-output')
         terminal = term_driver.find_element(By.ID, 'terminal-output')
-        plain_display = plain.value_of_css_property('display')
-        terminal_display = terminal.value_of_css_property('display')
-        assert terminal_display != 'none', \
-            f"#terminal-output should be visible for Interactive process, display={terminal_display}"
-        assert plain_display == 'none', \
-            f"#plain-output should be hidden for Interactive process, display={plain_display}"
+        assert terminal.value_of_css_property('display') != 'none', \
+            f"#terminal-output should be visible for Interactive process"
+        assert plain.value_of_css_property('display') == 'none', \
+            f"#plain-output should be hidden for Interactive process"
 
     def test_xterm_mounted_in_terminal_output(self, term_driver):
         """When terminal is shown, xterm.js must mount content inside #terminal-output.
         Skips if xterm.js CDN not reachable in headless mode."""
         self._click_process_by_name(term_driver, 'interactive-proc')
-        time.sleep(POLL + 1)
+        W(term_driver, 5).until(lambda d:
+            d.find_element(By.ID, 'terminal-output').value_of_css_property('display') != 'none')
         xterm_loaded = term_driver.execute_script("return typeof Terminal !== 'undefined'")
         if not xterm_loaded:
             pytest.skip("xterm.js not loaded from CDN in headless browser")
@@ -174,9 +174,11 @@ class TestOutputPanelSwitch:
     def test_switch_back_to_plain(self, term_driver):
         """After viewing terminal, clicking a regular process switches back to plain."""
         self._click_process_by_name(term_driver, 'interactive-proc')
-        time.sleep(POLL)
+        W(term_driver, 5).until(lambda d:
+            d.find_element(By.ID, 'terminal-output').value_of_css_property('display') != 'none')
         self._click_process_by_name(term_driver, 'plain-proc')
-        time.sleep(POLL)
+        W(term_driver, 5).until(lambda d:
+            d.find_element(By.ID, 'plain-output').value_of_css_property('display') != 'none')
         plain = term_driver.find_element(By.ID, 'plain-output')
         terminal = term_driver.find_element(By.ID, 'terminal-output')
         assert plain.value_of_css_property('display') != 'none', \
@@ -187,7 +189,8 @@ class TestOutputPanelSwitch:
     def test_plain_output_has_content(self, term_driver):
         """Plain output for the echo process must contain expected text."""
         self._click_process_by_name(term_driver, 'plain-proc')
-        time.sleep(POLL)
+        W(term_driver, 5).until(lambda d:
+            d.find_element(By.ID, 'plain-output').value_of_css_property('display') != 'none')
         text = term_driver.find_element(By.ID, 'plain-output').text
         assert 'PLAIN_PROCESS_OUTPUT' in text, \
             f"Expected 'PLAIN_PROCESS_OUTPUT' in plain output: {text[:200]!r}"

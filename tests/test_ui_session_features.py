@@ -165,9 +165,20 @@ def _setup_match_process(drv, srv, name='nav-test'):
     # Inject match status into wc._matches — the snapshot route reads this dict
     # to set proc['has_match'] / proc['match_text'].
     wc._matches[f"{IP}:{name}"] = [_MATCH_WORD]
-    # Wait ≥1 snapshot cycle (1.5 s) so L.processes picks up has_match=True
-    # before the caller clicks the row.
-    time.sleep(2.5)
+    # Poll the snapshot API until has_match=True is reported for this process.
+    # A fixed 2.5s sleep races the 1.5s snapshot poll cycle under load.
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            import urllib.request as _ur, json as _j
+            r = _ur.urlopen(f"{srv['url']}/api/snapshot", timeout=3)
+            procs = _j.loads(r.read()).get('processes', [])
+            if any(str(p.get('id')) == str(proc_id) and p.get('has_match')
+                   for p in procs):
+                break
+        except Exception:
+            pass
+        time.sleep(0.3)
     return proc_id
 
 

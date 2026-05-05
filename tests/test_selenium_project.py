@@ -324,12 +324,22 @@ class TestProjectSaveOpen:
         fb_click_select(proj_driver)
 
         modal_is_closed(proj_driver, 'file-browser-modal')
-        time.sleep(1)  # let server write file
 
+        # Wait for the file to exist on disk — server write is async
+        import time as _t
+        deadline = _t.monotonic() + 5
+        while _t.monotonic() < deadline:
+            if os.path.exists(SAVE_PATH) and os.path.getsize(SAVE_PATH) > 0:
+                break
+            _t.sleep(0.2)
         assert os.path.exists(SAVE_PATH), f"Save file not created: {SAVE_PATH}"
         assert os.path.getsize(SAVE_PATH) > 0, "Save file is empty"
 
-        # Title bar should show the project filename
+        # Wait for the title bar to reflect the saved filename — DOM update is async
+        from selenium.webdriver.support.ui import WebDriverWait
+        WebDriverWait(proj_driver, 5).until(lambda d:
+            SAVE_FILENAME in d.find_element(By.ID, 'window-title').text or
+            'legion-selenium' in d.find_element(By.ID, 'window-title').text)
         title = proj_driver.find_element(By.ID, 'window-title').text
         assert SAVE_FILENAME in title or 'legion-selenium' in title, \
             f"Title bar not updated after save: {title!r}"

@@ -175,7 +175,10 @@ def click_right_tab(driver, tab_id):
 def select_host(driver, ip):
     row = wait_row(driver, ip)
     js_click(driver, row)
-    time.sleep(POLL)
+    # Wait for L.selectedHostIp to reflect the click — confirms loadHostDetail()
+    # was triggered and the host switch is complete, not just a fixed sleep.
+    W(driver, 5).until(lambda d: d.execute_script(
+        "return typeof L !== 'undefined' && L.selectedHostIp === arguments[0]", ip))
     return row
 
 def get_port_numbers(driver):
@@ -332,9 +335,11 @@ class TestInformationIsolation:
 class TestNotesIsolation:
 
     def _load_notes(self, driver, ip):
-        select_host(driver, ip)
-        click_right_tab(driver, 'notes-right')
-        time.sleep(0.3)
+        select_host(driver, ip)  # already waits for L.selectedHostIp
+        click_right_tab(driver, 'notes-right')  # already waits for tab active class
+        # Notes are rendered from L.hostNotes (populated by loadHostDetail).
+        # Briefly poll until the notes element is present rather than sleeping.
+        W(driver, 3).until(lambda d: d.find_element(By.ID, 'notes-right').is_displayed())
         return get_notes_text(driver)
 
     def test_host_a_notes_visible(self, mh_driver):
@@ -363,13 +368,12 @@ class TestNotesIsolation:
         """
         select_host(mh_driver, IP_A)
         click_right_tab(mh_driver, 'notes-right')
-        time.sleep(0.3)
 
-        # Enter edit mode (click display div → _showNotesEdit captures _noteHostId = A)
+        # Enter edit mode — wait for the textarea to appear after dblclick
         mh_driver.execute_script(
             "var d=document.getElementById('notes-display');"
             "if(d) d.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));")
-        time.sleep(0.2)
+        W(mh_driver, 3).until(lambda d: d.find_element(By.ID, 'notes-text').is_displayed())
 
         # Set text in textarea
         mh_driver.execute_script("""
@@ -377,12 +381,10 @@ class TestNotesIsolation:
             if(ta){ ta.value='ui-blur-test-A'; ta.dispatchEvent(new Event('input')); }
         """)
 
-        # Click host B row — L.selectedHostId changes to B, but blur saves to _noteHostId (A)
+        # Click host B — select_host waits for L.selectedHostIp to switch to B,
+        # which confirms the blur event fired and the save was dispatched.
         select_host(mh_driver, IP_B)
-        time.sleep(0.5)
-
         click_right_tab(mh_driver, 'notes-right')
-        time.sleep(0.3)
         notes_b = get_notes_text(mh_driver)
         assert 'ui-blur-test-A' not in notes_b, \
             f"Note from host A bled into host B after blur fix: {notes_b!r}"
@@ -391,25 +393,25 @@ class TestNotesIsolation:
         """Note typed on host A must persist after switching to B and back."""
         select_host(mh_driver, IP_A)
         click_right_tab(mh_driver, 'notes-right')
-        time.sleep(0.3)
 
         mh_driver.execute_script(
             "var d=document.getElementById('notes-display');"
             "if(d) d.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));")
-        time.sleep(0.2)
+        W(mh_driver, 3).until(lambda d: d.find_element(By.ID, 'notes-text').is_displayed())
+
         mh_driver.execute_script("""
             var ta=document.getElementById('notes-text');
             if(ta){ ta.value='ui-persist-test-A'; ta.dispatchEvent(new Event('input')); }
         """)
 
-        # Click host B to trigger blur (saves to A via _noteHostId)
+        # Switch to B — select_host waits for selectedHostIp to confirm blur fired
         select_host(mh_driver, IP_B)
-        time.sleep(0.5)
 
         # Return to A — note must still be there
         select_host(mh_driver, IP_A)
         click_right_tab(mh_driver, 'notes-right')
-        time.sleep(0.3)
+        # Wait for the specific note text to appear (confirms loadHostDetail completed)
+        W(mh_driver, 5).until(lambda d: 'ui-persist-test-A' in get_notes_text(d))
         notes_a = get_notes_text(mh_driver)
         assert 'ui-persist-test-A' in notes_a, \
             f"Host A's note missing after switching away and back: {notes_a!r}"

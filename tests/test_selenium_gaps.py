@@ -276,7 +276,9 @@ class TestPortDoubleClick:
         svc_tab = gap_driver.find_element(
             By.CSS_SELECTOR, '#left-tab-bar [data-tab="services-left-panel"]')
         js_click(gap_driver, svc_tab)
-        time.sleep(0.2)
+        # Wait for services-left-panel to become active before proceeding
+        W(gap_driver, 3).until(lambda d: 'active' in
+            d.find_element(By.ID, 'services-left-panel').get_attribute('class'))
 
         # Double-click the first port row
         port_rows = gap_driver.find_elements(By.CSS_SELECTOR, '#host-detail-ports tr')
@@ -284,11 +286,11 @@ class TestPortDoubleClick:
         gap_driver.execute_script(
             "arguments[0].dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));",
             port_rows[0])
-        time.sleep(0.3)
 
-        # Left panel must now show Hosts tab
-        hosts_panel = gap_driver.find_element(By.ID, 'hosts-panel')
-        assert 'active' in hosts_panel.get_attribute('class'), \
+        # Wait for hosts-panel to become active — don't sleep a fixed amount
+        W(gap_driver, 5).until(lambda d: 'active' in
+            d.find_element(By.ID, 'hosts-panel').get_attribute('class'))
+        assert 'active' in gap_driver.find_element(By.ID, 'hosts-panel').get_attribute('class'), \
             "Left panel did not switch to Hosts tab after port double-click"
 
     def test_port_dblclick_hosts_panel_not_services(self, gap_driver):
@@ -321,10 +323,10 @@ class TestSendToBrute:
 
         ActionChains(gap_driver).context_click(ssh_row).perform()
         ctx_menu_click(gap_driver, 'Send to Brute')
-        time.sleep(0.5)
-
-        brute_panel = gap_driver.find_element(By.ID, 'brute-tab')
-        assert 'active' in brute_panel.get_attribute('class'), \
+        # Wait for the Brute tab to become active — it also means the form is filled
+        W(gap_driver, 5).until(lambda d: 'active' in
+            d.find_element(By.ID, 'brute-tab').get_attribute('class'))
+        assert 'active' in gap_driver.find_element(By.ID, 'brute-tab').get_attribute('class'), \
             "Main tab did not switch to Brute after Send to Brute"
 
     def test_send_to_brute_fills_ip(self, gap_driver):
