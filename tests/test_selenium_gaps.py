@@ -360,7 +360,9 @@ class TestProcessActions:
         # Ensure we're on Scan tab with Hosts left panel
         gap_driver.find_element(
             By.CSS_SELECTOR, '#main-tab-bar [data-tab="scan-tab"]').click()
-        time.sleep(0.2)
+        W(gap_driver, 5).until(lambda d: 'active' in (
+            d.find_element(By.CSS_SELECTOR, '#main-tab-bar [data-tab="scan-tab"]')
+             .get_attribute('class') or ''))
 
         wc.runCommand('sleep 30', name='kill-test', hostIp=IP_A)
         run_row = wait_process_status(gap_driver, 'kill-test', 'Running', timeout=15)
@@ -550,11 +552,14 @@ class TestNotes:
         v10.47 changed entry from single-click to dblclick for UX reasons."""
         select_host(driver, ip)
         click_right_tab(driver, 'notes-right')
-        time.sleep(0.3)
+        # Wait for notes panel content to be visible before dispatching dblclick
+        W(driver, 5).until(EC.visibility_of_element_located((By.ID, 'notes-display')))
         driver.execute_script(
             "var d=document.getElementById('notes-display');"
             "if(d) d.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));")
-        time.sleep(0.2)
+        # Wait for textarea to appear (edit mode entered)
+        W(driver, 5).until(lambda d: d.find_element(By.ID, 'notes-text').is_displayed()
+                           if d.find_elements(By.ID, 'notes-text') else False)
 
     def _set_note_text(self, driver, text):
         """Set notes-text textarea via JS (triggers input event)."""
@@ -581,7 +586,9 @@ class TestNotes:
         self._set_note_text(gap_driver, 'ui-note-for-host-a')
         # Switch to B to trigger blur/save via _noteHostId mechanism
         select_host(gap_driver, IP_B)
-        time.sleep(0.5)
+        # Wait for selectedHostIp to reflect B (loadHostDetail complete)
+        W(gap_driver, 5).until(lambda d: d.execute_script(
+            "return typeof L !== 'undefined' && L.selectedHostIp === arguments[0]", IP_B))
         # Back to A — note must persist
         self._open_notes_edit(gap_driver, IP_A)
         notes = self._get_note_text(gap_driver)
@@ -610,11 +617,15 @@ class TestNotes:
         self._set_note_text(gap_driver, 'multi-switch-note')
         for _ in range(2):
             select_host(gap_driver, IP_B)
-            time.sleep(0.4)
+            # select_host already waits for L.selectedHostIp; also wait for note save
+            W(gap_driver, 5).until(lambda d: d.execute_script(
+                "return typeof L !== 'undefined' && L.selectedHostIp === arguments[0]", IP_B))
             select_host(gap_driver, IP_A)
-            time.sleep(0.4)
+            W(gap_driver, 5).until(lambda d: d.execute_script(
+                "return typeof L !== 'undefined' && L.selectedHostIp === arguments[0]", IP_A))
             click_right_tab(gap_driver, 'notes-right')
-            time.sleep(0.2)
+            # Wait for notes display to show content
+            W(gap_driver, 5).until(lambda d: bool(self._get_note_text(d)))
             notes = self._get_note_text(gap_driver)
             assert 'multi-switch-note' in notes, \
                 f"Note lost after A→B→A switch: {notes!r}"
@@ -676,7 +687,9 @@ class TestColumnResize:
 
         result = self._drag_handle(gap_driver)
         assert result == 'ok', f"Drag simulation failed: {result}"
-        time.sleep(0.2)
+        # Wait for the localStorage value to be set by the drag handler
+        W(gap_driver, 3).until(lambda d: d.execute_script(
+            f"return localStorage.getItem('{self.STORAGE_KEY}')") is not None)
 
         saved = gap_driver.execute_script(f"return localStorage.getItem('{self.STORAGE_KEY}')")
         assert saved is not None, "localStorage not set after column drag"
@@ -768,7 +781,9 @@ class TestHostDoubleClick:
             var r = arguments[0];
             r.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));
         """, host_row)
-        time.sleep(0.3)
+        # Wait for the clipboard capture variable to be set by the dblclick handler
+        W(gap_driver, 3).until(lambda d: d.execute_script(
+            "return window._clipboardCapture") is not None)
 
         captured = gap_driver.execute_script("return window._clipboardCapture;")
         assert captured == IP_A, \
@@ -782,7 +797,9 @@ class TestHostDoubleClick:
         gap_driver.execute_script("""
             arguments[0].dispatchEvent(new MouseEvent('dblclick', {bubbles:true, cancelable:true}));
         """, host_row_b)
-        time.sleep(0.3)
+        # Wait for the clipboard capture variable to reflect the new value
+        W(gap_driver, 3).until(lambda d: d.execute_script(
+            "return window._clipboardCapture") == IP_B)
 
         captured = gap_driver.execute_script("return window._clipboardCapture;")
         assert captured == IP_B, \
@@ -859,11 +876,15 @@ class TestSendSelectionToNotes:
                 key: 'b', ctrlKey: true, bubbles: true, cancelable: true
             }));
         """)
-        time.sleep(0.5)
+        # Wait for the note to be saved to the backend (storeNotes is async via postJson)
+        W(gap_driver, 5).until(lambda d: d.execute_script("""
+            var ta = document.getElementById('notes-text');
+            var disp = document.getElementById('notes-display');
+            return ((ta ? ta.value : '') || (disp ? disp.innerText : '')).indexOf('Selection from') >= 0;
+        """))
 
         # Check Notes tab — should have the selection appended
         click_right_tab(gap_driver, 'notes-right')
-        time.sleep(0.3)
 
         notes_text = gap_driver.execute_script("""
             var ta = document.getElementById('notes-text');
@@ -910,7 +931,12 @@ class TestHostChecked:
         row_a = wait_row(gap_driver, IP_A)
         ActionChains(gap_driver).context_click(row_a).perform()
         ctx_menu_click(gap_driver, 'checked')
-        time.sleep(POLL)
+        # Wait for snapshot poll to re-render the row with host-checked class
+        W(gap_driver, 5).until(lambda d: 'host-checked' in (
+            d.find_elements(By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP_A}"]')[0]
+             .get_attribute('class') or ''
+            if d.find_elements(By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP_A}"]')
+            else ''))
         row_a = wait_row(gap_driver, IP_A)
         classes = row_a.get_attribute('class') or ''
         assert 'host-checked' in classes, \
@@ -930,7 +956,12 @@ class TestHostChecked:
         row_a = wait_row(gap_driver, IP_A)
         ActionChains(gap_driver).context_click(row_a).perform()
         ctx_menu_click(gap_driver, 'unchecked')
-        time.sleep(POLL)
+        # Wait for snapshot poll to re-render the row without host-checked class
+        W(gap_driver, 5).until(lambda d: 'host-checked' not in (
+            d.find_elements(By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP_A}"]')[0]
+             .get_attribute('class') or ''
+            if d.find_elements(By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP_A}"]')
+            else ''))
         row_a = wait_row(gap_driver, IP_A)
         classes = row_a.get_attribute('class') or ''
         assert 'host-checked' not in classes, \

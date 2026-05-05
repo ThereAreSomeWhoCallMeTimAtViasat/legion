@@ -154,8 +154,21 @@ def navigate_fb_to(driver, path):
     fb_path = driver.find_element(By.ID, 'fb-path')
     fb_path.clear()
     fb_path.send_keys(path)
+    # Insert a sentinel child element into fb-list before clicking Go.
+    # fbNavigate() calls list.innerHTML='' which wipes ALL children including
+    # our sentinel.  After repopulation, the sentinel is gone — that confirms
+    # the async fetchJson completed and fb.current has been updated.
+    driver.execute_script("""
+        var list=document.getElementById('fb-list');
+        if(list) {
+            var s=document.createElement('span');
+            s.id='fb-nav-sentinel';
+            list.appendChild(s);
+        }
+    """)
     driver.find_element(By.ID, 'fb-go').click()
-    time.sleep(0.5)
+    # Wait for the sentinel to disappear (fbNavigate innerHTML='' wipes it)
+    W(driver, 5).until(lambda d: not d.find_elements(By.ID, 'fb-nav-sentinel'))
 
 
 def fb_type_filename(driver, name):
@@ -354,7 +367,9 @@ class TestProjectSaveOpen:
         fb_type_filename(proj_driver, SAVE_FILENAME)
         fb_click_select(proj_driver)
         modal_is_closed(proj_driver, 'file-browser-modal')
-        time.sleep(0.5)
+        # Wait for the window title to reflect the saved project name
+        W(proj_driver, 5).until(lambda d: SAVE_FILENAME in (
+            d.find_element(By.ID, 'window-title').text))
 
         # New project
         new_project_via_api(proj_driver, proj_server['url'])
@@ -370,7 +385,9 @@ class TestProjectSaveOpen:
         fb_type_filename(proj_driver, SAVE_FILENAME)
         fb_click_select(proj_driver)
         modal_is_closed(proj_driver, 'file-browser-modal')
-        time.sleep(0.5)
+        # Wait for the window title to reflect the saved project name
+        W(proj_driver, 5).until(lambda d: SAVE_FILENAME in (
+            d.find_element(By.ID, 'window-title').text))
 
         new_project_via_api(proj_driver, proj_server['url'])
 
@@ -396,7 +413,9 @@ class TestProjectSaveOpen:
         fb_type_filename(proj_driver, SAVE_FILENAME)
         fb_click_select(proj_driver)
         modal_is_closed(proj_driver, 'file-browser-modal')
-        time.sleep(0.5)
+        # Wait for the window title to reflect the saved project name
+        W(proj_driver, 5).until(lambda d: SAVE_FILENAME in (
+            d.find_element(By.ID, 'window-title').text))
 
         # New
         new_project_via_api(proj_driver, proj_server['url'])
@@ -455,7 +474,9 @@ class TestProjectSaveOpen:
         notes_btn = proj_driver.find_element(
             By.CSS_SELECTOR, '#right-tab-bar [data-tab="notes-right"]')
         js_click(proj_driver, notes_btn)
-        time.sleep(0.3)
+        # Wait for the notes panel to become visible/active
+        W(proj_driver, 5).until(lambda d: 'active' in (
+            d.find_element(By.ID, 'notes-right').get_attribute('class') or ''))
 
         # Note text should be in either #notes-display or #notes-text
         notes_text = ''

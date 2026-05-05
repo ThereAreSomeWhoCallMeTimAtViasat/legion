@@ -242,12 +242,16 @@ class TestOpenTerminal:
         row = term_driver.find_element(By.CSS_SELECTOR,
             '#hosts-body tr[data-host-ip="10.88.88.1"]')
         ActionChains(term_driver).context_click(row).perform()
-        time.sleep(0.5)
+        # Wait for the context menu to appear
+        from selenium.webdriver.support.ui import WebDriverWait as _WDW
+        from selenium.webdriver.support import expected_conditions as _EC
+        _WDW(term_driver, 5).until(_EC.presence_of_element_located((By.ID, 'ctx-menu')))
         menu = term_driver.find_element(By.ID, 'ctx-menu')
         labels = [b.text for b in menu.find_elements(By.TAG_NAME, 'button')]
         # Dismiss menu
         term_driver.find_element(By.TAG_NAME, 'body').click()
-        time.sleep(0.2)
+        # Wait for menu to disappear
+        _WDW(term_driver, 3).until(lambda d: not d.find_elements(By.ID, 'ctx-menu'))
         assert any('Open Terminal' in l for l in labels), \
             f"'Open Terminal' not in host menu: {labels}"
 
@@ -365,7 +369,11 @@ class TestUpperDynamicTabTerminal:
         """Clicking a regular (echo) dynamic tab shows plain text, not xterm.js."""
         self._select_host(term_driver)
         self._click_dynamic_tab(term_driver, 'plain-proc')
-        time.sleep(0.5)
+        # _click_dynamic_tab already waits POLL+0.5; plain tab should have output content
+        from selenium.webdriver.support.ui import WebDriverWait as _WDW
+        _WDW(term_driver, 5).until(lambda d: d.execute_script(
+            "var tc=document.querySelector('.dynamic-tab-content.active'); "
+            "return tc ? tc.textContent.trim().length > 0 : false;"))
 
         # _dynTermState should NOT have a session for a plain process
         has_session = term_driver.execute_script("""

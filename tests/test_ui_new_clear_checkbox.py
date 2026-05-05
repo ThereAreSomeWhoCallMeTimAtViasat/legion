@@ -184,7 +184,9 @@ class TestFileNewClearsUI:
         # Select the process so its output loads in plain-output
         js(drv, "document.querySelector('[data-tab=\"processes-panel\"]') && "
                 "document.querySelector('[data-tab=\"processes-panel\"]').click()")
-        time.sleep(0.3)
+        # Wait for the processes panel to become active
+        W(drv, 5).until(lambda d: len(d.find_elements(
+            By.CSS_SELECTOR, '#processes-body tr')) > 0)
         row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{pid}"]')))
         js(drv, 'arguments[0].click()', row)
@@ -230,7 +232,10 @@ class TestFileNewClearsUI:
             setText('window-title', _VERSION + ' \u2013 *untitled');
             pollSnapshot();
         """)
-        time.sleep(0.5)   # let pollSnapshot settle before API polling
+        # Wait for the JS snapshot poll to update L.processes to empty before API polling
+        W(drv, 5).until(lambda d: d.execute_script(
+            "return typeof L !== 'undefined' && Array.isArray(L.processes) "
+            "&& L.processes.length === 0"))
 
         # Wait for the new empty project to be confirmed via API — more reliable
         # than a fixed sleep because in-flight snapshot polls can still carry old data
@@ -370,9 +375,12 @@ class TestProcessCheckboxColumn:
 
         # Navigate to Scan tab / Processes panel
         js(drv, "document.querySelector('[data-tab=\"scan-tab\"]').click()")
-        time.sleep(0.3)
+        W(drv, 5).until(lambda d: 'active' in (
+            d.find_element(By.CSS_SELECTOR, '[data-tab="scan-tab"]').get_attribute('class') or ''))
         js(drv, "var b=document.querySelector('[data-tab=\"processes-panel\"]'); if(b) b.click();")
-        time.sleep(0.5)
+        # Wait for processes body to have rows before yielding to tests
+        W(drv, 8).until(lambda d: len(d.find_elements(
+            By.CSS_SELECTOR, '#processes-body tr[data-process-id]')) >= 2)
 
         yield
 
@@ -498,7 +506,9 @@ class TestProcessCheckboxColumn:
         # Click the checked column header
         th = self._checked_header_th(drv)
         js(drv, 'arguments[0].click()', th)
-        time.sleep(0.5)
+        # Wait for the sort indicator to appear in the column header
+        W(drv, 5).until(lambda d: any(c in self._checked_header_th(d).text
+                                      for c in ('▲', '▼', '☑')))
 
         # proc_a (checked) must appear before proc_b (unchecked) in the DOM
         rows = drv.find_elements(By.CSS_SELECTOR, '#processes-body tr[data-process-id]')
@@ -522,8 +532,14 @@ class TestProcessCheckboxColumn:
         """Clicking the header a second time reverses the sort
         (unchecked rows appear before checked rows)."""
         th = self._checked_header_th(drv)
+        # Get the current order to detect the sort reversal
+        before_order = [r.get_attribute('data-process-id') for r in
+                        drv.find_elements(By.CSS_SELECTOR, '#processes-body tr[data-process-id]')]
         js(drv, 'arguments[0].click()', th)  # second click → descending
-        time.sleep(0.5)
+        # Wait for the row order to change (sort reversed)
+        W(drv, 5).until(lambda d: [r.get_attribute('data-process-id') for r in
+            d.find_elements(By.CSS_SELECTOR, '#processes-body tr[data-process-id]')]
+            != before_order)
 
         rows = drv.find_elements(By.CSS_SELECTOR, '#processes-body tr[data-process-id]')
         pids_in_order = [r.get_attribute('data-process-id') for r in rows]

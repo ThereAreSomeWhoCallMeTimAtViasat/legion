@@ -307,7 +307,9 @@ class TestSplittersDraggable:
 
         dx, dy = (0, delta_px) if is_height else (delta_px, 0)
         ActionChains(drv).click_and_hold(sp).move_by_offset(dx, dy).release().perform()
-        time.sleep(0.4)
+        # Wait for the splitter drag to update the target element's size
+        W(drv, 5).until(lambda d: d.execute_script(
+            f"return document.getElementById('{target_id}').{prop}") != before)
 
         after = js(drv, f"return document.getElementById('{target_id}').{prop}")
         assert abs(after - before) >= 30, (
@@ -377,7 +379,10 @@ class TestSplittersDraggable:
             var td = document.getElementById('tools-display');
             return td ? window.getComputedStyle(td).display : 'none';
         """) == 'flex')
-        time.sleep(0.5)
+        # Wait for the tools-table-wrap element to have a non-zero offsetWidth
+        # (flex layout fully resolved before we start measuring/dragging)
+        W(drv, 5).until(lambda d: js(d,
+            "return document.getElementById('tools-table-wrap').offsetWidth") > 0)
 
         sp = W(drv).until(EC.presence_of_element_located((By.ID, 'tools-vsplitter')))
         style_before = js(drv,
@@ -393,7 +398,9 @@ class TestSplittersDraggable:
             }
         """)
         ActionChains(drv).click_and_hold(sp).move_by_offset(80, 0).release().perform()
-        time.sleep(0.3)
+        # Wait for the drag handler to write a new width to tools-table-wrap.style.width
+        W(drv, 5).until(lambda d: js(d,
+            "return document.getElementById('tools-table-wrap').style.width") not in ('', '275px'))
 
         style_after = js(drv,
             "return document.getElementById('tools-table-wrap').style.width")
@@ -509,7 +516,10 @@ class TestScanTabStateRestoration:
         js(drv, """
             document.querySelector('#main-tab-bar [data-tab="brute-tab"]').click();
         """)
-        time.sleep(0.3)
+        # Wait for the Brute tab to become active before switching back
+        W(drv, 5).until(lambda d: 'active' in (
+            d.find_element(By.CSS_SELECTOR, '#main-tab-bar [data-tab="brute-tab"]')
+             .get_attribute('class') or ''))
         js(drv, """
             document.querySelector('#main-tab-bar [data-tab="scan-tab"]').click();
         """)
@@ -524,7 +534,10 @@ class TestScanTabStateRestoration:
         btn = W(drv).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#right-tab-bar [data-tab="{tab_id}"]')))
         js(drv, 'arguments[0].click()', btn)
-        time.sleep(0.3)
+        # Wait for the tab to become active
+        W(drv, 5).until(lambda d: 'active' in (
+            d.find_element(By.CSS_SELECTOR, f'#right-tab-bar [data-tab="{tab_id}"]')
+             .get_attribute('class') or ''))
         assert self._active_right_tab(drv) == tab_id, \
             f"Could not activate {tab_id} before the Brute-switch test"
 
@@ -572,7 +585,10 @@ class TestScanTabStateRestoration:
         os_btn = W(drv).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, '#left-tab-bar [data-tab="os-panel"]')))
         js(drv, 'arguments[0].click()', os_btn)
-        time.sleep(0.3)
+        # Wait for os-panel to become the active left tab
+        W(drv, 5).until(lambda d: 'active' in (
+            d.find_element(By.CSS_SELECTOR, '#left-tab-bar [data-tab="os-panel"]')
+             .get_attribute('class') or ''))
         assert self._active_left_tab(drv) == 'os-panel'
         self._switch_brute_then_scan(drv)
         got = self._active_left_tab(drv)

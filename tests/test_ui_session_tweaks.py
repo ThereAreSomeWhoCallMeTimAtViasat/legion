@@ -210,13 +210,17 @@ class TestClearProcessClearsOutput:
 
         # Click the process row to load output in plain-output
         js(drv, "document.querySelector('[data-tab=\"scan-tab\"]').click()")
-        time.sleep(0.3)
+        W(drv, 5).until(lambda d: 'active' in (
+            d.find_element(By.CSS_SELECTOR, '[data-tab="scan-tab"]').get_attribute('class') or ''))
         js(drv, "var b=document.querySelector('[data-tab=\"processes-panel\"]'); if(b) b.click();")
-        time.sleep(0.3)
+        W(drv, 5).until(lambda d: len(d.find_elements(
+            By.CSS_SELECTOR, '#processes-body tr')) > 0)
         row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{pid}"]')))
         js(drv, 'arguments[0].click()', row)
-        time.sleep(1.5)
+        # Wait for output to load in plain-output panel
+        W(drv, 10).until(lambda d: bool(
+            js(d, "return document.getElementById('plain-output').textContent.trim()")))
         yield
 
     def _plain_output_text(self, drv):
@@ -236,7 +240,8 @@ class TestClearProcessClearsOutput:
         row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{pid}"]')))
         ActionChains(drv).context_click(row).perform()
-        time.sleep(0.5)
+        # Wait for the context menu to appear
+        W(drv, 5).until(EC.presence_of_element_located((By.ID, 'ctx-menu')))
         # Find and click the "Clear" option in the context menu
         menu = W(drv, 4).until(EC.presence_of_element_located((By.ID, 'ctx-menu')))
         btns = menu.find_elements(By.TAG_NAME, 'button')
@@ -244,7 +249,8 @@ class TestClearProcessClearsOutput:
         if clear_btn is None:
             pytest.skip("No 'Clear' option in process context menu")
         js(drv, 'arguments[0].click()', clear_btn)
-        time.sleep(2.0)  # wait for postJson + pollSnapshot
+        # Wait for the Clear action to empty plain-output (postJson + JS side-effect)
+        W(drv, 8).until(lambda d: not self._plain_output_text(d).strip())
         text = self._plain_output_text(drv)
         assert not text.strip(), \
             f"plain-output still has content after context-menu Clear: {text[:80]!r}"
@@ -263,7 +269,7 @@ class TestHostInputCommaValidation:
         """Open the Add Hosts modal."""
         js(drv, "document.getElementById('action-add-hosts') && "
                 "document.getElementById('action-add-hosts').click()")
-        time.sleep(0.4)
+        # Wait directly for the modal to become visible — no fixed sleep needed
         W(drv, 5).until(EC.visibility_of_element_located((By.ID, 'add-hosts-modal')))
 
     def _enter_target(self, drv, target):
@@ -274,7 +280,16 @@ class TestHostInputCommaValidation:
     def _click_add(self, drv):
         btn = drv.find_element(By.ID, 'add-hosts-start')
         js(drv, 'arguments[0].click()', btn)
-        time.sleep(0.8)
+        # Client-side validation runs synchronously; server validation is async.
+        # Wait for validation element to become visible OR for modal to close.
+        W(drv, 5).until(lambda d: (
+            d.execute_script(
+                "var el=document.getElementById('add-hosts-validation');"
+                "if(!el) return false;"
+                "var s=el.getAttribute('style')||'';"
+                "return el.textContent.trim() || (s.indexOf('none')===-1);")
+            or 'is-open' not in (
+                d.find_element(By.ID, 'add-hosts-modal').get_attribute('class') or '')))
 
     def _validation_msg(self, drv):
         el = drv.find_element(By.ID, 'add-hosts-validation')
@@ -286,7 +301,9 @@ class TestHostInputCommaValidation:
                     "if(m) m.classList.remove('is-open');")
         except Exception:
             pass
-        time.sleep(0.2)
+        # Wait for the modal to not have is-open class
+        W(drv, 3).until(lambda d: 'is-open' not in (
+            d.find_element(By.ID, 'add-hosts-modal').get_attribute('class') or ''))
 
     # ── Octet shorthand is valid ────────────────────────────────────────────
 
@@ -349,13 +366,21 @@ class TestAddHostsErrorDisplay:
     def _open_and_enter(self, drv, target):
         js(drv, "document.getElementById('action-add-hosts') && "
                 "document.getElementById('action-add-hosts').click()")
-        time.sleep(0.4)
+        # Wait directly for the modal to become visible
         W(drv, 5).until(EC.visibility_of_element_located((By.ID, 'add-hosts-modal')))
         ta = drv.find_element(By.ID, 'add-hosts-targets')
         ta.clear(); ta.send_keys(target)
         btn = drv.find_element(By.ID, 'add-hosts-start')
         js(drv, 'arguments[0].click()', btn)
-        time.sleep(1.0)
+        # Wait for validation message to appear or modal to close
+        W(drv, 8).until(lambda d: (
+            d.execute_script(
+                "var el=document.getElementById('add-hosts-validation');"
+                "if(!el) return false;"
+                "var s=el.getAttribute('style')||'';"
+                "return el.textContent.trim() || (s.indexOf('none')===-1);")
+            or 'is-open' not in (
+                d.find_element(By.ID, 'add-hosts-modal').get_attribute('class') or '')))
 
     def _close_modal(self, drv):
         try:
@@ -363,7 +388,9 @@ class TestAddHostsErrorDisplay:
                     "if(m) m.classList.remove('is-open');")
         except Exception:
             pass
-        time.sleep(0.2)
+        # Wait for the modal to not have is-open class
+        W(drv, 3).until(lambda d: 'is-open' not in (
+            d.find_element(By.ID, 'add-hosts-modal').get_attribute('class') or ''))
 
     def test_validation_element_exists(self, drv, srv):
         """#add-hosts-validation must be present in the DOM."""
@@ -421,7 +448,9 @@ class TestSplitterNonZeroOnClick:
         splitter = drv.find_element(By.ID, 'proc-vsplitter')
         # Mousedown + mouseup without moving = click without drag
         ActionChains(drv).move_to_element(splitter).click().perform()
-        time.sleep(0.3)
+        # A click-without-drag should NOT collapse the pane; width stays > 0
+        # Give the DOM one animation frame to settle before reading the result
+        W(drv, 3).until(lambda d: self._width_of(d, 'proc-table-wrap') >= 0)
 
         after = self._width_of(drv, 'proc-table-wrap')
         assert after > 0, \
@@ -435,7 +464,7 @@ class TestSplitterNonZeroOnClick:
 
         splitter = drv.find_element(By.ID, 'main-vsplitter')
         ActionChains(drv).move_to_element(splitter).click().perform()
-        time.sleep(0.3)
+        W(drv, 3).until(lambda d: self._width_of(d, 'left-panel') >= 0)
 
         after = self._width_of(drv, 'left-panel')
         assert after > 0, \
@@ -449,7 +478,7 @@ class TestSplitterNonZeroOnClick:
 
         splitter = drv.find_element(By.ID, 'main-hsplitter')
         ActionChains(drv).move_to_element(splitter).click().perform()
-        time.sleep(0.3)
+        W(drv, 3).until(lambda d: self._height_of(d, 'bottom-section') >= 0)
 
         after = self._height_of(drv, 'bottom-section')
         assert after > 0, \
@@ -479,7 +508,9 @@ class TestHorizontalSplitterDirection:
             .move_by_offset(0, 60)\
             .release()\
             .perform()
-        time.sleep(0.3)
+        # Wait for the height to change (drag handler updates DOM synchronously on mouseup)
+        W(drv, 5).until(lambda d: js(d,
+            "return document.getElementById('bottom-section').offsetHeight") != before)
 
         after = js(drv, "return document.getElementById('bottom-section').offsetHeight")
         assert after < before, \
@@ -497,7 +528,9 @@ class TestHorizontalSplitterDirection:
             .move_by_offset(0, -60)\
             .release()\
             .perform()
-        time.sleep(0.3)
+        # Wait for the height to change
+        W(drv, 5).until(lambda d: js(d,
+            "return document.getElementById('bottom-section').offsetHeight") != before)
 
         after = js(drv, "return document.getElementById('bottom-section').offsetHeight")
         assert after > before, \
@@ -644,7 +677,7 @@ class TestContextMenuScrollArrows:
     def test_top_arrow_hidden_at_scroll_top(self, drv, srv):
         """The ▲ 'more above' arrow must be display:none when list.scrollTop == 0."""
         self._open_port_menu(drv)
-        time.sleep(0.3)
+        # _open_port_menu already waits for #ctx-menu to be present
         result = js(drv, """
             var m = document.getElementById('ctx-menu');
             if (!m) return 'NO_MENU';
@@ -665,7 +698,7 @@ class TestContextMenuScrollArrows:
     def test_top_arrow_appears_after_scrolling_down(self, drv, srv):
         """After scrolling the list down, the ▲ 'more above' arrow must appear."""
         self._open_port_menu(drv)
-        time.sleep(0.3)
+        # _open_port_menu already waits for #ctx-menu to be present
         result = js(drv, """
             var m = document.getElementById('ctx-menu');
             if (!m) return 'NO_MENU';
@@ -704,7 +737,7 @@ class TestConfigManagerSave:
         """Open the Config Manager modal."""
         js(drv, "document.getElementById('action-config') && "
                 "document.getElementById('action-config').click()")
-        time.sleep(0.5)
+        # Wait directly for the modal to become visible — no fixed sleep needed
         W(drv, 6).until(EC.visibility_of_element_located((By.ID, 'config-modal')))
 
     def _close_config(self, drv):
@@ -714,7 +747,9 @@ class TestConfigManagerSave:
         except Exception:
             js(drv, "var m=document.getElementById('config-modal');"
                     "if(m) m.classList.remove('is-open');")
-        time.sleep(0.3)
+        # Wait for the modal to no longer have is-open class
+        W(drv, 5).until(lambda d: 'is-open' not in (
+            d.find_element(By.ID, 'config-modal').get_attribute('class') or ''))
 
     def _config_status_text(self, drv):
         return js(drv, "var s=document.getElementById('config-status');"

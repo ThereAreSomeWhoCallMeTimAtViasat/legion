@@ -515,7 +515,8 @@ class TestTabIndicatorIsolation:
             "var b=document.querySelector('#right-tab-bar [data-tab=\"info-right\"]'); if(b) b.classList.add('tab-unread');")
         assert self._tab_is_orange(mh_driver, 'info-right'), "Could not set orange"
         click_right_tab(mh_driver, 'info-right')
-        time.sleep(0.3)
+        # Wait for the tab-unread class to be removed by the click handler
+        W(mh_driver, 5).until(lambda d: not self._tab_is_orange(d, 'info-right'))
         assert not self._tab_is_orange(mh_driver, 'info-right'), \
             "Orange not cleared after clicking the tab"
 
@@ -528,7 +529,8 @@ class TestTabIndicatorIsolation:
 
         # Switch to B — clearAllTabHighlights should fire
         select_host(mh_driver, IP_B)
-        time.sleep(0.3)
+        # Wait for the tab-unread class to be cleared by the host switch handler
+        W(mh_driver, 5).until(lambda d: not self._tab_is_orange(d, 'cves-right'))
         assert not self._tab_is_orange(mh_driver, 'cves-right'), \
             "Tab-unread not cleared when switching from host A to host B"
 
@@ -556,7 +558,9 @@ class TestOSTabIsolation:
         for r in rows:
             if text_fragment.lower() in r.text.lower():
                 js_click(driver, r)
-                time.sleep(0.3)
+                # Wait for the OS hosts list to update after the row click
+                W(driver, 5).until(lambda d: len(
+                    d.find_elements(By.CSS_SELECTOR, '#os-hosts-body tr')) > 0)
                 return True
         return False
 
@@ -588,7 +592,7 @@ class TestOSTabIsolation:
         clicked = self._click_os_row(mh_driver, 'Linux')
         if not clicked:
             self._click_os_row(mh_driver, '4.x')
-        time.sleep(0.3)
+        # _click_os_row already waits for #os-hosts-body rows to appear
         ips = self._os_hosts_ips(mh_driver)
         assert IP_A in ips, f"{IP_A} not in Linux host list: {ips}"
         assert IP_B not in ips, \
@@ -600,7 +604,7 @@ class TestOSTabIsolation:
         clicked = self._click_os_row(mh_driver, 'Windows')
         if not clicked:
             self._click_os_row(mh_driver, '10')
-        time.sleep(0.3)
+        # _click_os_row already waits for #os-hosts-body rows to appear
         ips = self._os_hosts_ips(mh_driver)
         assert IP_B in ips, f"{IP_B} not in Windows host list: {ips}"
         assert IP_A not in ips, \
