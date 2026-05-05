@@ -249,6 +249,7 @@ class WebController:
         self._scan_generation = {}
         self._screenshots_taken = set()   # reset per project — was lazily init'd, leaked across project switches
         self._checked_process_ids = set() # process IDs selected via checkbox column
+        self._deleted_hosts = set()       # reset per project — deletions must not blacklist re-seeded hosts
         self._scan_uptime_start = None    # wall time when first non-interactive process started
         self._scan_uptime_end   = None    # wall time when last non-interactive process finished
         self._shutting_down     = False   # set True in killRunningProcesses() to block scheduler

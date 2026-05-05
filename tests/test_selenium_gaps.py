@@ -109,6 +109,13 @@ def ensure_seed_hosts(gap_server, gap_driver):
             f.write(_SEED); p = f.name
         import_nmap_xml(project=gap_server['logic'].activeProject, xml_path=p, output="")
         os.unlink(p)
+        # Clear _deleted_hosts so re-seeded IPs are not blacklisted in _capture_output.
+        # test_delete_removes_host_from_ui adds the IP to _deleted_hosts; without this
+        # clear, new processes for the re-seeded host silently skip all DB writes and
+        # never reach 'Finished' status, causing wait_process_status to time out.
+        wc = gap_server['wc']
+        for ip in (IP_A, IP_B):
+            getattr(wc, '_deleted_hosts', set()).discard(ip)
         W(gap_driver, 5).until(lambda d: len(
             d.find_elements(By.CSS_SELECTOR, '#hosts-body tr[data-host-id]')) >= 2)
     # Reset UI state
