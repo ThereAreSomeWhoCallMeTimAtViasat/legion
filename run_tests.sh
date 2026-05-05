@@ -116,10 +116,10 @@ _frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 spinner_start() {
     local label="$1"
     (
-        local i=0
+        i=0
         while true; do
-            local f="${_frames[$((i % 10))]}"
-            local e=$(( $(date +%s) - SCRIPT_START ))
+            f="${_frames[$((i % 10))]}"
+            e=$(( $(date +%s) - SCRIPT_START ))
             printf "\r  ${CYAN}%s${NC} %-45s  ${YELLOW}[%02d:%02d]${NC}  ${DIM}%s #%d${NC}  " \
                 "$f" "$label" $(( e/60 )) $(( e%60 )) \
                 "$SECTION_NAME" "$SECTION_SUITE_DONE" >&2
