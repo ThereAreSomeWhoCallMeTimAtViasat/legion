@@ -39,13 +39,26 @@ def create_test_app(enable_scheduler=False):
     logic.createNewTemporaryProject()
 
     settings = Settings(AppSettings())
+    wc = WebController(logic, settings)
+
     if not enable_scheduler:
         # Disable scheduler so seeding a test host doesn't spawn real background
         # tool processes (nikto, whatweb, gobuster, etc.) that race against the
         # test's project-switch operations (new-temp, save-as, open) and cause
         # "no such table" SQLite errors when they land on a transitioning engine.
-        settings.general_enable_scheduler = False
-    wc = WebController(logic, settings)
+        #
+        # We patch applySettings() on the instance rather than setting the flag
+        # on the settings object, because POST /api/settings/legion-conf (called
+        # by the config-save tests) triggers wc.applySettings() which reloads
+        # Settings(AppSettings()) from disk and overwrites any in-memory override.
+        _orig_apply = wc.applySettings.__func__  # unbound method
+        def _apply_no_scheduler(self_wc):
+            _orig_apply(self_wc)                 # reload from disk as normal
+            self_wc.settings.general_enable_scheduler = False  # re-apply override
+        import types
+        wc.applySettings = types.MethodType(_apply_no_scheduler, wc)
+        wc.settings.general_enable_scheduler = False
+
     wc.start()
 
     app = Flask(__name__,
