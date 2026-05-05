@@ -146,7 +146,8 @@ def test_b_load_host_detail_rerenders_with_colour(drv, srv):
     host_row = W(drv).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP}"]')))
     js(drv, 'arguments[0].click()', host_row)
-    time.sleep(1.5)  # allow loadHostDetail to complete
+    # Wait for L.selectedHostIp to update — proves loadHostDetail was invoked
+    W(drv, 5).until(lambda d: js(d, "return (L && L.selectedHostIp) || ''") == IP)
 
     # Click the Notes tab
     notes_btn = W(drv).until(EC.presence_of_element_located(
@@ -182,7 +183,8 @@ def test_c_snapshot_triggered_rerender_preserves_colour(drv, srv):
     host_row = W(drv).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP}"]')))
     js(drv, 'arguments[0].click()', host_row)
-    time.sleep(1.0)
+    # Wait for L.selectedHostIp to update — proves loadHostDetail was invoked
+    W(drv, 5).until(lambda d: js(d, "return (L && L.selectedHostIp) || ''") == IP)
 
     # Open Notes tab
     js(drv, "var b=document.querySelector('#right-tab-bar [data-tab=\"notes-right\"]');"
@@ -225,7 +227,8 @@ def test_d_notes_tab_click_away_and_back(drv, srv):
     js(drv, 'arguments[0].click()',
        W(drv).until(EC.presence_of_element_located(
            (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP}"]'))))
-    time.sleep(1.0)
+    # Wait for L.selectedHostIp to update — proves loadHostDetail was invoked
+    W(drv, 5).until(lambda d: js(d, "return (L && L.selectedHostIp) || ''") == IP)
 
     # CALL A: open Notes tab, verify colour
     js(drv, "var b=document.querySelector('#right-tab-bar [data-tab=\"notes-right\"]');"
@@ -238,7 +241,10 @@ def test_d_notes_tab_click_away_and_back(drv, srv):
     # Click Info tab (different right-panel tab, same host)
     js(drv, "var b=document.querySelector('#right-tab-bar [data-tab=\"info-right\"]');"
             "if(b) b.click();")
-    time.sleep(2)  # snapshot fires, may trigger loadHostDetail
+    # Wait for the info-right tab to actually become active — replaces 2s sleep
+    W(drv, 5).until(lambda d: 'active' in (
+        d.find_element(By.CSS_SELECTOR, '#right-tab-bar [data-tab="info-right"]')
+         .get_attribute('class') or ''))
 
     # Click Notes tab back
     js(drv, "var b=document.querySelector('#right-tab-bar [data-tab=\"notes-right\"]');"
@@ -285,7 +291,8 @@ def test_e_edit_mode_preserves_ansi_on_blur(drv, srv):
     js(drv, 'arguments[0].click()',
        W(drv).until(EC.presence_of_element_located(
            (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP}"]'))))
-    time.sleep(1.0)
+    # Wait for L.selectedHostIp to update — proves loadHostDetail was invoked
+    W(drv, 5).until(lambda d: js(d, "return (L && L.selectedHostIp) || ''") == IP)
 
     # Open Notes tab
     js(drv, "var b=document.querySelector('#right-tab-bar [data-tab=\"notes-right\"]');"
@@ -309,9 +316,20 @@ def test_e_edit_mode_preserves_ansi_on_blur(drv, srv):
     assert 'CYAN_EDIT' in ta_value, \
         f"Note text lost from textarea: {repr(ta_value[:100])}"
 
-    # Blur the textarea (user clicks elsewhere after editing)
+    # Blur the textarea (user clicks elsewhere after editing).
+    # Wait for the notes-display element to refresh — the blur handler triggers
+    # storeNotes + loadHostDetail which re-renders.  Replaces 1s sleep.
     js(drv, "document.getElementById('notes-text').blur();")
-    time.sleep(1.0)  # allow blur handler and loadHostDetail to run
+    # Wait for the notes-display textContent to contain the saved notes content
+    # (we wait a couple of polls; if it doesn't change just continue — the
+    # original test verifies the post-state regardless).
+    _bd = time.time() + 3
+    _initial_html = js(drv, "return document.getElementById('notes-display').innerHTML") or ''
+    while time.time() < _bd:
+        _cur = js(drv, "return document.getElementById('notes-display').innerHTML") or ''
+        if _cur and _cur != _initial_html:
+            break
+        time.sleep(0.2)
 
     # CALL B: separate call — notes-display must still be coloured
     html_post = js(drv, "return document.getElementById('notes-display').innerHTML") or ''

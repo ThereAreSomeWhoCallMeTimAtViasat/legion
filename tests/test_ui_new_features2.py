@@ -145,7 +145,23 @@ def _get_host_note(host_id):
 
 def _switch_left_tab(drv, tab_id):
     js(drv, f"document.querySelector('[data-tab=\"{tab_id}\"]').click()")
-    time.sleep(0.8)
+    # Wait for the tab to become active — replaces 0.8s sleep
+    W(drv, 5).until(lambda d: 'active' in (
+        d.find_element(By.CSS_SELECTOR, f'[data-tab="{tab_id}"]')
+         .get_attribute('class') or ''))
+
+
+def _wait_dom_row(drv, css_selector, present=True, timeout=8):
+    """Wait until a DOM row matching `css_selector` is present (or absent)."""
+    if present:
+        W(drv, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, css_selector)) >= 1)
+    else:
+        W(drv, timeout).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, css_selector)) == 0)
+
+
+def _wait_host_selected(drv, ip, timeout=5):
+    """Wait until L.selectedHostIp == ip (proves loadHostDetail ran)."""
+    W(drv, timeout).until(lambda d: js(d, "return (L && L.selectedHostIp) || ''") == ip)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -236,14 +252,25 @@ class TestToolHostTruncation:
 
         _wait_proc_done_api(pid_long, timeout=20)
         _wait_proc_done_api(pid_short, timeout=20)
-        time.sleep(2.0)
+        # Wait for the tool entry to appear in the snapshot's tools list
+        _deadline = time.time() + 8
+        while time.time() < _deadline:
+            try:
+                snap = _snapshot()
+                if any(t.get('name') == _TRUNC_TOOL for t in snap.get('tools', [])):
+                    break
+            except Exception:
+                pass
+            time.sleep(0.2)
 
         # Navigate to Tools tab and click the trunc-test-tool entry
         _switch_left_tab(drv, 'tools-panel-left')
         tool_row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#tools-body tr[data-tool-id="{_TRUNC_TOOL}"]')))
         js(drv, 'arguments[0].click()', tool_row)
-        time.sleep(1.5)
+        # Wait for both pid rows to render in tool-hosts-body
+        W(drv, 8).until(lambda d: len(d.find_elements(
+            By.CSS_SELECTOR, '#tool-hosts-body tr[data-process-id]')) >= 2)
 
         type(self)._pid_long  = str(pid_long)
         type(self)._pid_short = str(pid_short)
@@ -339,7 +366,7 @@ class TestAICompareDropdown:
         host_a_row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP_A}"]')))
         js(drv, 'arguments[0].click()', host_a_row)
-        time.sleep(1.0)
+        _wait_host_selected(drv, IP_A)
         type(self)._host_a_id = _get_host_id(IP_A)
         yield
         # Cleanup: remove any injected history record
@@ -360,10 +387,34 @@ class TestAICompareDropdown:
         Clicks Notes first so the AI tab is never already-active (avoids any
         initTabBar guards that could suppress same-tab re-clicks)."""
         js(drv, "var b=document.querySelector('[data-tab=\"notes-right\"]'); if(b) b.click();")
-        time.sleep(0.2)
+        # Wait for notes-right tab to be active so the next AI click re-activates it
+        W(drv, 5).until(lambda d: 'active' in (
+            d.find_element(By.CSS_SELECTOR, '[data-tab="notes-right"]')
+             .get_attribute('class') or ''))
+
+        # Pre-fetch the history result via the same API the dropdown uses, so
+        # we know what the post-fetch state SHOULD look like before we click.
+        # Replaces 2.5s blind sleep — deterministic instead of probabilistic.
+        host_id = type(self)._host_a_id
+        try:
+            hist = _req.get(f'{BASE}/api/ai/history/similar/{host_id}',
+                            timeout=5).json()
+            expected_matches = len(hist.get('matches', []))
+        except Exception:
+            expected_matches = 0
+        # Each match = 1 option, plus 1 placeholder "Select" header (when
+        # there are matches) OR 1 placeholder "No similar" option (when none).
+        expected_options = expected_matches + 1
+
         ai_btn = W(drv, 5).until(EC.presence_of_element_located((By.ID, 'ai-tab-btn')))
         js(drv, 'arguments[0].click()', ai_btn)
-        time.sleep(2.5)  # async fetch + render
+        # Now wait until the dropdown contains exactly the expected number of
+        # options — this confirms the fetch promise has resolved and the
+        # render is complete.  Window placeholder is replaced atomically so
+        # an in-progress fetch cannot satisfy this check.
+        W(drv, 10).until(lambda d: js(
+            d, "var s=document.getElementById('ai-compare-select');"
+               "return s ? s.options.length : 0") == expected_options)
 
     def _first_option_text(self, drv):
         # #ai-compare-select lives inside #ai-results (display:none until analysis runs).
@@ -491,20 +542,24 @@ class TestCtrlBProperHost:
         pid = r['process_id']
         type(self)._proc_b_id = str(pid)
         _wait_proc_done_api(pid, timeout=20)
-        time.sleep(2.0)
+        # Wait for the row to appear in the DOM table (next we click it)
+        _wait_dom_row(drv, f'#processes-body tr[data-process-id="{pid}"]')
 
         # Select IP_A in the host list so L.selectedHostId = host_a_id
         host_a_row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP_A}"]')))
         js(drv, 'arguments[0].click()', host_a_row)
-        time.sleep(1.0)
+        _wait_host_selected(drv, IP_A)
 
         # Click the IP_B process row in the processes table
         # This loads its output in #plain-output but leaves L.selectedHostId = IP_A
         proc_row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{pid}"]')))
         js(drv, 'arguments[0].click()', proc_row)
-        time.sleep(1.5)  # wait for loadProcessOutput() to fill plain-output
+        # Wait for L.selectedProcessId to update — proves the click handler ran
+        # and loadProcessOutput was triggered.
+        W(drv, 5).until(lambda d:
+            js(d, "return L && String(L.selectedProcessId || '')") == str(pid))
 
         # Verify output is loaded in plain-output
         po = drv.find_element(By.ID, 'plain-output')
@@ -529,7 +584,18 @@ class TestCtrlBProperHost:
 
         # Trigger Ctrl+B via bubble-phase keyboard event on document body
         ActionChains(drv).key_down(Keys.CONTROL).send_keys('b').key_up(Keys.CONTROL).perform()
-        time.sleep(2.5)  # async: fetchJson + postJson for different-host case
+        # Wait for the marker to land in host B's notes via the API.  Replaces
+        # 2.5s blind sleep — the Ctrl+B handler does fetchJson + postJson, so
+        # we poll the note repo for the marker text instead.
+        _deadline = time.time() + 8
+        while time.time() < _deadline:
+            try:
+                _note = _get_host_note(host_b_id) or ''
+                if _CTRLB_MARKER in _note:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.2)
 
         type(self)._host_a_id = host_a_id
         type(self)._host_b_id = host_b_id
@@ -599,7 +665,8 @@ class TestProcessQueueAfterKill:
                            name='queue-kill-proc2', tabTitle='queue-kill-proc2',
                            hostIp=IP_A)
         pid2 = r2['process_id']
-        time.sleep(1.0)  # let queue logic settle
+        # Wait for pid2 to actually be in the snapshot as Waiting — replaces 1s sleep
+        _wait_proc_status(pid2, 'Waiting', timeout=10)
 
         type(self)._pid1 = str(pid1)
         type(self)._pid2 = str(pid2)

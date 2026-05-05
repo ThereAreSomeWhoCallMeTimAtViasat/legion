@@ -108,21 +108,41 @@ def _ensure_scan_tab(d):
     btn = W(d, 5).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, '#main-tab-bar [data-tab="scan-tab"]')))
     js(d, 'arguments[0].click()', btn)
-    time.sleep(0.3)
+    W(d, 3).until(lambda dd: 'active' in (
+        dd.find_element(By.CSS_SELECTOR, '#main-tab-bar [data-tab="scan-tab"]')
+          .get_attribute('class') or ''))
 
 
 def _ensure_processes_tab(d):
     btn = W(d, 5).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, '#bottom-tab-bar [data-tab="processes-panel"]')))
     js(d, 'arguments[0].click()', btn)
-    time.sleep(0.3)
+    W(d, 3).until(lambda dd: 'active' in (
+        dd.find_element(By.CSS_SELECTOR,
+                        '#bottom-tab-bar [data-tab="processes-panel"]')
+          .get_attribute('class') or ''))
 
 
 def _select_host(d, ip=IP):
     row = W(d, 8).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{ip}"]')))
     js(d, 'arguments[0].click()', row)
-    time.sleep(1.0)
+    W(d, 5).until(lambda dd: js(dd, "return (L && L.selectedHostIp) || ''") == ip)
+
+
+def _wait_proc_count(srv_url, predicate, timeout=8):
+    """Poll snapshot until predicate(processes_list) returns True. Returns
+    the matching processes list. Replaces blind sleeps after wc.scheduler()."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            procs = _snap(srv_url).get('processes', [])
+            if predicate(procs):
+                return procs
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return _snap(srv_url).get('processes', [])  # last snapshot if no match
 
 
 # ── fixtures ───────────────────────────────────────────────────────────────
@@ -212,11 +232,15 @@ class TestProcessTableSort:
 
         # Wait for it to actually start (status=Running in snapshot)
         _wait_status(srv_url, run_id, {'Running'}, timeout=10)
-        time.sleep(1.5)  # let snapshot re-render DOM
 
         try:
             _ensure_scan_tab(drv)
             _ensure_processes_tab(drv)
+            # Wait for both pid rows to be in DOM — replaces 1.5s sleep.
+            W(drv, 8).until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{run_id}"]')))
+            W(drv, 8).until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{fin_id}"]')))
 
             # Collect all process rows in their current DOM order
             rows = drv.find_elements(By.CSS_SELECTOR, '#processes-body tr[data-process-id]')
@@ -377,9 +401,21 @@ class TestSchedulerNoDuplication:
 
             count_after_first = len(smtp_ids)
 
-            # Second scheduler call — must NOT create new smtp-enum-vrfy processes
+            # Second scheduler call — must NOT create new smtp-enum-vrfy processes.
+            # Poll for stability: the scheduler's effect (or non-effect) is observable
+            # within ~500ms; we wait up to 3s and verify the count never grows.
             wc.scheduler(isNmapImport=False)
-            time.sleep(2.0)   # allow scheduler to act if it were going to
+            _scheduler_settle_deadline = time.time() + 3
+            count_seen = count_after_first
+            while time.time() < _scheduler_settle_deadline:
+                _live = [str(p['id']) for p in _snap(srv_url).get('processes', [])
+                         if p.get('name') == 'smtp-enum-vrfy'
+                         and p.get('hostIp') == IP
+                         and str(p.get('port', '')) == '25']
+                if len(_live) > count_seen:
+                    count_seen = len(_live)  # short-circuit assertion will catch it
+                    break
+                time.sleep(0.2)
 
             procs2 = _snap(srv_url).get('processes', [])
             smtp_ids2 = [
@@ -419,18 +455,34 @@ class TestSchedulerNoDuplication:
         try:
             # Close all existing smtp-enum-vrfy processes so the dup check sees none
             procs_before = _snap(srv_url).get('processes', [])
+            closed_ids = []
             for p in procs_before:
                 if p.get('name') == 'smtp-enum-vrfy':
                     try:
                         requests.post(f"{srv_url}/api/processes/{p['id']}/close",
                                       timeout=3)
+                        closed_ids.append(str(p['id']))
                     except Exception:
                         pass
-            time.sleep(1.0)
+            # Wait for the closed processes to disappear from snapshot — replaces 1s sleep
+            if closed_ids:
+                _close_deadline = time.time() + 5
+                while time.time() < _close_deadline:
+                    live_ids = {str(p['id']) for p in _snap(srv_url).get('processes', [])}
+                    if not any(cid in live_ids for cid in closed_ids):
+                        break
+                    time.sleep(0.2)
 
-            # Now run the scheduler — should launch smtp-enum-vrfy
+            # Now run the scheduler — should launch smtp-enum-vrfy.
+            # Wait for at least 1 NEW smtp-enum-vrfy proc to appear; replaces 2s sleep.
             wc.scheduler(isNmapImport=False)
-            time.sleep(2.0)
+            _existing_ids = {str(p['id']) for p in procs_before
+                             if p.get('name') == 'smtp-enum-vrfy'}
+            _wait_proc_count(srv_url,
+                lambda procs: any(p.get('name') == 'smtp-enum-vrfy'
+                                  and str(p['id']) not in _existing_ids
+                                  for p in procs),
+                timeout=8)
 
             procs_after = _snap(srv_url).get('processes', [])
             new_smtp = [
@@ -469,7 +521,10 @@ class TestAIReadyHistory:
         ai_tab = W(d, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, '#right-tab-bar [data-tab="ai-right"]')))
         js(d, 'arguments[0].click()', ai_tab)
-        time.sleep(1.5)
+        # Wait for the ai-right tab to become active — replaces 1.5s sleep
+        W(d, 5).until(lambda dd: 'active' in (
+            dd.find_element(By.CSS_SELECTOR, '#right-tab-bar [data-tab="ai-right"]')
+              .get_attribute('class') or ''))
 
     def _get_history_section_display(self, d):
         """Return computed display value of #ai-ready-history."""
@@ -478,6 +533,13 @@ class TestAIReadyHistory:
             if (!el) return 'MISSING';
             return window.getComputedStyle(el).display;
         """)
+
+    def _get_host_id(self, srv, ip):
+        """Look up the DB id for a host by IP (used to construct AI history URLs)."""
+        for h in _snap(srv['url']).get('hosts', []):
+            if h.get('ip') == ip:
+                return h.get('id')
+        return None
 
     def test_history_section_exists_in_dom(self, drv, srv):
         """#ai-ready-history must be present in the DOM (not conditional render)."""
@@ -502,9 +564,16 @@ class TestAIReadyHistory:
 
         self._open_ai_tab(drv, srv)
 
-        # Wait for _aiLoadSimilar to finish (it's async)
-        time.sleep(2.0)
-
+        # Pre-fetch via the same API the JS uses, so we know when the response
+        # is available.  Then poll the DOM until the section's display matches
+        # the expected (hidden) state.  Replaces 2s blind sleep.
+        host_id = self._get_host_id(srv, IP)
+        try:
+            requests.get(f"{srv['url']}/api/ai/history/similar/{host_id}", timeout=5)
+        except Exception:
+            pass
+        W(drv, 8).until(lambda d: self._get_history_section_display(d)
+                                  in ('none', 'MISSING'))
         display = self._get_history_section_display(drv)
         assert display in ('none', 'MISSING') or display == 'none', (
             f"#ai-ready-history should be hidden when no history exists, "
@@ -551,9 +620,12 @@ class TestAIReadyHistory:
         conn.close()
 
         try:
-            # Reload the AI tab so it re-fetches history
+            # Reload the AI tab so it re-fetches history.
+            # Wait until the section becomes visible — the just-inserted history
+            # entry must propagate via the API and the JS render.  Replaces 2.5s sleep.
             self._open_ai_tab(drv, srv)
-            time.sleep(2.5)   # wait for _aiLoadSimilar async fetch
+            W(drv, 10).until(lambda d:
+                self._get_history_section_display(d) not in ('none', 'MISSING'))
 
             display = self._get_history_section_display(drv)
             assert display not in ('none', 'MISSING'), (

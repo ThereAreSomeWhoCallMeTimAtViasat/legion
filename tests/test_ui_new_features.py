@@ -103,9 +103,12 @@ def _wait_proc_done_api(srv_url, proc_id, timeout=30):
 
 
 def _switch_left_tab(drv, tab_id):
-    """Click a left-panel tab button by its data-tab value."""
+    """Click a left-panel tab button by its data-tab value, then wait for it
+    to become active.  Replaces a flat 0.8s sleep."""
     js(drv, f"document.querySelector('[data-tab=\"{tab_id}\"]').click()")
-    time.sleep(0.8)
+    W(drv, 5).until(lambda d: 'active' in (
+        d.find_element(By.CSS_SELECTOR, f'[data-tab="{tab_id}"]')
+         .get_attribute('class') or ''))
 
 
 def _reset_hide_buttons(drv):
@@ -116,6 +119,38 @@ def _reset_hide_buttons(drv):
         if (b1) { b1.dataset.hidden = '0'; b1.textContent = 'Hide Finished'; }
         if (b2) { b2.dataset.hidden = '0'; b2.textContent = 'Hide All'; }
     """)
+
+
+def _wait_btn_text(drv, btn_id, expected, timeout=5):
+    """Wait until the button's textContent equals `expected`.  Replaces fixed
+    sleeps after Hide/Unhide button clicks (which round-trip through postJson
+    and the snapshot poll cycle).  Returns the freshly-found element."""
+    W(drv, timeout).until(lambda d:
+        d.find_element(By.ID, btn_id).text.strip() == expected)
+    return drv.find_element(By.ID, btn_id)
+
+
+def _wait_proc_in_snapshot(srv_url, proc_id, predicate=None, timeout=10):
+    """Poll /api/snapshot until process `proc_id` is present and (optionally)
+    matches `predicate(proc_dict) -> bool`.  Returns the process dict.
+    Replaces flat sleeps after wc.runCommand / wc._matches mutations."""
+    import requests as _r
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        try:
+            for p in _r.get(f"{srv_url}/api/snapshot",
+                            timeout=5).json().get('processes', []):
+                if str(p.get('id')) == str(proc_id):
+                    last = p
+                    if predicate is None or predicate(p):
+                        return p
+        except Exception:
+            pass
+        time.sleep(0.2)
+    raise TimeoutError(
+        f"Process {proc_id} did not match predicate within {timeout}s "
+        f"(last snapshot entry: {last!r})")
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -264,7 +299,12 @@ class TestHideUnhideProcesses:
         pid = result['process_id']
         type(self)._finished_pid = str(pid)
         _wait_proc_done_api(srv['url'], pid, timeout=20)
-        time.sleep(2.0)  # let snapshot render the row
+        # Wait for the row to actually render in the DOM — the snapshot API
+        # shows Finished, but the JS poll cycle still has to fetch it and
+        # re-render the table.  Replaces a flat 2s sleep with a deterministic
+        # wait for the row to appear.
+        W(drv, 8).until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{pid}"]')))
 
         yield
 
@@ -272,7 +312,11 @@ class TestHideUnhideProcesses:
         _requests.post(f"{srv['url']}/api/processes/restore",
                        json={'reset_all': True}, timeout=5)
         _reset_hide_buttons(drv)
-        time.sleep(1.5)
+        # Wait for the snapshot to reflect the restored state — the Finished
+        # process row must come back into the table.  Replaces a 1.5s sleep.
+        _wait_proc_in_snapshot(srv['url'], type(self)._finished_pid,
+                               predicate=lambda p: p.get('status') == 'Finished',
+                               timeout=10)
 
     # ── Hide Finished ──────────────────────────────────────────────────────
 
@@ -294,8 +338,7 @@ class TestHideUnhideProcesses:
         """Clicking 'Hide Finished' changes the label to 'Unhide Finished'."""
         btn = drv.find_element(By.ID, 'process-clear-finished-button')
         btn.click()
-        time.sleep(2.5)  # wait for postJson + snapshot re-render
-        btn = drv.find_element(By.ID, 'process-clear-finished-button')
+        btn = _wait_btn_text(drv, 'process-clear-finished-button', 'Unhide Finished')
         assert btn.text.strip() == 'Unhide Finished', \
             f"Expected 'Unhide Finished' after click, got '{btn.text.strip()}'"
 
@@ -311,8 +354,7 @@ class TestHideUnhideProcesses:
         """Clicking 'Unhide Finished' restores the label to 'Hide Finished'."""
         btn = drv.find_element(By.ID, 'process-clear-finished-button')
         btn.click()
-        time.sleep(2.5)
-        btn = drv.find_element(By.ID, 'process-clear-finished-button')
+        btn = _wait_btn_text(drv, 'process-clear-finished-button', 'Hide Finished')
         assert btn.text.strip() == 'Hide Finished', \
             f"Expected 'Hide Finished' after unhide, got '{btn.text.strip()}'"
 
@@ -336,8 +378,7 @@ class TestHideUnhideProcesses:
         """Clicking 'Hide All' changes the label to 'Unhide All'."""
         btn = drv.find_element(By.ID, 'process-clear-all-button')
         btn.click()
-        time.sleep(2.5)
-        btn = drv.find_element(By.ID, 'process-clear-all-button')
+        btn = _wait_btn_text(drv, 'process-clear-all-button', 'Unhide All')
         assert btn.text.strip() == 'Unhide All', \
             f"Expected 'Unhide All' after click, got '{btn.text.strip()}'"
 
@@ -353,8 +394,7 @@ class TestHideUnhideProcesses:
         """Clicking 'Unhide All' restores the label to 'Hide All'."""
         btn = drv.find_element(By.ID, 'process-clear-all-button')
         btn.click()
-        time.sleep(2.5)
-        btn = drv.find_element(By.ID, 'process-clear-all-button')
+        btn = _wait_btn_text(drv, 'process-clear-all-button', 'Hide All')
         assert btn.text.strip() == 'Hide All', \
             f"Expected 'Hide All' after unhide, got '{btn.text.strip()}'"
 
@@ -395,7 +435,20 @@ class TestToolsTableSort:
             ids.append(result['process_id'])
         for pid in ids:
             _wait_proc_done_api(srv['url'], pid, timeout=20)
-        time.sleep(2.0)  # let snapshot build the tools list
+        # Wait until all 3 sort-test tool names appear in the snapshot — replaces
+        # the 2s sleep that hoped the tools aggregation finished.
+        _wanted = set(_SORT_NAMES)
+        _deadline = time.time() + 10
+        while time.time() < _deadline:
+            try:
+                snap = _requests.get(f"{srv['url']}/api/snapshot",
+                                     timeout=5).json()
+                tool_names = {t.get('name') for t in snap.get('tools', [])}
+                if _wanted.issubset(tool_names):
+                    break
+            except Exception:
+                pass
+            time.sleep(0.2)
 
         # Navigate to the Tools left-panel tab
         _switch_left_tab(drv, 'tools-panel-left')
@@ -518,7 +571,10 @@ class TestToolHostsMatchHighlight:
 
         # Inject match for process 1 — key format is "hostIp:tabTitle"
         wc._matches[f"{IP}:{_MATCH_TAB}"] = ['MATCHKEYWORD']
-        time.sleep(2.5)  # wait ≥1 snapshot cycle for has_match to propagate
+        # Wait for has_match=True to appear in snapshot for pid1 — replaces 2.5s sleep
+        _wait_proc_in_snapshot(srv['url'], pid1,
+                               predicate=lambda p: bool(p.get('has_match')),
+                               timeout=10)
 
         type(self)._match_pid   = str(pid1)
         type(self)._nomatch_pid = str(pid2)
@@ -528,7 +584,9 @@ class TestToolHostsMatchHighlight:
         tool_row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#tools-body tr[data-tool-id="{_MATCH_TOOL}"]')))
         js(drv, 'arguments[0].click()', tool_row)
-        time.sleep(1.5)  # let updateToolHosts() render both rows
+        # Wait for both pid rows to render in tool-hosts-body — replaces 1.5s sleep
+        W(drv, 8).until(lambda d: len(d.find_elements(
+            By.CSS_SELECTOR, '#tool-hosts-body tr[data-process-id]')) >= 2)
 
         yield
 

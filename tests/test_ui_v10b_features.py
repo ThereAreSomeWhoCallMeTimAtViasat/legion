@@ -118,7 +118,9 @@ def _select_host(d, ip=IP):
     row = W(d, 8).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{ip}"]')))
     js(d, 'arguments[0].click()', row)
-    time.sleep(1.0)
+    # Wait for L.selectedHostIp to update — proves loadHostDetail has been
+    # invoked.  Replaces a flat 1-second sleep with a deterministic check.
+    W(d, 5).until(lambda dd: js(dd, "return (L && L.selectedHostIp) || ''") == ip)
 
 
 def _ensure_scan_processes(d):
@@ -128,7 +130,43 @@ def _ensure_scan_processes(d):
     proc_btn = W(d, 5).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, '#bottom-tab-bar [data-tab="processes-panel"]')))
     js(d, 'arguments[0].click()', proc_btn)
-    time.sleep(0.3)
+    # Wait for the panel to actually become active (data-tab="processes-panel" gets .active)
+    W(d, 5).until(lambda dd: 'active' in (
+        dd.find_element(By.CSS_SELECTOR,
+                        '#bottom-tab-bar [data-tab="processes-panel"]')
+          .get_attribute('class') or ''))
+
+
+def _wait_proc_status(srv_url, pid, expected, timeout=15):
+    """Poll /api/snapshot until process `pid` reaches `expected` status.
+    Replaces fixed time.sleep() after wc.runCommand() — deterministic
+    instead of probabilistic."""
+    deadline = time.time() + timeout
+    last_status = None
+    while time.time() < deadline:
+        try:
+            for p in _requests.get(f"{srv_url}/api/snapshot",
+                                   timeout=5).json().get('processes', []):
+                if str(p.get('id')) == str(pid):
+                    last_status = p.get('status')
+                    if last_status == expected:
+                        return p
+        except Exception:
+            pass
+        time.sleep(0.2)
+    raise TimeoutError(
+        f"Process {pid} did not reach status {expected!r} within {timeout}s "
+        f"(last seen: {last_status!r})")
+
+
+def _wait_row_visible(d, pid, visible, timeout=8):
+    """Wait until the #processes-body row for `pid` is present (visible=True)
+    or absent (visible=False).  Replaces fixed sleep after filter changes."""
+    sel = f'#processes-body tr[data-process-id="{pid}"]'
+    if visible:
+        W(d, timeout).until(lambda dd: len(dd.find_elements(By.CSS_SELECTOR, sel)) == 1)
+    else:
+        W(d, timeout).until(lambda dd: len(dd.find_elements(By.CSS_SELECTOR, sel)) == 0)
 
 
 # ── Module fixtures ───────────────────────────────────────────────────────────
@@ -283,7 +321,8 @@ class TestWaitingFilterLabel:
         try:
             result = wc.runCommand('sleep 30', name='wait-filter-test', hostIp=IP)
             proc_id = result['process_id'] if isinstance(result, dict) else result
-            time.sleep(1.5)
+            # Wait for the Waiting->Running transition deterministically
+            _wait_proc_status(srv_url, proc_id, 'Running', timeout=15)
 
             _ensure_scan_processes(drv)
             W(drv, 5).until(EC.presence_of_element_located(
@@ -295,8 +334,7 @@ class TestWaitingFilterLabel:
                 s.value = 'Running';
                 s.dispatchEvent(new Event('change'));
             """)
-            time.sleep(1.5)
-            # Re-find after snapshot re-render (stale element rule)
+            _wait_row_visible(drv, proc_id, True)
             rows = drv.find_elements(By.CSS_SELECTOR,
                 f'#processes-body tr[data-process-id="{proc_id}"]')
             assert len(rows) == 1, \
@@ -308,8 +346,7 @@ class TestWaitingFilterLabel:
                 s.value = 'Finished';
                 s.dispatchEvent(new Event('change'));
             """)
-            time.sleep(1.5)
-            # Re-find after snapshot re-render (stale element rule)
+            _wait_row_visible(drv, proc_id, False)
             rows = drv.find_elements(By.CSS_SELECTOR,
                 f'#processes-body tr[data-process-id="{proc_id}"]')
             assert len(rows) == 0, \
@@ -352,7 +389,14 @@ class TestNotesAllStages:
 
         # runStagedNmap writes notes synchronously for known hosts BEFORE launching nmap.
         wc.runStagedNmap(IP, discovery=False)
-        time.sleep(1.0)   # let _append_to_host_notes commit to DB
+        # Poll the note repo until the scan header lands instead of sleeping a flat 1s.
+        # Determinism win: caps at 5s but typically completes in <100ms.
+        _deadline = time.time() + 5
+        while time.time() < _deadline:
+            _n = repo.noteRepository.getNoteByHostId(type(self)._host_id)
+            if _n and '=== Scan' in (getattr(_n, 'text', '') or ''):
+                break
+            time.sleep(0.1)
 
         # Kill launched processes: kill grandchildren first (_kill_subtree) so the pipe
         # write end closes and readline() in _capture_output unblocks immediately.
@@ -407,7 +451,7 @@ class TestNotesAllStages:
         notes_tab = W(drv, 5).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, '[data-tab="notes-right"]')))
         js(drv, 'arguments[0].click()', notes_tab)
-        time.sleep(1.0)
+        # No fixed sleep needed — _notes_non_empty below polls until content lands.
 
         def _notes_non_empty(driver):
             el = driver.find_elements(By.ID, 'notes-display')
@@ -501,7 +545,11 @@ class TestProcessTimeout:
         _select_host(drv)
         js(drv, "document.querySelector"
            "('#bottom-tab-bar [data-tab=\"processes-panel\"]').click()")
-        time.sleep(1.5)   # wait ≥1 snapshot cycle so row is re-rendered
+        # Wait for the killed proc row to re-render in the table — deterministic
+        # alternative to a 1.5s sleep waiting for the snapshot poll cycle.
+        W(drv, 8).until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR,
+             f'#processes-body tr[data-process-id="{type(self)._proc_id}"]')))
 
         yield
 
@@ -563,8 +611,10 @@ class TestProcessTimeout:
         row = W(drv, 8).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#processes-body tr[data-process-id="{proc_id}"]')))
         js(drv, 'arguments[0].click()', row)
-        time.sleep(1.5)
-        # Verify output panel is present and accessible — loadProcessOutput was called
+        # Wait for L.selectedProcessId to update — proves the click handler ran
+        # and loadProcessOutput was triggered.  Deterministic vs 1.5s sleep.
+        W(drv, 5).until(lambda d: js(d, "return L && String(L.selectedProcessId || '')") == str(proc_id))
+        # Verify output panel is present and accessible
         panel = js(drv, "return document.getElementById('plain-output')")
         assert panel is not None, "plain-output panel not found in DOM after clicking process row"
         # Verify the API output route returns the correct status
@@ -647,12 +697,27 @@ class TestSchedulerNoImpacket:
             existing_ids = set()
 
         wc.scheduler(isNmapImport=True)
-        time.sleep(2.0)
-
-        try:
-            all_procs = _requests.get(f"{srv_url}/api/snapshot", timeout=5).json().get('processes', [])
-        except Exception:
-            all_procs = []
+        # Poll snapshot until processes count grows OR a 5s ceiling — replaces the
+        # flat 2s sleep that hoped the scheduler would queue everything in time.
+        # If the scheduler launches anything banned, it shows up almost immediately;
+        # the 5s cap means we don't slow the test down when nothing is launched.
+        _deadline = time.time() + 5
+        all_procs = []
+        while time.time() < _deadline:
+            try:
+                all_procs = _requests.get(f"{srv_url}/api/snapshot",
+                                          timeout=5).json().get('processes', [])
+                _new_count = sum(1 for p in all_procs
+                                 if str(p.get('id', '')) not in existing_ids)
+                if _new_count > 0:
+                    # Give one more poll for any straggler queued by the scheduler
+                    time.sleep(1.0)
+                    all_procs = _requests.get(f"{srv_url}/api/snapshot",
+                                              timeout=5).json().get('processes', [])
+                    break
+            except Exception:
+                pass
+            time.sleep(0.2)
 
         new_procs = [p for p in all_procs if str(p.get('id', '')) not in existing_ids]
         new_names = [str(p.get('name', '')).lower() for p in new_procs]
