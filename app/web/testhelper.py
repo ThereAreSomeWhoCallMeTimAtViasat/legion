@@ -8,8 +8,14 @@ sys.path.insert(0, PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
 
 
-def create_test_app():
-    """Create Flask app wired to WebController. Same setup as legion.py --web."""
+def create_test_app(enable_scheduler=False):
+    """Create Flask app wired to WebController. Same setup as legion.py --web.
+
+    enable_scheduler=False (default): disables the automatic tool scheduler so
+    background processes don't race against project-switch operations (new-temp,
+    save-as, open) in tests that cycle through projects.  Pass True for live-scan
+    tests that rely on the scheduler to trigger the screenshooter automatically.
+    """
     from flask import Flask
     from app.shell.DefaultShell import DefaultShell
     from db.RepositoryFactory import RepositoryFactory
@@ -33,11 +39,12 @@ def create_test_app():
     logic.createNewTemporaryProject()
 
     settings = Settings(AppSettings())
-    # Disable scheduler so seeding a test host doesn't spawn real background
-    # tool processes (nikto, whatweb, gobuster, etc.) that race against the
-    # test's project-switch operations (new-temp, save-as, open) and cause
-    # "no such table" SQLite errors when they land on a transitioning engine.
-    settings.general_enable_scheduler = False
+    if not enable_scheduler:
+        # Disable scheduler so seeding a test host doesn't spawn real background
+        # tool processes (nikto, whatweb, gobuster, etc.) that race against the
+        # test's project-switch operations (new-temp, save-as, open) and cause
+        # "no such table" SQLite errors when they land on a transitioning engine.
+        settings.general_enable_scheduler = False
     wc = WebController(logic, settings)
     wc.start()
 

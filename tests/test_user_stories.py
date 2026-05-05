@@ -1625,8 +1625,8 @@ class TestUS09_NmapProgressPercent:
             var cells = row ? row.querySelectorAll('td').length : 0;
             return {headerIndex: pctIdx, rowCells: cells};
         """)
-        assert result['headerIndex'] == 5, \
-            f'% header not at index 5: {result}'
+        assert result['headerIndex'] == 6, \
+            f'% header not at index 6 (checkbox,ID,Name,Target,PID,Status,%%,Elapsed): {result}'
         assert result['rowCells'] >= 6, \
             f'Process row has <6 cells: {result["rowCells"]}'
 
@@ -1663,7 +1663,7 @@ class TestUS09_NmapProgressPercent:
             f"var r = document.querySelector('#processes-body tr[data-process-id=\"{pid}\"]');"
             "if (!r) return '';"
             "var c = r.querySelectorAll('td');"
-            "return c.length >= 6 ? c[5].textContent.trim() : '';") or '').strip()
+            "return c.length >= 7 ? c[6].textContent.trim() : '';") or '').strip()
 
         assert snap_pct == dom_pct, (
             f'Snapshot percent {snap_pct!r} != DOM % cell {dom_pct!r}. '

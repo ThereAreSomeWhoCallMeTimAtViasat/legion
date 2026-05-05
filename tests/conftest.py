@@ -52,7 +52,7 @@ def legion_server():
     from app.importers.nmap_import import import_nmap_xml
     from app.auxiliary import Filters
 
-    app, logic, wc = create_test_app()
+    app, logic, wc = create_test_app(enable_scheduler=True)
     app.config['TESTING'] = False   # real WSGI server, not test client
 
     # Seed one host so the UI has data on first load

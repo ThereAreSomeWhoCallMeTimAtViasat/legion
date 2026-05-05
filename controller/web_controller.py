@@ -804,13 +804,13 @@ class WebController:
         # Qt6: screenshooter blacklist — do not screenshot deleted hosts
         if ip in getattr(self, '_deleted_hosts', set()):
             log.info(f"[WebController] Screenshot skipped — {ip} is in deletion blacklist")
-            return
+            return False
 
         # Check eyewitness is installed before queuing anything
         eyewitness = '/usr/bin/eyewitness' if isKali() else '/usr/local/bin/eyewitness'
         if not os.path.isfile(eyewitness):
             log.warning(f"[WebController] eyewitness not found at {eyewitness} — screenshot skipped for {ip}:{port}")
-            return
+            return False
 
         # Pre-flight TCP check — skip if the port is not reachable.
         # eyewitness raises WebDriverError on connection-refused which clutters
@@ -821,7 +821,7 @@ class WebController:
             _s.close()
         except (OSError, ValueError):
             log.info(f"[WebController] Screenshot skipped — {ip}:{port} unreachable (connection refused/timeout)")
-            return
+            return False
 
         output_folder = self.logic.activeProject.properties.outputFolder
         screenshots_dir = os.path.join(output_folder, 'screenshots')
@@ -868,6 +868,7 @@ class WebController:
                         tabTitle=f'screenshooter ({port}/tcp)',
                         hostIp=ip, port=str(port), protocol='tcp',
                         outputfile=outputfile, run_actions=False)
+        return True
 
     def saveRunningProcessOutputs(self):
         """controller.py:2305 — flush active process output to DB before save/shutdown.
@@ -1206,7 +1207,11 @@ class WebController:
                                     log.debug(f'[Scheduler] Screenshot already done for {scr_key}')
                                     continue
                                 self._screenshots_taken.add(scr_key)
-                                self._run_screenshot(hip, port_num, svc_name=svc_name)
+                                if not self._run_screenshot(hip, port_num, svc_name=svc_name):
+                                    # Pre-flight failed (port unreachable, eyewitness missing,
+                                    # etc.) — remove from set so it can be retried on the
+                                    # next scheduler call instead of being permanently locked.
+                                    self._screenshots_taken.discard(scr_key)
                                 continue
 
                             # Duplicate check — use checkDuplicate() which reads

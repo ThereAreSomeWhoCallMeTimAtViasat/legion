@@ -1217,8 +1217,10 @@ class TestLiveScan:
 
     def test_07_known_ports_present(self, driver, live_target):
         """Port 80 must be present on the live target (always open on this VM)."""
-        # Select live target and switch to Services tab to populate port rows
-        row = wait_for_host_row(driver, live_target)
+        # Select live target and switch to Services tab to populate port rows.
+        # Use T_HOST_APPEARS (not the default 10s) because parallel nmap stages
+        # may still be running and causing snapshot re-renders.
+        row = wait_for_host_row(driver, live_target, timeout=self.T_HOST_APPEARS)
         js_click(driver, row)
         time.sleep(POLL)
         click_right_tab(driver, 'services-right')
