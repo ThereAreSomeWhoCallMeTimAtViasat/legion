@@ -422,8 +422,8 @@ print_result() {
     SECTION_SKIP=$(( SECTION_SKIP + s ))
     # Progress indicator on a dim line (suite count only — no carried failure totals)
     local elapsed=$(( $(date +%s) - SCRIPT_START ))
-    printf "  ${DIM}  [%02d:%02d  suite %d/%d]${NC}\n" \
-        $(( elapsed/60 )) $(( elapsed%60 )) "$SUITE_DONE" "$SUITE_TOTAL"
+    printf "  ${DIM}  [%02d:%02d  %s #%d]${NC}\n" \
+        $(( elapsed/60 )) $(( elapsed%60 )) "$SECTION_NAME" "$SUITE_DONE"
 }
 
 # ── run_unit ──────────────────────────────────────────────────────────────────
