@@ -469,10 +469,23 @@ class TestProjectSaveOpen:
         after that would always fail this check.  The snapshot /api/snapshot exposes
         'project.name' directly from the server, which is the authoritative value
         and is unaffected by host-selection UI state.
+
+        Polls rather than reading once: the open operation from test_06 is async
+        on the server side and the project name in the snapshot can transiently
+        show a temp name while the switch completes.
         """
-        import urllib.request as _ur, json as _j
-        r = _ur.urlopen(f"{proj_server['url']}/api/snapshot")
-        snap = _j.loads(r.read())
-        project_name = snap.get('project', {}).get('name', '')
+        import urllib.request as _ur, json as _j, time as _t
+        deadline = _t.monotonic() + 10
+        project_name = ''
+        while _t.monotonic() < deadline:
+            try:
+                r = _ur.urlopen(f"{proj_server['url']}/api/snapshot", timeout=3)
+                snap = _j.loads(r.read())
+                project_name = snap.get('project', {}).get('name', '')
+                if SAVE_FILENAME in project_name or 'legion-selenium' in project_name:
+                    break
+            except Exception:
+                pass
+            _t.sleep(0.5)
         assert SAVE_FILENAME in project_name or 'legion-selenium' in project_name, \
-            f"Project name not in snapshot after open: {project_name!r}"
+            f"Project name not in snapshot after open (waited 10s): {project_name!r}"
