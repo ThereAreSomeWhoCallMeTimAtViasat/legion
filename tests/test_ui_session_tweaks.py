@@ -595,7 +595,9 @@ class TestContextMenuScrollArrows:
         host_row = W(drv, 6).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, f'#hosts-body tr[data-host-ip="{IP}"]')))
         ActionChains(drv).context_click(host_row).perform()
-        time.sleep(0.5)
+        # Wait for #ctx-menu to appear rather than sleeping a fixed amount —
+        # under load the menu can take longer than 0.5s to render.
+        W(drv, 5).until(EC.presence_of_element_located((By.ID, 'ctx-menu')))
 
     def test_context_menu_exists_on_right_click(self, drv, srv):
         """Right-clicking must produce a #ctx-menu element."""
@@ -609,7 +611,7 @@ class TestContextMenuScrollArrows:
         We force overflow by shrinking the list's max-height via JS, then fire
         the scroll handler — no viewport resize needed."""
         self._open_port_menu(drv)
-        time.sleep(0.3)
+        # _open_port_menu already waits for #ctx-menu — no extra sleep needed
         result = js(drv, """
             var m = document.getElementById('ctx-menu');
             if (!m) return 'NO_MENU';

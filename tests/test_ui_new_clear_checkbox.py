@@ -423,9 +423,9 @@ class TestProcessCheckboxColumn:
         """Clicking an unchecked checkbox must check it."""
         cb = self._get_checkbox(drv, self._pid_a)
         js(drv, 'arguments[0].click()', cb)
-        time.sleep(0.3)
-        cb = self._get_checkbox(drv, self._pid_a)   # re-find (stale element)
-        assert cb.is_selected(), f"Checkbox for process {self._pid_a} not checked after click"
+        W(drv, 3).until(lambda d: self._get_checkbox(d, self._pid_a).is_selected())
+        assert self._get_checkbox(drv, self._pid_a).is_selected(), \
+            f"Checkbox for process {self._pid_a} not checked after click"
 
     def test_click_checkbox_does_not_select_row(self, drv, srv):
         """Clicking a checkbox must NOT also select the process row
@@ -433,20 +433,21 @@ class TestProcessCheckboxColumn:
         before = js(drv, "return L.selectedProcessId")
         cb = self._get_checkbox(drv, self._pid_b)
         js(drv, 'arguments[0].click()', cb)
-        time.sleep(0.3)
+        # Wait for the checkbox to register as checked before asserting row selection
+        W(drv, 3).until(lambda d: self._get_checkbox(d, self._pid_b).is_selected())
         after = js(drv, "return L.selectedProcessId")
         assert after == before or after != int(self._pid_b), \
             f"Row was selected (L.selectedProcessId changed to {after}) on checkbox click"
 
     def test_click_checkbox_again_unchecks_it(self, drv, srv):
         """Clicking a checked checkbox must uncheck it."""
-        # proc_b was checked in previous test
-        cb = self._get_checkbox(drv, self._pid_b)
-        assert cb.is_selected(), "proc_b must be checked before this test"
-        js(drv, 'arguments[0].click()', cb)
-        time.sleep(0.3)
-        cb = self._get_checkbox(drv, self._pid_b)
-        assert not cb.is_selected(), "Checkbox not unchecked after second click"
+        # proc_b was checked by test_click_checkbox_does_not_select_row — wait
+        # for that state to be visible before asserting the precondition.
+        W(drv, 3).until(lambda d: self._get_checkbox(d, self._pid_b).is_selected())
+        js(drv, 'arguments[0].click()', self._get_checkbox(drv, self._pid_b))
+        W(drv, 3).until(lambda d: not self._get_checkbox(d, self._pid_b).is_selected())
+        assert not self._get_checkbox(drv, self._pid_b).is_selected(), \
+            "Checkbox not unchecked after second click"
 
     # ── API persistence ────────────────────────────────────────────────────
 
