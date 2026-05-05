@@ -102,31 +102,12 @@ declare -a SUITE_SKIPPED=()
 declare -a SUITE_ELAPSED=()
 
 GRAND_PASS=0; GRAND_FAIL=0; GRAND_SKIP=0
-SUITE_COUNT=0; SUITE_DONE=0
+SUITE_DONE=0        # total suites completed across the whole run
 SCRIPT_START=$(date +%s)
 # Section-level counters — reset at each ══ section ══ header
 SECTION_PASS=0; SECTION_FAIL=0; SECTION_SKIP=0; SECTION_START=$SCRIPT_START
-
-# Count total suites up front so we can show X/N progress.
-# When RUN_LIVE=true, test_terminal.py is skipped in the unit loop
-# (the T7 live section runs it with LEGION_TEST_TARGET instead), so subtract 1.
-_count_suites() {
-    local n=0
-    if $RUN_UNIT; then
-        n=$(( n + 24 ))               # 24 unit files (includes test_export_and_hydra)
-        $RUN_LIVE && n=$(( n - 1 ))   # test_terminal.py skipped; covered by T7
-    fi
-    $RUN_LIVE     && n=$(( n + 1 ))   # T7 live terminal
-    $RUN_LIVE     && n=$(( n + 1 ))   # Hydra live (SSH + MySQL)
-    $RUN_SELENIUM && n=$(( n + 5 ))
-    $RUN_LIVE     && n=$(( n + 1 ))   # live scan
-    if $RUN_STORIES; then
-        n=$(( n + 2 ))                # user_stories: match-first + everything-else
-        $RUN_LIVE && n=$(( n + 1 ))   # user_stories live (US-09/39)
-    fi
-    echo $n
-}
-SUITE_TOTAL=$(_count_suites)
+SECTION_NAME="init"   # short label shown in the spinner (set by section())
+SECTION_SUITE_DONE=0  # suites completed within the current section
 
 # ── Spinner ────────────────────────────────────────────────────────────────────
 SPINNER_PID=""
@@ -139,9 +120,9 @@ spinner_start() {
         while true; do
             local f="${_frames[$((i % 10))]}"
             local e=$(( $(date +%s) - SCRIPT_START ))
-            printf "\r  ${CYAN}%s${NC} %-45s  ${YELLOW}[%02d:%02d]${NC}  ${DIM}suite %d/%d${NC}  " \
+            printf "\r  ${CYAN}%s${NC} %-45s  ${YELLOW}[%02d:%02d]${NC}  ${DIM}%s #%d${NC}  " \
                 "$f" "$label" $(( e/60 )) $(( e%60 )) \
-                "$SUITE_DONE" "$SUITE_TOTAL" >&2
+                "$SECTION_NAME" "$SECTION_SUITE_DONE" >&2
             sleep 0.1
             i=$(( i+1 ))
         done
@@ -400,6 +381,9 @@ _section_subtotal() {
 section() {
     _section_subtotal          # print previous section's totals (if any ran)
     SECTION_PASS=0; SECTION_FAIL=0; SECTION_SKIP=0; SECTION_START=$(date +%s)
+    SECTION_SUITE_DONE=0
+    # Derive a short label from the first word(s) of the section title for the spinner
+    SECTION_NAME=$(echo "$1" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')
     echo -e "\n${CYAN}${BOLD}══ $1 ══${NC}"
 }
 
@@ -429,6 +413,7 @@ print_result() {
 
     # Accumulate into grand total and section total
     SUITE_DONE=$(( SUITE_DONE + 1 ))
+    SECTION_SUITE_DONE=$(( SECTION_SUITE_DONE + 1 ))
     GRAND_PASS=$(( GRAND_PASS + p ))
     GRAND_FAIL=$(( GRAND_FAIL + f ))
     GRAND_SKIP=$(( GRAND_SKIP + s ))
