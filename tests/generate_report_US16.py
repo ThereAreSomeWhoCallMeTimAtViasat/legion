@@ -153,13 +153,15 @@ def run_status_running(driver):
             '#processes-body tr[data-process-id="' + arguments[0] + '"]');
         if (!row) return 'NOT FOUND';
         var cells = row.querySelectorAll('td');
-        return cells.length >= 5 ? cells[4].textContent.trim() : 'NO CELL';
+        /* Column order after v10.136 checkbox: ☐(0) ID(1) Name(2) Target(3)
+           PID(4) Status(5) %(6) Elapsed(7).  Was cells[4] before checkbox. */
+        return cells.length >= 6 ? cells[5].textContent.trim() : 'NO CELL';
     """, str(pid))
 
     ok = (status == 'Running')
     passed = ok
     R.record(driver, name, 1,
-             f'Process row status cell: {status!r}. Must be "Running". '
+             f'Process row status cell (index 5): {status!r}. Must be "Running". '
              f'The process is still producing output at 0.35 s/line.',
              ok,
              f'#processes-body tr[data-process-id="{pid}"]')

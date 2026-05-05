@@ -109,7 +109,9 @@ def wait_dom_finished(driver, pid, timeout=12):
                 '#processes-body tr[data-process-id="{pid}"]');
             if (!row) return null;
             var cells = row.querySelectorAll('td');
-            return cells.length >= 5 ? cells[4].textContent.trim() : null;
+            /* Column order after v10.136 checkbox: ☐(0) ID(1) Name(2) Target(3)
+               PID(4) Status(5). Was cells[4] before checkbox was added. */
+            return cells.length >= 6 ? cells[5].textContent.trim() : null;
         """)
         if status in ('Finished', 'Crashed'):
             return status
@@ -253,9 +255,11 @@ def run_star_indicator(driver):
         var rows = document.querySelectorAll('#processes-body tr.proc-match');
         if (!rows.length) return {count: 0, hasstar: false, nameText: null};
         var row = rows[0];
-        /* Column order: ID | Name | Target | PID | Status | % | Elapsed
-           matchIcon is injected into td:nth-child(2) (the Name column). */
-        var nameCell = row.querySelector('td:nth-child(2)');
+        /* Column order after v10.136 checkbox: \u2610(1) ID(2) Name(3) Target(4)
+           PID(5) Status(6) %(7) Elapsed(8)  \u2014 using nth-child (1-indexed).
+           matchIcon is injected into the Name column: td:nth-child(3).
+           Was td:nth-child(2) before the checkbox column was added. */
+        var nameCell = row.querySelector('td:nth-child(3)');
         var text = nameCell ? nameCell.textContent.trim() : '';
         var innerHTML = nameCell ? nameCell.innerHTML : '';
         return {
@@ -271,7 +275,7 @@ def run_star_indicator(driver):
              f'Matching rows in #processes-body: {star_info.get("count")}. '
              f'First matching row Name cell text: {star_info.get("nameText")!r}. '
              f'Contains ★ (U+2605): {star_info.get("hasstar")}. '
-             f'JS: matchIcon in td:nth-child(2) (Name col). '
+             f'JS: matchIcon in td:nth-child(3) (Name col after v10.136 checkbox). '
              f'innerHTML checked for U+2605 star character.',
              ok_star,
              '#processes-body tr.proc-match')
