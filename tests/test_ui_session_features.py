@@ -483,12 +483,16 @@ class TestScanTabStateRestoration:
         js(drv, """
             document.querySelector('#main-tab-bar [data-tab="brute-tab"]').click();
         """)
-        time.sleep(0.5)
+        time.sleep(0.3)
         js(drv, """
             document.querySelector('#main-tab-bar [data-tab="scan-tab"]').click();
         """)
-        time.sleep(2.5)   # loadHostDetail + async fetches + snapshot poll to settle
-                          # 1.2s was insufficient on slower VMs — CVEs tab lost active
+        # Wait for loadHostDetail() to complete and restore the right-panel
+        # active tab.  A fixed sleep is unreliable under load — the async fetch
+        # may not have finished.  Instead wait until the right-tab-bar has an
+        # active button (the signal that initTabBar + loadHostDetail completed).
+        W(drv, 10).until(lambda d: d.execute_script(
+            "return !!document.querySelector('#right-tab-bar .tab-btn.active');"))
 
     def _activate_right_tab(self, drv, tab_id):
         btn = W(drv).until(EC.presence_of_element_located(
@@ -498,8 +502,19 @@ class TestScanTabStateRestoration:
         assert self._active_right_tab(drv) == tab_id, \
             f"Could not activate {tab_id} before the Brute-switch test"
 
+    def _load_page(self, drv, srv):
+        """Navigate to the app and wait for the host table to be populated.
+
+        Replaces drv.get() + time.sleep(1.5): the sleep is unreliable under
+        load.  Waiting for '#hosts-body tr[data-host-id]' guarantees the page
+        has loaded AND the first snapshot poll has completed and rendered hosts.
+        """
+        drv.get(srv['url'])
+        W(drv, 10).until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, '#hosts-body tr[data-host-id]')))
+
     def test_scripts_tab_preserved_after_brute_switch(self, drv, srv):
-        drv.get(srv['url']); time.sleep(1.5)
+        self._load_page(drv, srv)
         _select_host(drv)
         self._activate_right_tab(drv, 'scripts-right')
         self._switch_brute_then_scan(drv)
@@ -510,7 +525,7 @@ class TestScanTabStateRestoration:
             f"  Cause: initTabBar was wiping nested .active classes.")
 
     def test_notes_tab_preserved_after_brute_switch(self, drv, srv):
-        drv.get(srv['url']); time.sleep(1.5)
+        self._load_page(drv, srv)
         _select_host(drv)
         self._activate_right_tab(drv, 'notes-right')
         self._switch_brute_then_scan(drv)
@@ -519,7 +534,7 @@ class TestScanTabStateRestoration:
             f"notes-right must survive Brute→Scan. Got: {got!r}"
 
     def test_info_tab_preserved_after_brute_switch(self, drv, srv):
-        drv.get(srv['url']); time.sleep(1.5)
+        self._load_page(drv, srv)
         _select_host(drv)
         self._activate_right_tab(drv, 'info-right')
         self._switch_brute_then_scan(drv)
@@ -528,7 +543,7 @@ class TestScanTabStateRestoration:
             f"info-right must survive Brute→Scan. Got: {got!r}"
 
     def test_cves_tab_preserved_after_brute_switch(self, drv, srv):
-        drv.get(srv['url']); time.sleep(1.5)
+        self._load_page(drv, srv)
         _select_host(drv)
         self._activate_right_tab(drv, 'cves-right')
         self._switch_brute_then_scan(drv)
@@ -538,7 +553,7 @@ class TestScanTabStateRestoration:
 
     def test_left_os_tab_preserved_after_brute_switch(self, drv, srv):
         """The left-panel active tab must also survive a Scan↔Brute switch."""
-        drv.get(srv['url']); time.sleep(1.5)
+        self._load_page(drv, srv)
         os_btn = W(drv).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, '#left-tab-bar [data-tab="os-panel"]')))
         js(drv, 'arguments[0].click()', os_btn)
@@ -554,7 +569,7 @@ class TestScanTabStateRestoration:
         The active right-panel tab-content must have display:flex (not display:none)
         after returning from Brute.  If .active was stripped the content is hidden.
         """
-        drv.get(srv['url']); time.sleep(1.5)
+        self._load_page(drv, srv)
         _select_host(drv)
         self._activate_right_tab(drv, 'scripts-right')
         self._switch_brute_then_scan(drv)
@@ -581,7 +596,8 @@ def match_setup(drv, srv):
     after ~2 match tests when preceded by 17 splitter/scrollbar/scan tests.
     """
     drv.get(srv['url'])
-    time.sleep(1.5)
+    WebDriverWait(drv, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, '#hosts-body tr[data-host-id]')))
     _select_host(drv)
     _ensure_bottom_processes_tab(drv)
     # Pre-inject the match keyword — persists in this page's matchPositive array
@@ -643,12 +659,15 @@ class TestMatchNavigation:
         """)
 
     def _click_next(self, drv, panel='plain-output'):
+        before = self._counter(drv, panel)
         js(drv, f"document.querySelector('#{panel} .match-next').click()")
-        time.sleep(0.4)   # 0.15s was too short on slower VMs; counter DOM update needs time
+        # Wait for the counter DOM to update rather than sleeping a fixed amount.
+        W(drv, 3).until(lambda d: self._counter(d, panel) != before)
 
     def _click_prev(self, drv, panel='plain-output'):
+        before = self._counter(drv, panel)
         js(drv, f"document.querySelector('#{panel} .match-prev').click()")
-        time.sleep(0.4)   # 0.15s was too short on slower VMs; counter DOM update needs time
+        W(drv, 3).until(lambda d: self._counter(d, panel) != before)
 
     # ── lower panel tests ─────────────────────────────────────────────────────
 
