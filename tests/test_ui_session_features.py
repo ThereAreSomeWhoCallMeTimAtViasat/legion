@@ -133,12 +133,25 @@ def _select_host(drv):
     return row
 
 
+def _load_page(drv, url):
+    """Navigate to url and wait for the host table to be populated.
+
+    Replaces drv.get() + time.sleep(1.5): the sleep is unreliable under
+    load.  Waiting for '#hosts-body tr[data-host-id]' guarantees the page
+    has loaded AND the first snapshot poll has completed and rendered hosts.
+    """
+    drv.get(url)
+    W(drv, 10).until(EC.presence_of_element_located(
+        (By.CSS_SELECTOR, '#hosts-body tr[data-host-id]')))
+
+
 def _ensure_bottom_processes_tab(drv):
     """Make sure the Processes tab in the bottom panel is active."""
     btn = W(drv).until(EC.presence_of_element_located(
         (By.CSS_SELECTOR, '#bottom-tab-bar [data-tab="processes-panel"]')))
     js(drv, 'arguments[0].click()', btn)
-    time.sleep(0.3)
+    W(drv, 3).until(lambda d: 'active' in
+        d.find_element(By.ID, 'processes-panel').get_attribute('class'))
 
 
 def _setup_match_process(drv, srv, name='nav-test'):
@@ -305,37 +318,39 @@ class TestSplittersDraggable:
 
     def test_main_vsplitter(self, drv, srv):
         """Left ↔ right panel boundary."""
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         self._drag(drv, 'main-vsplitter', 'left-panel', False, 80)
 
     def test_main_hsplitter(self, drv, srv):
         """Top ↔ bottom section boundary."""
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         self._drag(drv, 'main-hsplitter', 'bottom-section', True, -60)
 
     def test_proc_vsplitter(self, drv, srv):
         """Processes-table ↔ output pane inside the bottom Processes panel."""
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         _ensure_bottom_processes_tab(drv)
         self._drag(drv, 'proc-vsplitter', 'proc-table-wrap', False, 80)
 
     def test_os_vsplitter(self, drv, srv):
         """OS-list ↔ OS-hosts inside the OS left-tab."""
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         btn = W(drv).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, '#left-tab-bar [data-tab="os-panel"]')))
         js(drv, 'arguments[0].click()', btn)
-        time.sleep(0.4)
+        W(drv, 3).until(lambda d: 'active' in
+            d.find_element(By.ID, 'os-panel').get_attribute('class'))
         self._drag(drv, 'os-vsplitter', 'os-list-wrap', False, 80)
 
     def test_scripts_vsplitter(self, drv, srv):
         """Scripts-table ↔ script-output inside the Scripts right-tab."""
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         _select_host(drv)
         btn = W(drv).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, '#right-tab-bar [data-tab="scripts-right"]')))
         js(drv, 'arguments[0].click()', btn)
-        time.sleep(0.3)
+        W(drv, 3).until(lambda d: 'active' in
+            d.find_element(By.ID, 'scripts-right').get_attribute('class'))
         self._drag(drv, 'scripts-vsplitter', 'scripts-table-wrap', False, 80)
 
     def test_tools_vsplitter(self, drv, srv):
@@ -351,7 +366,7 @@ class TestSplittersDraggable:
         offsetWidth may report 0 in headless mode when the flex layout hasn't
         fully resolved.
         """
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         js(drv, """
             if (window.L) window.L.selectedTool = 'nmap';
             var btn = document.querySelector(
@@ -407,7 +422,7 @@ class TestTabBarScrollbarAlwaysVisible:
     """
 
     def test_right_tab_bar_overflow_is_scroll(self, drv, srv):
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         ov = js(drv, """
             return window.getComputedStyle(
                 document.getElementById('right-tab-bar')).overflowX;
@@ -423,7 +438,7 @@ class TestTabBarScrollbarAlwaysVisible:
         the element.  clientHeight < offsetHeight because the scrollbar track
         eats into the padding box.
         """
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         offset_h = js(drv, "return document.getElementById('right-tab-bar').offsetHeight")
         client_h = js(drv, "return document.getElementById('right-tab-bar').clientHeight")
         assert offset_h > client_h, (
@@ -433,7 +448,7 @@ class TestTabBarScrollbarAlwaysVisible:
 
     def test_all_tab_bars_have_scroll_overflow(self, drv, srv):
         """Every .tab-bar in the document must use overflow-x:scroll."""
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         results = js(drv, """
             return Array.from(document.querySelectorAll('.tab-bar')).map(function(b) {
                 return {
@@ -452,7 +467,7 @@ class TestTabBarScrollbarAlwaysVisible:
         The scrollbar-color property (Firefox) must contain a grey thumb value,
         not 'auto' (which would render the OS default invisible on some themes).
         """
-        drv.get(srv['url']); time.sleep(1.5)
+        _load_page(drv, srv['url'])
         color = js(drv, """
             return window.getComputedStyle(
                 document.getElementById('right-tab-bar')).scrollbarColor;
@@ -513,19 +528,8 @@ class TestScanTabStateRestoration:
         assert self._active_right_tab(drv) == tab_id, \
             f"Could not activate {tab_id} before the Brute-switch test"
 
-    def _load_page(self, drv, srv):
-        """Navigate to the app and wait for the host table to be populated.
-
-        Replaces drv.get() + time.sleep(1.5): the sleep is unreliable under
-        load.  Waiting for '#hosts-body tr[data-host-id]' guarantees the page
-        has loaded AND the first snapshot poll has completed and rendered hosts.
-        """
-        drv.get(srv['url'])
-        W(drv, 10).until(EC.presence_of_element_located(
-            (By.CSS_SELECTOR, '#hosts-body tr[data-host-id]')))
-
     def test_scripts_tab_preserved_after_brute_switch(self, drv, srv):
-        self._load_page(drv, srv)
+        _load_page(drv, srv['url'])
         _select_host(drv)
         self._activate_right_tab(drv, 'scripts-right')
         self._switch_brute_then_scan(drv)
@@ -536,7 +540,7 @@ class TestScanTabStateRestoration:
             f"  Cause: initTabBar was wiping nested .active classes.")
 
     def test_notes_tab_preserved_after_brute_switch(self, drv, srv):
-        self._load_page(drv, srv)
+        _load_page(drv, srv['url'])
         _select_host(drv)
         self._activate_right_tab(drv, 'notes-right')
         self._switch_brute_then_scan(drv)
@@ -545,7 +549,7 @@ class TestScanTabStateRestoration:
             f"notes-right must survive Brute→Scan. Got: {got!r}"
 
     def test_info_tab_preserved_after_brute_switch(self, drv, srv):
-        self._load_page(drv, srv)
+        _load_page(drv, srv['url'])
         _select_host(drv)
         self._activate_right_tab(drv, 'info-right')
         self._switch_brute_then_scan(drv)
@@ -554,7 +558,7 @@ class TestScanTabStateRestoration:
             f"info-right must survive Brute→Scan. Got: {got!r}"
 
     def test_cves_tab_preserved_after_brute_switch(self, drv, srv):
-        self._load_page(drv, srv)
+        _load_page(drv, srv['url'])
         _select_host(drv)
         self._activate_right_tab(drv, 'cves-right')
         self._switch_brute_then_scan(drv)
@@ -564,7 +568,7 @@ class TestScanTabStateRestoration:
 
     def test_left_os_tab_preserved_after_brute_switch(self, drv, srv):
         """The left-panel active tab must also survive a Scan↔Brute switch."""
-        self._load_page(drv, srv)
+        _load_page(drv, srv['url'])
         os_btn = W(drv).until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, '#left-tab-bar [data-tab="os-panel"]')))
         js(drv, 'arguments[0].click()', os_btn)
@@ -580,7 +584,7 @@ class TestScanTabStateRestoration:
         The active right-panel tab-content must have display:flex (not display:none)
         after returning from Brute.  If .active was stripped the content is hidden.
         """
-        self._load_page(drv, srv)
+        _load_page(drv, srv['url'])
         _select_host(drv)
         self._activate_right_tab(drv, 'scripts-right')
         self._switch_brute_then_scan(drv)
@@ -735,6 +739,9 @@ class TestMatchNavigation:
         self._load_lower(drv, srv, 'nav-l6')
         for _ in range(3):          # 1 → 2 → 3 → wraps to 1
             self._click_next(drv)
+        # After the wrap the counter shows 1 again — wait for it explicitly
+        # rather than reading immediately, since the DOM update is async.
+        W(drv, 3).until(lambda d: self._counter(d).startswith('1'))
         txt = self._counter(drv)
         assert txt.startswith('1'), (
             f"After 3× ▼ on 3 matches (wraps: 1→2→3→1), counter must be 1. "
