@@ -453,13 +453,63 @@ class WebController:
                 f"and {removed_dirs} orphaned folder(s) from /tmp/legion/"
             )
 
+    def _release_outgoing_session(self):
+        """Release the SQLAlchemy scoped_session of the OUTGOING project before
+        switching to a new one.
+
+        Why this is needed:
+          The scoped_session is thread-local.  After `logic.activeProject` is
+          reassigned, the request thread (and any other thread that touched
+          the OLD scoped_session) keeps a stale registry entry pointing at the
+          OLD engine.  The next write through that registry hits the OLD
+          engine, raising OperationalError: no such table when the new
+          project's path is queried via the wrong connection.
+
+          session.remove() pops the thread-local entry; the next session()
+          call creates a fresh session bound to whatever engine
+          activeProject.database currently has.
+
+        What we DO NOT do here:
+          - We do NOT call killRunningProcesses() / _kill_all_descendants().
+            That sweeps /proc and SIGKILLs every descendant of os.getpid().
+            In production that's nmap/gobuster grandchildren spawned via
+            shell=True (correct).  In tests pytest spawns geckodriver and
+            Firefox as descendants — sweeping them aborts the test.
+            Subprocess cleanup belongs to the heartbeat watchdog / SIGINT
+            handler / File→Exit, not to a routine project switch.
+          - We do NOT SIGTERM tracked _active_processes.  That would kill
+            Interactive PTY sessions that the user wants to preserve through
+            save-as (test_save_open_data::TestInteractivePtyOutputSaved).
+
+        How _capture_output threads avoid stale-engine writes:
+          They hold a captured `processRepo` bound to the OUTGOING dbAdapter.
+          The OUTGOING engine is still alive after the switch (we only release
+          its scoped_session, not dispose it), so writes go to the OLD DB
+          file.  As long as the OLD file exists on disk (which is the
+          production contract — only closeProject() deletes files), those
+          writes are valid.  The current project's snapshot reads use the
+          NEW activeProject's repos, so cross-project bleed is prevented.
+
+        Called by createNewProject, openExistingProject, and saveProjectAs
+        (which all reassign logic.activeProject)."""
+        try:
+            old_proj = self.logic.activeProject
+        except Exception:
+            return
+        try:
+            old_proj.database.session.remove()
+        except Exception:
+            log.debug("[WebController] _release_outgoing_session: session.remove() failed")
+
     def createNewProject(self):
         """controller.py:303"""
+        self._release_outgoing_session()
         self.logic.createNewTemporaryProject()
         self.start()
 
     def openExistingProject(self, filename, projectType='legion'):
         """controller.py:308 — open .legion file, no Qt dialogs."""
+        self._release_outgoing_session()
         try:
             self.logic.openExistingProject(filename, projectType)
         except Exception as exc:
@@ -544,8 +594,12 @@ class WebController:
             log.error(f"[WebController] _append_to_host_notes error: {e}")
 
     def saveProjectAs(self, filename, replace=0):
-        """controller.py:390 — save project to file."""
+        """controller.py:390 — save project to file.
+        saveProjectAs reassigns logic.activeProject to the saved file's project
+        (per ProjectManager.saveProjectAs), so we must release the OUTGOING
+        session for the same reason as createNewProject/openExistingProject."""
         self.saveRunningProcessOutputs()
+        self._release_outgoing_session()
         try:
             return self.logic.saveProjectAs(filename, replace)
         except Exception as exc:
@@ -1618,17 +1672,10 @@ class WebController:
         # Create process stub (replaces MyQProcess)
         proc = WebProcessStub(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile)
 
-        # Flush any stale scoped-session state before writing.  After a project
-        # switch (save-as → new-temp → open), the main thread may have a cached
-        # session from the previous engine.  session.remove() evicts it so the
-        # next session() call creates a fresh connection to the CURRENT project's
-        # DB, preventing "no such table" errors caused by stale engine references.
-        try:
-            self.logic.activeProject.database.session.remove()
-        except Exception:
-            pass
-
         # Store in DB (same call as controller.py:1881)
+        # Note: createNewProject/openExistingProject/saveProjectAs all call
+        # _release_outgoing_session() before switching, so the scoped_session
+        # registry is always pointing at the CURRENT project's engine here.
         processRepo = self.logic.activeProject.repositoryContainer.processRepository
         dbId = str(processRepo.storeProcess(proc))
         proc.id = int(dbId)

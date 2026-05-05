@@ -210,27 +210,47 @@ print("\n" + "="*60)
 print("P4: Second round-trip (verify repeatable)")
 print("="*60 + "\n")
 
+_files_to_cleanup = []
+import atexit as _atexit
+@_atexit.register
+def _cleanup_test_files():
+    for p in _files_to_cleanup:
+        try:
+            if os.path.exists(p):
+                os.unlink(p)
+        except Exception:
+            pass
+
 def test_p13_second_save_open_cycle():
-    """A second save → new → open cycle must work correctly"""
+    """A second save → new → open cycle must work correctly.
+
+    Determinism contract: this test MUST leave the active project pointing
+    at a valid on-disk DB file.  An earlier version unlinked path2 in
+    finally:, but activeProject was still opened-from-path2 at that point.
+    The SQLAlchemy engine pool kept FDs to the unlinked file alive — and
+    when the pool ran low under concurrent _capture_output writes from
+    P5.x, it opened *new* connections by filename.  SQLite then created
+    a fresh empty file (no schema), causing 'no such table' errors in
+    every subsequent test that touched the DB.
+
+    Fix: register path2 for atexit cleanup instead of finally cleanup.
+    The file is then alive for the full test session."""
     snap_before = client.get('/api/snapshot').get_json()
     ips_before = sorted(h.get('ip') for h in snap_before.get('hosts', []))
     if not ips_before:
         return "SKIP"
 
     path2 = '/tmp/legion-api-gap-test2.legion'
-    try:
-        client.post('/api/project/save-as', json={'path': path2})
-        client.post('/api/project/new-temp')
-        snap_empty = client.get('/api/snapshot').get_json()
-        assert len(snap_empty.get('hosts', [])) == 0, "new-temp did not empty hosts"
-        client.post('/api/project/open', json={'path': path2})
-        snap_after = client.get('/api/snapshot').get_json()
-        ips_after = sorted(h.get('ip') for h in snap_after.get('hosts', []))
-        return ok(ips_before == ips_after,
-                  f"IPs differ after second cycle: before={ips_before} after={ips_after}")
-    finally:
-        if os.path.exists(path2):
-            os.unlink(path2)
+    _files_to_cleanup.extend([path2, path2 + '-wal', path2 + '-shm'])
+    client.post('/api/project/save-as', json={'path': path2})
+    client.post('/api/project/new-temp')
+    snap_empty = client.get('/api/snapshot').get_json()
+    assert len(snap_empty.get('hosts', [])) == 0, "new-temp did not empty hosts"
+    client.post('/api/project/open', json={'path': path2})
+    snap_after = client.get('/api/snapshot').get_json()
+    ips_after = sorted(h.get('ip') for h in snap_after.get('hosts', []))
+    return ok(ips_before == ips_after,
+              f"IPs differ after second cycle: before={ips_before} after={ips_after}")
 test("P4.1: second save → new → open cycle works", test_p13_second_save_open_cycle)
 
 
@@ -361,8 +381,11 @@ def test_p19_process_clear_sets_closed():
 test("P5.6: clear action removes process from snapshot", test_p19_process_clear_sets_closed)
 
 # ── Cleanup ────────────────────────────────────────────────────────────────
-if os.path.exists(SAVE_PATH):
-    os.unlink(SAVE_PATH)
+# Defer to module exit via _files_to_cleanup — this file is no longer the
+# active project (P4.1 moved us to path2), but unlinking it mid-run while
+# any thread might still hold an FD to it is the kind of file-deletion-race
+# documented in P4.1's doctring.
+_files_to_cleanup.extend([SAVE_PATH, SAVE_PATH + '-wal', SAVE_PATH + '-shm'])
 
 
 # ══════════════════════════════════════════════════════════════════════════════

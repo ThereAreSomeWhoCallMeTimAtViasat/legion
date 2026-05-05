@@ -366,21 +366,44 @@ class TestUpperDynamicTabTerminal:
             "Interactive dynamic tab should mount xterm.js or connect a terminal session"
 
     def test_plain_dynamic_tab_shows_text(self, term_driver):
-        """Clicking a regular (echo) dynamic tab shows plain text, not xterm.js."""
+        """Clicking a regular (echo) dynamic tab shows plain text, not xterm.js.
+
+        v10.187 introduced a TimeoutException by using `.dynamic-tab-content.active`
+        which never matches anything — the actual CSS class is `.tab-content`
+        (per renderDynamicToolTabs at legion.js:1283).  We assert the same
+        invariants but against the right selector.
+
+        What we actually verify (the test's intent):
+          1. The plain process's dynamic tab panel renders its plain output.
+          2. _dynTermState.sessionId stays null — no PTY mount for a plain proc.
+        """
         self._select_host(term_driver)
         self._click_dynamic_tab(term_driver, 'plain-proc')
-        # _click_dynamic_tab already waits POLL+0.5; plain tab should have output content
-        from selenium.webdriver.support.ui import WebDriverWait as _WDW
-        _WDW(term_driver, 5).until(lambda d: d.execute_script(
-            "var tc=document.querySelector('.dynamic-tab-content.active'); "
-            "return tc ? tc.textContent.trim().length > 0 : false;"))
 
-        # _dynTermState should NOT have a session for a plain process
-        has_session = term_driver.execute_script("""
-            return _dynTermState && _dynTermState.sessionId !== null;
-        """)
-        assert not has_session, \
-            "Plain process dynamic tab should NOT mount a terminal session"
+        from selenium.webdriver.support.ui import WebDriverWait as _WDW
+        # Find the plain proc's dynamic-output element by data-process-id derived
+        # from the active tab button.  This is robust to test-order state and
+        # poll-cycle re-renders.
+        _WDW(term_driver, 5).until(lambda d: d.execute_script("""
+            var btn = document.querySelector('#right-tab-bar .dynamic-tab.active');
+            if (!btn || !btn.dataset.tab) return false;
+            var pid = btn.dataset.tab.replace('dyntab-', '');
+            var out = document.getElementById('dyn-output-' + pid);
+            return out && out.textContent.trim().length > 0;
+        """))
+
+        # _dynTermState.sessionId must be null after clicking a non-Interactive proc.
+        # The dynamic-tab click handler (legion.js:1948) calls _stopDynTerminal()
+        # which sets sessionId to null; then because proc.session_id is null /
+        # status != 'Interactive', _connectDynTerminal is NOT called and sessionId
+        # stays null.
+        has_session = term_driver.execute_script(
+            "return _dynTermState && _dynTermState.sessionId !== null;")
+        assert not has_session, (
+            "Plain process dynamic tab must NOT mount a terminal session — "
+            "production click handler calls _stopDynTerminal() and skips "
+            "_connectDynTerminal for non-Interactive procs."
+        )
 
     def test_upper_and_lower_independent(self, term_driver, term_server):
         """Upper dynamic tab and lower output panel can show different processes."""

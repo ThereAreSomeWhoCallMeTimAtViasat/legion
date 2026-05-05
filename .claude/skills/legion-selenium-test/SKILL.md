@@ -26,7 +26,7 @@ def srv():
     from app.web.testhelper import create_test_app
     from app.importers.nmap_import import import_nmap_xml
     from werkzeug.serving import make_server
-    app, logic, wc = create_test_app()
+    app, logic, wc = create_test_app()    # scheduler disabled by default
     app.config['TESTING'] = False
     # seed a host
     with tempfile.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as f:
@@ -35,11 +35,33 @@ def srv():
     os.unlink(p)
     httpd = make_server('127.0.0.1', PORT, app, threaded=True)
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
-    t.start(); time.sleep(2.0)
+    t.start(); time.sleep(2.0)             # legitimate: socket listen handshake
     yield {'app': app, 'logic': logic, 'wc': wc, 'url': f'http://127.0.0.1:{PORT}'}
     httpd.shutdown()
     _web_routes._HB_TIMEOUT = 20
 ```
+
+**v10.188 lesson — DB-file deletion under live engine**: Tests that exercise
+the save→new→open cycle MUST NOT `os.unlink()` the project's DB file in a
+`finally:` block while it is still the active project.  SQLAlchemy keeps
+connection FDs to the file alive in its pool; when the pool runs low and
+opens a fresh connection by filename, SQLite *creates* an empty file (no
+schema), and every subsequent thread that hits that file gets
+`OperationalError: no such table`.  Defer the unlink to module exit via
+`atexit.register(...)`, or only delete after switching to a different
+project.  See `tests/test_api_gaps.py::test_p13_second_save_open_cycle`
+for the deferred-cleanup pattern.
+
+**v10.188 lesson — never SIGKILL all descendants from a project switch**:
+`WebController.killRunningProcesses()` and `_kill_all_descendants()` walk
+`/proc` and SIGKILL every descendant of `os.getpid()`.  In production that's
+nmap/gobuster grandchildren spawned via `shell=True` (correct).  In Selenium
+tests, pytest's descendants include the test browser (Firefox via
+geckodriver).  If a project-switch handler invokes the kill sweep, the test
+loses its driver mid-run and the rest of the suite fails with
+`Connection refused`.  Only the heartbeat watchdog, SIGINT handler, and
+File→Exit may invoke that sweep.  See `WebController._release_outgoing_session()`
+docstring for the safe alternative.
 
 **Driver fixture (module-scoped)**
 ```python
@@ -390,6 +412,39 @@ Context menu structure: `menu → [topArrow(first), list(middle), botArrow(last)
 `m.firstElementChild` = top arrow, `m.lastElementChild` = bottom arrow.
 
 ---
+
+## Verification design — what makes an assertion non-hollow
+
+Every assertion must answer: **"would this fail if the production code were
+deleted?"**  If the answer is no, the test is hollow.  Apply these rules:
+
+1. **Verify state, not invocation.**  Reading `mock.call_count == 1` proves
+   nothing about user-facing behaviour.  Check the DOM, the DB row, the
+   rendered text, the file on disk — the thing the user perceives.
+
+2. **Read the same surface the user reads.**  If the feature affects the
+   visible counter, read `element.textContent`.  If it affects colour, read
+   `value_of_css_property('display')` or computed style — not whether the
+   class was added (the class might exist without rendering).
+
+3. **Two assertions per behaviour: pre and post.**  For a click handler,
+   capture the state *before* the click, then assert the state changed in
+   the way the user expects.  Asserting only the post-state lets the test
+   pass against a no-op handler if the initial state already matched.
+
+4. **Selectors must match what the production code actually emits.**  Grep
+   the JS/HTML for the class/id you're asserting on.  v10.187 introduced a
+   regression by waiting on `.dynamic-tab-content.active` — a selector that
+   matches nothing because the actual class is `.tab-content`.  The wait
+   timed out, the test failed, but the production code was correct.
+
+5. **Skip with `pytest.skip()`, never `if not x: return`.**  A "test" that
+   returns silently when its precondition is missing is invisible green.
+
+6. **Process completion via API, not DOM.**  `#processes-body` re-renders
+   on every snapshot poll and is sensitive to localStorage splitter state
+   from earlier tests.  Use `requests.get('/api/snapshot')` to wait for
+   `status in ('Finished','Killed','Crashed')`.
 
 ## Output
 
