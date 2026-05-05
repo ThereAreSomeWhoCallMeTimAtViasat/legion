@@ -47,17 +47,20 @@ def create_test_app(enable_scheduler=False):
         # test's project-switch operations (new-temp, save-as, open) and cause
         # "no such table" SQLite errors when they land on a transitioning engine.
         #
-        # We patch applySettings() on the instance rather than setting the flag
-        # on the settings object, because POST /api/settings/legion-conf (called
-        # by the config-save tests) triggers wc.applySettings() which reloads
-        # Settings(AppSettings()) from disk and overwrites any in-memory override.
-        _orig_apply = wc.applySettings.__func__  # unbound method
+        # Two-layer approach:
+        #
+        # Layer 1: patch applySettings() so that whenever the config-save tests
+        # call POST /api/settings/legion-conf (which reloads Settings(AppSettings())
+        # from disk and would overwrite the False with the conf's "True"), we
+        # re-apply the override immediately after the reload.
+        import types as _types
+        _orig_apply = wc.applySettings.__func__
         def _apply_no_scheduler(self_wc):
-            _orig_apply(self_wc)                 # reload from disk as normal
-            self_wc.settings.general_enable_scheduler = False  # re-apply override
-        import types
-        wc.applySettings = types.MethodType(_apply_no_scheduler, wc)
+            _orig_apply(self_wc)
+            self_wc.settings.general_enable_scheduler = False
+        wc.applySettings = _types.MethodType(_apply_no_scheduler, wc)
         wc.settings.general_enable_scheduler = False
+
 
     wc.start()
 

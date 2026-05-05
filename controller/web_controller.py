@@ -1618,6 +1618,16 @@ class WebController:
         # Create process stub (replaces MyQProcess)
         proc = WebProcessStub(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile)
 
+        # Flush any stale scoped-session state before writing.  After a project
+        # switch (save-as → new-temp → open), the main thread may have a cached
+        # session from the previous engine.  session.remove() evicts it so the
+        # next session() call creates a fresh connection to the CURRENT project's
+        # DB, preventing "no such table" errors caused by stale engine references.
+        try:
+            self.logic.activeProject.database.session.remove()
+        except Exception:
+            pass
+
         # Store in DB (same call as controller.py:1881)
         processRepo = self.logic.activeProject.repositoryContainer.processRepository
         dbId = str(processRepo.storeProcess(proc))
