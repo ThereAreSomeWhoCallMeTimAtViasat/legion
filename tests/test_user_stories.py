@@ -369,7 +369,7 @@ class TestUS02_SemicolonSeparator:
         textarea.clear()
         textarea.send_keys('127.0.0.1; 127.0.0.2')
         driver.find_element(By.ID, 'add-hosts-start').click()
-        time.sleep(5.0)   # two staged scans launching + snapshot poll
+        time.sleep(5.0)   # DETERMINISM-EXEMPT: waits for two staged scans + snapshot poll cycle
 
         snap_after  = api('get', '/api/snapshot').json()
         new_procs   = [p for p in snap_after.get('processes', [])
@@ -415,7 +415,7 @@ class TestUS02_SemicolonSeparator:
         # Send_keys with \n inserts a newline in the textarea
         textarea.send_keys('127.0.0.3\n127.0.0.4')
         driver.find_element(By.ID, 'add-hosts-start').click()
-        time.sleep(5.0)
+        time.sleep(5.0)   # DETERMINISM-EXEMPT: waits for two staged scans + snapshot poll cycle
 
         snap_after = api('get', '/api/snapshot').json()
         new_procs  = [p for p in snap_after.get('processes', [])
@@ -914,7 +914,7 @@ class TestUS16_LiveOutputGrows:
         _kill_auto_tools()
         pid = _start_slow_process()
         _wait_for_running(pid)
-        time.sleep(6.0)   # ~17 lines produced (0.35 s/line × 17 ≈ 6 s)
+        time.sleep(6.0)   # DETERMINISM-EXEMPT: ~17 lines produced (0.35 s/line × 17 ≈ 6 s)
 
         _select_host_and_process(driver, pid)
         time.sleep(1.5)
@@ -985,7 +985,7 @@ class TestUS18_AutoScrollAtBottom:
         pid = _start_slow_process()
         _wait_for_running(pid)
         # Wait for enough lines to make the panel scrollable
-        time.sleep(10.0)   # ~28 lines × 18 px ≈ 500 px — should overflow panel
+        time.sleep(10.0)   # DETERMINISM-EXEMPT: ~28 lines × 18 px ≈ 500 px — needed to overflow panel
 
         _select_host_and_process(driver, pid)
         time.sleep(1.5)   # let first load settle
@@ -1038,7 +1038,7 @@ class TestUS18_AutoScrollAtBottom:
         """When user scrolls UP, position is preserved across polls
         (panel does NOT auto-jump back to bottom — v10.30 behaviour)."""
         pid = _start_slow_process()
-        time.sleep(10.0)
+        time.sleep(10.0)   # DETERMINISM-EXEMPT: same scroll-overflow timing as above
 
         _select_host_and_process(driver, pid)
         time.sleep(1.5)

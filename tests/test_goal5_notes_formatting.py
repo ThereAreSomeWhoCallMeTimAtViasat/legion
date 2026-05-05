@@ -194,7 +194,7 @@ def test_c_snapshot_triggered_rerender_preserves_colour(drv, srv):
         f"Colour not present before wait: {html_before[:200]}"
 
     # WAIT: real snapshot cycles fire — no atomicity, real browser time
-    time.sleep(5)
+    time.sleep(5)   # DETERMINISM-EXEMPT: notes test must observe across ≥3 snapshot cycles
 
     # CALL B: completely separate call
     html_after = js(drv, "return document.getElementById('notes-display').innerHTML") or ''

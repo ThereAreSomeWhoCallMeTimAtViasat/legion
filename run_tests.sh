@@ -534,8 +534,20 @@ run_pytest() {
 # ══════════════════════════════════════════════════════════════════════════════
 if $RUN_UNIT; then
     section "Unit / API tests"
+    # ── Test order: tiered for fail-fast (v10.188 reorder) ──
+    # Tier 1: Anti-pattern guards + smoke baselines (sub-second, no fixtures)
+    # Tier 2: Historically fragile suites (catch regressions early)
+    # Tier 3: Fast unit/API tests
+    # Tier 4: Slow unit suites last
+    # Rationale: a regression in code touched today should surface in <1 min,
+    # not after waiting through all 27 suites.
     for f in \
+        tests/test_anti_patterns.py \
         tests/test_behavioral.py \
+        tests/test_export_and_hydra.py \
+        tests/test_gap_implementations.py \
+        tests/test_api_gaps.py \
+        tests/test_multihost_isolation.py \
         tests/test_signal_chains.py \
         tests/test_phase1_right_panel.py \
         tests/test_flask_integration.py \
@@ -553,12 +565,8 @@ if $RUN_UNIT; then
         tests/test_v6_v7_fixes.py \
         tests/test_new_dialogs.py \
         tests/test_visualupgrades_features.py \
-        tests/test_api_gaps.py \
-        tests/test_multihost_isolation.py \
         tests/test_terminal.py \
-        tests/test_gap_implementations.py \
         tests/test_qt6_gaps.py \
-        tests/test_export_and_hydra.py \
         tests/test_requirements.py
     do
         # test_terminal.py: T7 live tests skip without LEGION_TEST_TARGET.
@@ -570,6 +578,12 @@ if $RUN_UNIT; then
         # test_requirements.py must skip the Selenium conftest fixtures
         if [[ "$f" == "tests/test_requirements.py" ]]; then
             run_pytest "requirements (packages+binaries)" tests/test_requirements.py --noconftest
+            continue
+        fi
+        # test_anti_patterns.py is pytest-only (no Results: line), uses no
+        # fixtures — invoke via pytest with --noconftest to skip Selenium setup.
+        if [[ "$f" == "tests/test_anti_patterns.py" ]]; then
+            run_pytest "anti-pattern guards (v10.188)" tests/test_anti_patterns.py --noconftest
             continue
         fi
         run_unit "$f"
@@ -655,26 +669,39 @@ if $RUN_SELENIUM; then
     section "Selenium offline  (headless Firefox)"
     # Free each port before binding — a daemon Flask thread from a prior run
     # may linger briefly after pytest exits, causing "Address already in use".
-    free_port 5099; run_pytest "test_selenium_ui (offline)"  tests/test_selenium_ui.py -m "not live"
+    #
+    # ── Selenium order: tiered for fail-fast (v10.188 reorder) ──
+    # Tier A: Smoke / fast / formerly-fragile suites (~5 min total)
+    #         Surfaces today's regressions in <2 min instead of waiting through
+    #         the slow stable suites first.
+    # Tier B: Recently-added features (biggest blast radius for new code)
+    # Tier C: Bulk stable v10.x feature suites
+    # Tier D: Slowest stable suites last
+    #
+    # Tier A — smoke + recently-fixed
+    free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
     free_port 5098; run_pytest "test_selenium_project"       tests/test_selenium_project.py
+    free_port 5100; run_pytest "session_fixes (v10.146-157)" tests/test_session_fixes_v10_156.py
     free_port 5097; run_pytest "test_selenium_multihost"     tests/test_selenium_multihost.py
     free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
-    free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
+    # Tier B — recent features (biggest regression risk)
+    free_port 5082; run_pytest "ui_new_clear_checkbox (v10.136-143)" tests/test_ui_new_clear_checkbox.py
+    free_port 5093; run_pytest "highlight_escaping (v10.145)" tests/test_highlight_escaping.py
+    free_port 5082; run_pytest "ui_v10e_features (v10.137-143)" tests/test_ui_v10e_features.py
+    free_port 5081; run_pytest "ui_v10d_features (v10.128-133)" tests/test_ui_v10d_features.py
     free_port 5072; run_pytest "ui_session_features (v10.59-63)" tests/test_ui_session_features.py
-    free_port 5073; run_pytest "save_open_data (v10.65-66)" tests/test_save_open_data.py
     free_port 5074
     run_pytest "multiinstance_detection (v10.64)" tests/test_multiinstance_detection.py
+    # Tier C — bulk stable
     free_port 5075; run_pytest "ui_v10_features (v10.69-73)" tests/test_ui_v10_features.py
     free_port 5076; run_pytest "ui_new_features (v10.67-71)" tests/test_ui_new_features.py
     free_port 5077; run_pytest "ui_new_features2 (v10.76-82)" tests/test_ui_new_features2.py
     free_port 5078; run_pytest "ui_v10b_features (v10.75-83)" tests/test_ui_v10b_features.py
     free_port 5079; run_pytest "ui_v10c_features (v10.98-110)" tests/test_ui_v10c_features.py
     free_port 5080; run_pytest "ui_session_tweaks (v10.85-103)" tests/test_ui_session_tweaks.py
-    free_port 5081; run_pytest "ui_v10d_features (v10.128-133)" tests/test_ui_v10d_features.py
-    free_port 5082; run_pytest "ui_v10e_features (v10.137-143)" tests/test_ui_v10e_features.py
-    free_port 5082; run_pytest "ui_new_clear_checkbox (v10.136-143)" tests/test_ui_new_clear_checkbox.py
-    free_port 5093; run_pytest "highlight_escaping (v10.145)" tests/test_highlight_escaping.py
-    free_port 5100; run_pytest "session_fixes (v10.146-157)" tests/test_session_fixes_v10_156.py
+    # Tier D — slowest stable last (~2 min each)
+    free_port 5099; run_pytest "test_selenium_ui (offline)"  tests/test_selenium_ui.py -m "not live"
+    free_port 5073; run_pytest "save_open_data (v10.65-66)" tests/test_save_open_data.py
 fi
 
 if $RUN_LIVE; then

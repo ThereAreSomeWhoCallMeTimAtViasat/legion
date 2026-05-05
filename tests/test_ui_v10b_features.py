@@ -585,7 +585,7 @@ class TestProcessTimeout:
             result = wc.runCommand('sleep 30', name='nmap-exempt',
                                    hostIp=IP, run_actions=False)
             proc_id = result['process_id']
-            time.sleep(6.0)   # well past the 3s timeout
+            time.sleep(6.0)   # DETERMINISM-EXEMPT: testing the 3s process timeout — must wait past it
             snap = _requests.get(f"{srv['url']}/api/snapshot", timeout=5).json()
             status = next((p['status'] for p in snap.get('processes', [])
                            if str(p.get('id')) == str(proc_id)), None)
