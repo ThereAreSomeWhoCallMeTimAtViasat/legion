@@ -476,8 +476,14 @@ print_result() {
     local timestr
     [[ $mins -gt 0 ]] && timestr="${mins}m${rem}s" || timestr="${secs}s"
 
-    # Append "(est Xs)" when estimate exists and actual differs by >20%
-    local est="${_SUITE_EST[$name]:-0}"
+    # Append "(est Xs)" when estimate exists.  Strip any retry suffix ("[failed …]",
+    # "[flaky …]") from the name before the array lookup — those suffixes contain
+    # literal ] characters that can confuse bash's array subscript parser in some
+    # versions when the value contains ANSI escape sequences with ] (e.g. \033[0m).
+    local base_name="$name"
+    base_name="${base_name%% \[failed*}"    # strip "[failed all 3 attempts]..." suffix
+    base_name="${base_name%% \[flaky*}"     # strip "[flaky — ...]..." suffix
+    local est="${_SUITE_EST[$base_name]:-0}"
     if [[ $est -gt 0 ]]; then
         timestr="${timestr} ${DIM}(est ${est}s)${NC}"
     fi
