@@ -186,8 +186,9 @@ _frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 spinner_start() {
     local label="$1"
     local est="${_SUITE_EST[$label]:-0}"
-    local est_str=""
-    [[ $est -gt 0 ]] && est_str=" ${DIM}~${est}s${NC}"
+    # est_suffix shown right next to the suite timer inside the bracket: "00:08 ~11s"
+    local est_suffix=""
+    [[ $est -gt 0 ]] && est_suffix=" ~${est}s"
     local suite_start; suite_start=$(date +%s)   # captured before subshell
     (
         i=0
@@ -195,10 +196,12 @@ spinner_start() {
             f="${_frames[$((i % 10))]}"
             e=$(( $(date +%s) - SCRIPT_START ))  # total elapsed
             s=$(( $(date +%s) - suite_start ))   # per-suite elapsed (resets to 0 each suite)
-            printf "\r  ${CYAN}%s${NC} %-45s%b  ${YELLOW}[%02d:%02d | %02d:%02d]${NC}  ${DIM}%s #%d${NC}  " \
-                "$f" "$label" "$est_str" \
+            # Format: [MM:SS | SS:SS ~Est]  — global | (suite-elapsed  estimate) together
+            printf "\r  ${CYAN}%s${NC} %-45s  ${YELLOW}[%02d:%02d | %02d:%02d%s]${NC}  ${DIM}%s #%d${NC}  " \
+                "$f" "$label" \
                 $(( e/60 )) $(( e%60 )) \
                 $(( s/60 )) $(( s%60 )) \
+                "$est_suffix" \
                 "$SECTION_NAME" "$SECTION_SUITE_DONE" >&2
             sleep 0.1
             i=$(( i+1 ))
