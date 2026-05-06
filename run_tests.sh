@@ -54,7 +54,9 @@ else
         shift
     done
 fi
-$RUN_UNIT || $RUN_SELENIUM || $RUN_LIVE || $RUN_STORIES || { RUN_UNIT=true; RUN_SELENIUM=true; RUN_STORIES=true; }
+if [[ "$RUN_UNIT" != "true" && "$RUN_SELENIUM" != "true" && "$RUN_LIVE" != "true" && "$RUN_STORIES" != "true" ]]; then
+    RUN_UNIT=true; RUN_SELENIUM=true; RUN_STORIES=true
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -211,12 +213,12 @@ spinner_start() {
 }
 
 spinner_stop() {
-    [[ -n "$SPINNER_PID" ]] && {
+    if [[ -n "$SPINNER_PID" ]]; then
         kill "$SPINNER_PID" 2>/dev/null || true
         wait "$SPINNER_PID" 2>/dev/null || true
         SPINNER_PID=""
         printf "\r\033[K" >&2
-    }
+    fi
 }
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
@@ -527,10 +529,10 @@ run_unit() {
 
     for attempt in 1 2 3; do
         final_attempt=$attempt
-        [[ $attempt -gt 1 ]] && {
+        if [[ $attempt -gt 1 ]]; then
             printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((attempt-1)) "$name"
             sleep 1
-        }
+        fi
 
         local t0; t0=$(date +%s)
         spinner_start "$name"
@@ -616,10 +618,10 @@ run_pytest() {
 
     for attempt in 1 2 3; do
         final_attempt=$attempt
-        [[ $attempt -gt 1 ]] && {
+        if [[ $attempt -gt 1 ]]; then
             printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((attempt-1)) "$name"
             sleep 1
-        }
+        fi
 
         local t0; t0=$(date +%s)
         spinner_start "$name"
@@ -702,7 +704,7 @@ run_pytest() {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-if $RUN_UNIT; then
+if [[ "$RUN_UNIT" == "true" ]]; then
     section "Unit / API tests"
     # ── Test order: tiered for fail-fast (v10.188 reorder) ──
     # Tier 1: Anti-pattern guards + smoke baselines (sub-second, no fixtures)
@@ -742,7 +744,7 @@ if $RUN_UNIT; then
         # test_terminal.py: T7 live tests skip without LEGION_TEST_TARGET.
         # When a live target is given, skip it here — the T7 section runs it
         # with LEGION_TEST_TARGET so all 45 tests pass with no skips.
-        if [[ "$f" == "tests/test_terminal.py" ]] && $RUN_LIVE; then
+        if [[ "$f" == "tests/test_terminal.py" && "$RUN_LIVE" == "true" ]]; then
             continue
         fi
         # test_requirements.py must skip the Selenium conftest fixtures
@@ -777,16 +779,16 @@ if $RUN_UNIT; then
         tests/features/test_ConfigSyntaxValidation.py
 fi
 
-if $RUN_LIVE; then
+if [[ "$RUN_LIVE" == "true" ]]; then
     section "Live terminal tests  (SSH / MySQL / msfconsole)"
     local_name="test_terminal T7  target=$LIVE_TARGET"
     t7_t_total=0; t7_p=0; t7_f=1; t7_s=0; t7_final_attempt=1; t7_flaky=false; t7_out=""
     for _t7_attempt in 1 2 3; do
         t7_final_attempt=$_t7_attempt
-        [[ $_t7_attempt -gt 1 ]] && {
+        if [[ $_t7_attempt -gt 1 ]]; then
             printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((_t7_attempt-1)) "$local_name"
             sleep 2
-        }
+        fi
         t0=$(date +%s)
         spinner_start "$local_name"
         t7_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" "$PYTHON" tests/test_terminal.py 2>&1) || true
@@ -824,16 +826,16 @@ if $RUN_LIVE; then
     fi
 fi
 
-if $RUN_LIVE; then
+if [[ "$RUN_LIVE" == "true" ]]; then
     section "Live Hydra tests  (SSH + MySQL brute-force)"
     hydra_name="test_export_and_hydra (Hydra live)"
     hydra_t_total=0; hydra_p=0; hydra_f=1; hydra_s=0; hydra_final_attempt=1; hydra_flaky=false; hydra_out=""
     for _hydra_attempt in 1 2 3; do
         hydra_final_attempt=$_hydra_attempt
-        [[ $_hydra_attempt -gt 1 ]] && {
+        if [[ $_hydra_attempt -gt 1 ]]; then
             printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((_hydra_attempt-1)) "$hydra_name"
             sleep 2
-        }
+        fi
         t0=$(date +%s)
         spinner_start "$hydra_name"
         hydra_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
@@ -879,7 +881,7 @@ if $RUN_LIVE; then
     fi
 fi
 
-if $RUN_SELENIUM; then
+if [[ "$RUN_SELENIUM" == "true" ]]; then
     # Re-sync conf + default profile before selenium section.
     # test_ui_wiring.py P6 activates the 'default' profile (copies it over the
     # working conf). If default.conf is stale, it silently downgrades the live conf.
@@ -935,7 +937,7 @@ if $RUN_SELENIUM; then
     free_port 5092; run_pytest "ui_route_coverage (v10.192)"  tests/test_ui_route_coverage.py
     unset _SKIP_NOTE
     # Tier D — slowest stable last (~2 min each)
-    _SKIP_NOTE="19 live-scan tests deselected by -m 'not live' — run with --live 192.168.85.11 to include them"
+    _SKIP_NOTE="19 live-scan tests deselected by -m not-live — run with --live 192.168.85.11 to include them"
     free_port 5099; run_pytest "test_selenium_ui (offline)"  tests/test_selenium_ui.py -m "not live"
     unset _SKIP_NOTE
     _SKIP_NOTE="screenshooter skip expected — eyewitness not installed or target unreachable"
@@ -943,7 +945,7 @@ if $RUN_SELENIUM; then
     unset _SKIP_NOTE
 fi
 
-if $RUN_LIVE; then
+if [[ "$RUN_LIVE" == "true" ]]; then
     section "Selenium live scan  (nmap + eyewitness + CVEs)"
     pkill -f "nmap" 2>/dev/null || true
     pkill -f "eyewitness" 2>/dev/null || true
@@ -992,7 +994,7 @@ if $RUN_LIVE; then
     fi
 fi
 
-if $RUN_STORIES; then
+if [[ "$RUN_STORIES" == "true" ]]; then
     section "User Story Tests  (US-02–US-55, ports 5085/5086)"
     _us_start_servers
 
@@ -1017,7 +1019,7 @@ if $RUN_STORIES; then
     unset _SKIP_NOTE
 
     # ── Live user story tests ──────────────────────────────────────────────────
-    if $RUN_LIVE; then
+    if [[ "$RUN_LIVE" == "true" ]]; then
         # Kill existing Firefox instances so the driver can start cleanly
         pkill -f "firefox" 2>/dev/null || true; sleep 2
 
@@ -1066,7 +1068,7 @@ PYEOF
     fi
 
     # ── HTML reports ────────────────────────────────────────────────────────────
-    if $GEN_REPORTS; then
+    if [[ "$GEN_REPORTS" == "true" ]]; then
         # Only generate reports when all tests passed (no point capturing failures)
         if [[ $SECTION_FAIL -eq 0 ]]; then
             pkill -f "firefox" 2>/dev/null || true; sleep 2
@@ -1121,7 +1123,7 @@ echo -e "    ${BOLD}sudo bash run_tests.sh --stories${NC}               user-sto
 echo -e "    ${BOLD}sudo bash run_tests.sh --live 192.168.85.11${NC}    live only"
 echo -e "    ${BOLD}sudo bash run_tests.sh --all  192.168.85.11${NC}    everything + reports"
 echo -e "    ${BOLD}sudo bash run_tests.sh --no-report${NC}             skip HTML report generation"
-if $GEN_REPORTS && $RUN_STORIES; then
+if [[ "$GEN_REPORTS" == "true" && "$RUN_STORIES" == "true" ]]; then
     echo -e "\n  ${CYAN}HTML reports:${NC} testreport/US*.html"
 fi
 echo -e "${CYAN}══════════════════════════════════════════════════════${NC}"
