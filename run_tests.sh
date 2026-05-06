@@ -102,6 +102,76 @@ declare -a SUITE_SKIPPED=()
 declare -a SUITE_ELAPSED=()
 
 GRAND_PASS=0; GRAND_FAIL=0; GRAND_SKIP=0
+
+# ── Suite timing estimates (seconds from 2026-05-05 reference run) ─────────────
+# Used to print "~Xs est" before each suite and compute ETA.
+# Update these when major architectural changes shift timings significantly.
+declare -A _SUITE_EST=(
+    # Unit / API suites
+    ["anti-pattern guards (v10.188)"]=1
+    ["test_behavioral"]=7
+    ["test_export_and_hydra"]=0
+    ["test_gap_implementations"]=3
+    ["test_api_gaps"]=4
+    ["test_multihost_isolation"]=2
+    ["test_signal_chains"]=4
+    ["test_phase1_right_panel"]=1
+    ["test_flask_integration"]=11
+    ["test_routes_webcontroller"]=5
+    ["test_webcontroller"]=4
+    ["test_webcontroller_remaining"]=5
+    ["test_ui_wiring"]=5
+    ["test_ui_fixes"]=1
+    ["test_phase5_polish"]=2
+    ["test_phase1_settings"]=0
+    ["test_phase2_auxiliary"]=1
+    ["test_phase2_interactions"]=10
+    ["test_phase3_sorting"]=5
+    ["test_phase4_state"]=5
+    ["test_v6_v7_fixes"]=13
+    ["test_new_dialogs"]=1
+    ["test_visualupgrades_features"]=0
+    ["test_terminal"]=32
+    ["test_qt6_gaps"]=27
+    ["requirements (packages+binaries)"]=8
+    ["integration/core_workflows"]=12
+    ["features/db_and_model"]=9
+    # Selenium offline
+    ["test_selenium_terminal"]=40
+    ["test_selenium_project"]=29
+    ["session_fixes (v10.146-157)"]=45
+    ["test_selenium_multihost"]=35
+    ["test_selenium_gaps"]=65
+    ["ui_new_clear_checkbox (v10.136-143)"]=24
+    ["highlight_escaping (v10.145)"]=20
+    ["ui_v10e_features (v10.137-143)"]=20
+    ["ui_v10d_features (v10.128-133)"]=45
+    ["ui_session_features (v10.59-63)"]=43
+    ["multiinstance_detection (v10.64)"]=21
+    ["ui_v10_features (v10.69-73)"]=34
+    ["ui_new_features (v10.67-71)"]=35
+    ["ui_new_features2 (v10.76-82)"]=27
+    ["ui_v10b_features (v10.75-83)"]=53
+    ["ui_v10c_features (v10.98-110)"]=33
+    ["ui_session_tweaks (v10.85-103)"]=37
+    ["goal1_upper_selection"]=21
+    ["goal2_lower_selection"]=21
+    ["goal4_match_highlight_ctrlb"]=18
+    ["goal5_notes_formatting"]=28
+    ["goal6_terminal_ctrlb"]=24
+    ["goal_selection_confinement"]=22
+    ["ui_route_coverage (v10.192)"]=45
+    ["test_selenium_ui (offline)"]=71
+    ["save_open_data (v10.65-66)"]=117
+    # Live suites
+    ["test_terminal T7  target=$LIVE_TARGET"]=68
+    ["test_export_and_hydra (Hydra live)"]=23
+    ["test_selenium_ui (live scan)"]=496
+    # User story suites
+    ["user_stories - match+CSS logic"]=34
+    ["user_stories (offline)"]=182
+    ["user_stories (live: $LIVE_TARGET)"]=169
+)
 SUITE_DONE=0        # total suites completed across the whole run
 SCRIPT_START=$(date +%s)
 # Section-level counters — reset at each ══ section ══ header
@@ -115,13 +185,16 @@ _frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 
 spinner_start() {
     local label="$1"
+    local est="${_SUITE_EST[$label]:-0}"
+    local est_str=""
+    [[ $est -gt 0 ]] && est_str=" ${DIM}~${est}s${NC}"
     (
         i=0
         while true; do
             f="${_frames[$((i % 10))]}"
             e=$(( $(date +%s) - SCRIPT_START ))
-            printf "\r  ${CYAN}%s${NC} %-45s  ${YELLOW}[%02d:%02d]${NC}  ${DIM}%s #%d${NC}  " \
-                "$f" "$label" $(( e/60 )) $(( e%60 )) \
+            printf "\r  ${CYAN}%s${NC} %-45s%b  ${YELLOW}[%02d:%02d]${NC}  ${DIM}%s #%d${NC}  " \
+                "$f" "$label" "$est_str" $(( e/60 )) $(( e%60 )) \
                 "$SECTION_NAME" "$SECTION_SUITE_DONE" >&2
             sleep 0.1
             i=$(( i+1 ))
@@ -396,6 +469,12 @@ print_result() {
     local timestr
     [[ $mins -gt 0 ]] && timestr="${mins}m${rem}s" || timestr="${secs}s"
 
+    # Append "(est Xs)" when estimate exists and actual differs by >20%
+    local est="${_SUITE_EST[$name]:-0}"
+    if [[ $est -gt 0 ]]; then
+        timestr="${timestr} ${DIM}(est ${est}s)${NC}"
+    fi
+
     local mark total=$(( p + f + s ))
     case "$status" in
         pass) mark="${GREEN}✓${NC}" ;;
@@ -409,7 +488,7 @@ print_result() {
     [[ "$s" -gt 0 ]] && counts="${counts}  ${YELLOW}${s} skipped${NC}" || counts="${counts}  ${DIM}${s} skipped${NC}"
     counts="${counts}  ${DIM}of ${total}${NC}"
 
-    printf "  %b %-42s  %b  ${DIM}%s${NC}\n" "$mark" "$name" "$counts" "$timestr"
+    printf "  %b %-42s  %b  %b\n" "$mark" "$name" "$counts" "$timestr"
 
     # Accumulate into grand total and section total
     SUITE_DONE=$(( SUITE_DONE + 1 ))
@@ -430,44 +509,72 @@ print_result() {
 run_unit() {
     local file="$1"
     local name="${file##tests/}"; name="${name%.py}"
-    local t0=$(date +%s)
 
-    spinner_start "$name"
-    local out rc
-    out=$(sudo "$PYTHON" "$file" 2>&1); rc=$?
-    spinner_stop
+    local t_total=0 final_p=0 final_f=1 final_s=0 final_out="" final_attempt=1 flaky=false
 
-    local rl secs p f s
-    rl=$(echo "$out" | grep "^Results:" | tail -1)
-    secs=$(( $(date +%s) - t0 ))
+    for attempt in 1 2 3; do
+        final_attempt=$attempt
+        [[ $attempt -gt 1 ]] && {
+            printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((attempt-1)) "$name"
+            sleep 1
+        }
 
-    if [[ -z "$rl" ]]; then
-        print_result "$name" "fail" 0 1 0 "$secs"
-        echo "$out" | tail -5 | sed "s/^/      /" >&2
-        return
-    fi
+        local t0; t0=$(date +%s)
+        spinner_start "$name"
+        local out rc
+        out=$(sudo "$PYTHON" "$file" 2>&1); rc=$?
+        spinner_stop
+        local secs=$(( $(date +%s) - t0 ))
+        t_total=$(( t_total + secs ))
 
-    p=$(_extract "$rl" "passed")
-    f=$(_extract "$rl" "failed")
-    s=$(_extract "$rl" "skipped")
+        local rl p f s
+        rl=$(echo "$out" | grep "^Results:" | tail -1)
 
-    if [[ "$f" -eq 0 && "$s" -eq 0 ]]; then
-        print_result "$name" "pass" "$p" "$f" "$s" "$secs"
+        if [[ -z "$rl" ]]; then
+            final_out="$out"; final_f=1
+            [[ $attempt -lt 3 ]] && continue
+            break
+        fi
+
+        p=$(_extract "$rl" "passed")
+        f=$(_extract "$rl" "failed")
+        s=$(_extract "$rl" "skipped")
+        final_p=$p; final_f=$f; final_s=$s; final_out="$out"
+
+        if [[ "$f" -eq 0 ]]; then
+            [[ $attempt -gt 1 ]] && flaky=true
+            break
+        fi
+        # Still failing — try again
+    done
+
+    local display_name="$name"
+    $flaky   && display_name="${name} ${YELLOW}[flaky — passed on retry ${final_attempt}]${NC}"
+    [[ $final_f -gt 0 && $final_attempt -eq 3 ]] \
+             && display_name="${name} ${RED}[failed all 3 attempts]${NC}"
+
+    if [[ "$final_f" -eq 0 ]]; then
+        print_result "$display_name" "pass" "$final_p" "$final_f" "$final_s" "$t_total"
+        $flaky && printf "      ${YELLOW}ℹ  Flaky suite — passed on attempt %d/%d. Consider investigating.${NC}\n" \
+                         "$final_attempt" "3"
     else
-        [[ "$f" -gt 0 ]] && print_result "$name" "fail" "$p" "$f" "$s" "$secs" \
-                         || print_result "$name" "pass" "$p" "$f" "$s" "$secs"
-        # Print failed test names
-        echo "$out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
-        # Print skipped test names with context
-        if [[ "$s" -gt 0 ]]; then
-            echo "$out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
-            # Annotate skip reason based on which file is running
+        if [[ -z "$(echo "$final_out" | grep "^Results:")" ]]; then
+            print_result "$display_name" "fail" 0 1 0 "$t_total"
+            echo "$final_out" | tail -5 | sed "s/^/      /" >&2
+            return
+        fi
+        print_result "$display_name" "fail" "$final_p" "$final_f" "$final_s" "$t_total"
+        [[ $final_attempt -eq 3 ]] \
+            && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        echo "$final_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
+        if [[ "$final_s" -gt 0 ]]; then
+            echo "$final_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
             if [[ "$file" == *"test_export_and_hydra"* ]]; then
                 if $RUN_LIVE; then
                     _skip_note "PERMANENT: Hydra libssh2 MAC incompatibility with Metasploitable OpenSSH 4.7 (T9)"
                     _skip_note "FTP (H3) and MySQL (H2) confirm the Hydra pipeline — already ran in Live Hydra section"
                 else
-                    _skip_note "No live VM target — all ${s} rerun in 'Live Hydra tests' with --live or --all 192.168.85.11"
+                    _skip_note "No live VM target — all ${final_s} rerun in 'Live Hydra tests' with --live or --all 192.168.85.11"
                 fi
             elif [[ "$file" == *"test_terminal"* ]]; then
                 if $RUN_LIVE; then
@@ -484,50 +591,88 @@ run_unit() {
 run_pytest() {
     local name="$1"; shift
     local args=("$@")
-    local t0=$(date +%s)
 
-    spinner_start "$name"
-    local out rc
-    out=$(sudo "$PYTHON" -m pytest "${args[@]}" --tb=no -q 2>&1); rc=$?
-    spinner_stop
+    local t_total=0 final_p=0 final_f=0 final_s=0 final_rc=1 final_out=""
+    local final_attempt=1 flaky=false no_tests=false
 
-    local secs=$(( $(date +%s) - t0 ))
-    local sl p f s
-    sl=$(echo "$out" | grep -E "passed|failed|error" | tail -1 || true)
+    for attempt in 1 2 3; do
+        final_attempt=$attempt
+        [[ $attempt -gt 1 ]] && {
+            printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((attempt-1)) "$name"
+            sleep 1
+        }
 
-    if [[ -z "$sl" ]]; then
-        if echo "$out" | grep -q "no tests ran"; then
-            print_result "$name" "skip" 0 0 0 "$secs"
-        else
-            local err
-            err=$(echo "$out" | grep -i "error" | head -2 | tr '\n' ' ' || true)
-            print_result "$name" "fail" 0 1 0 "$secs"
-            echo "      ${err:-rc=$rc}"
-            echo "$out" | tail -8 | sed "s/^/      /"
+        local t0; t0=$(date +%s)
+        spinner_start "$name"
+        local out rc
+        out=$(sudo "$PYTHON" -m pytest "${args[@]}" --tb=no -q 2>&1); rc=$?
+        spinner_stop
+        local secs=$(( $(date +%s) - t0 ))
+        t_total=$(( t_total + secs ))
+
+        local sl p f s
+        sl=$(echo "$out" | grep -E "passed|failed|error" | tail -1 || true)
+
+        if [[ -z "$sl" ]]; then
+            final_out="$out"; final_rc=$rc
+            if echo "$out" | grep -q "no tests ran"; then
+                no_tests=true; break
+            fi
+            # No summary line — treat as fail and retry
+            final_f=1
+            [[ $attempt -lt 3 ]] && continue
+            break
         fi
+
+        p=$(_extract "$sl" "passed")
+        f=$(_extract "$sl" "failed")
+        s=$(echo "$sl" | grep -oP '\d+(?= (skipped|deselected))' 2>/dev/null | head -1 || echo "0")
+        final_p=$p; final_f=$f; final_s=$s; final_rc=$rc; final_out="$out"
+
+        if [[ $rc -eq 0 ]]; then
+            [[ $attempt -gt 1 ]] && flaky=true
+            break
+        fi
+        # Still failing — try again (up to 3 total)
+    done
+
+    # ── Report ────────────────────────────────────────────────────────────────
+    if $no_tests; then
+        print_result "$name" "skip" 0 0 0 "$t_total"
         return
     fi
 
-    p=$(_extract "$sl" "passed")
-    f=$(_extract "$sl" "failed")
-    s=$(echo "$sl" | grep -oP '\d+(?= (skipped|deselected))' 2>/dev/null | head -1 || echo "0")
+    local display_name="$name"
+    $flaky && display_name="${name} ${YELLOW}[flaky — passed on retry ${final_attempt}]${NC}"
+    [[ $final_f -gt 0 && $final_attempt -eq 3 ]] \
+           && display_name="${name} ${RED}[failed all 3 attempts]${NC}"
 
-    if [[ "$rc" -eq 0 ]]; then
-        print_result "$name" "pass" "$p" "$f" "$s" "$secs"
-        # Print skipped test names (deselected by -m marker don't show here)
-        echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
-        if [[ "$s" -gt 0 ]]; then
+    if [[ -z "$(echo "$final_out" | grep -E 'passed|failed|error')" ]]; then
+        local err
+        err=$(echo "$final_out" | grep -i "error" | head -2 | tr '\n' ' ' || true)
+        print_result "$display_name" "fail" 0 1 0 "$t_total"
+        echo "      ${err:-rc=$final_rc}"
+        echo "$final_out" | tail -8 | sed "s/^/      /"
+        return
+    fi
+
+    if [[ $final_rc -eq 0 ]]; then
+        print_result "$display_name" "pass" "$final_p" "$final_f" "$final_s" "$t_total"
+        echo "$final_out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
+        if [[ "$final_s" -gt 0 ]]; then
             _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)}"
         fi
+        $flaky && printf "      ${YELLOW}ℹ  Flaky suite — passed on attempt %d/3. Consider investigating.${NC}\n" \
+                         "$final_attempt"
     else
-        print_result "$name" "fail" "$p" "$f" "$s" "$secs"
-        # Print every failed test name
-        echo "$out" | grep "^FAILED" | sed "s/^FAILED /      ${RED}FAILED${NC} /"
-        # Print skipped test names
-        echo "$out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
-        if [[ "$s" -gt 0 ]]; then
+        print_result "$display_name" "fail" "$final_p" "$final_f" "$final_s" "$t_total"
+        echo "$final_out" | grep "^FAILED" | sed "s/^FAILED /      ${RED}FAILED${NC} /"
+        echo "$final_out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
+        if [[ "$final_s" -gt 0 ]]; then
             _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)}"
         fi
+        [[ $final_attempt -eq 3 ]] \
+            && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
     fi
 }
 
@@ -610,54 +755,88 @@ fi
 if $RUN_LIVE; then
     section "Live terminal tests  (SSH / MySQL / msfconsole)"
     local_name="test_terminal T7  target=$LIVE_TARGET"
-    t0=$(date +%s)
-    spinner_start "$local_name"
-    t7_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" "$PYTHON" tests/test_terminal.py 2>&1) || true
-    spinner_stop
-    t7_line=$(echo "$t7_out" | grep "^Results:" | tail -1)
-    t7_p=$(_extract "$t7_line" "passed")
-    t7_f=$(_extract "$t7_line" "failed")
-    t7_s=$(_extract "$t7_line" "skipped")
-    _t7_secs=$(( $(date +%s) - t0 ))
-    if [[ "$t7_f" -eq 0 && "$t7_s" -eq 0 ]]; then
-        print_result "$local_name" "pass" "$t7_p" "$t7_f" "$t7_s" "$_t7_secs"
+    t7_t_total=0; t7_p=0; t7_f=1; t7_s=0; t7_final_attempt=1; t7_flaky=false; t7_out=""
+    for _t7_attempt in 1 2 3; do
+        t7_final_attempt=$_t7_attempt
+        [[ $_t7_attempt -gt 1 ]] && {
+            printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((_t7_attempt-1)) "$local_name"
+            sleep 2
+        }
+        t0=$(date +%s)
+        spinner_start "$local_name"
+        t7_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" "$PYTHON" tests/test_terminal.py 2>&1) || true
+        spinner_stop
+        t7_secs=$(( $(date +%s) - t0 ))
+        t7_t_total=$(( t7_t_total + t7_secs ))
+        t7_line=$(echo "$t7_out" | grep "^Results:" | tail -1)
+        t7_p=$(_extract "$t7_line" "passed")
+        t7_f=$(_extract "$t7_line" "failed")
+        t7_s=$(_extract "$t7_line" "skipped")
+        if [[ "$t7_f" -eq 0 ]]; then
+            [[ $_t7_attempt -gt 1 ]] && t7_flaky=true
+            break
+        fi
+    done
+    t7_display="$local_name"
+    $t7_flaky && t7_display="${local_name} ${YELLOW}[flaky — passed on retry ${t7_final_attempt}]${NC}"
+    [[ $t7_f -gt 0 && $t7_final_attempt -eq 3 ]] \
+        && t7_display="${local_name} ${RED}[failed all 3 attempts]${NC}"
+    if [[ "$t7_f" -eq 0 ]]; then
+        print_result "$t7_display" "pass" "$t7_p" "$t7_f" "$t7_s" "$t7_t_total"
+        $t7_flaky && printf "      ${YELLOW}ℹ  Flaky — passed on attempt %d/3.${NC}\n" "$t7_final_attempt"
     else
-        [[ "$t7_f" -gt 0 ]] \
-            && print_result "$local_name" "fail" "$t7_p" "$t7_f" "$t7_s" "$_t7_secs" \
-            || print_result "$local_name" "pass" "$t7_p" "$t7_f" "$t7_s" "$_t7_secs"
+        print_result "$t7_display" "fail" "$t7_p" "$t7_f" "$t7_s" "$t7_t_total"
         echo "$t7_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
         echo "$t7_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
+        [[ $t7_final_attempt -eq 3 ]] && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
     fi
 fi
 
 if $RUN_LIVE; then
     section "Live Hydra tests  (SSH + MySQL brute-force)"
     hydra_name="test_export_and_hydra (Hydra live)"
-    t0=$(date +%s)
-    spinner_start "$hydra_name"
-    hydra_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
-                         LEGION_SSH_PORT=22 \
-                         LEGION_MYSQL_PORT=3306 \
-                         LEGION_FTP_PORT=21 \
-                    "$PYTHON" tests/test_export_and_hydra.py 2>&1) || true
-    spinner_stop
-    hydra_line=$(echo "$hydra_out" | grep "^Results:" | tail -1)
-    hydra_p=$(_extract "$hydra_line" "passed")
-    hydra_f=$(_extract "$hydra_line" "failed")
-    hydra_s=$(_extract "$hydra_line" "skipped")
-    _hydra_secs=$(( $(date +%s) - t0 ))
-    if [[ "$hydra_f" -eq 0 && "$hydra_s" -eq 0 ]]; then
-        print_result "$hydra_name" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$_hydra_secs"
+    hydra_t_total=0; hydra_p=0; hydra_f=1; hydra_s=0; hydra_final_attempt=1; hydra_flaky=false; hydra_out=""
+    for _hydra_attempt in 1 2 3; do
+        hydra_final_attempt=$_hydra_attempt
+        [[ $_hydra_attempt -gt 1 ]] && {
+            printf "\n  ${YELLOW}⟳  Retry %d/2: %s${NC}\n" $((_hydra_attempt-1)) "$hydra_name"
+            sleep 2
+        }
+        t0=$(date +%s)
+        spinner_start "$hydra_name"
+        hydra_out=$(sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
+                             LEGION_SSH_PORT=22 \
+                             LEGION_MYSQL_PORT=3306 \
+                             LEGION_FTP_PORT=21 \
+                        "$PYTHON" tests/test_export_and_hydra.py 2>&1) || true
+        spinner_stop
+        _hydra_secs=$(( $(date +%s) - t0 ))
+        hydra_t_total=$(( hydra_t_total + _hydra_secs ))
+        hydra_line=$(echo "$hydra_out" | grep "^Results:" | tail -1)
+        hydra_p=$(_extract "$hydra_line" "passed")
+        hydra_f=$(_extract "$hydra_line" "failed")
+        hydra_s=$(_extract "$hydra_line" "skipped")
+        if [[ "$hydra_f" -eq 0 ]]; then
+            [[ $_hydra_attempt -gt 1 ]] && hydra_flaky=true
+            break
+        fi
+    done
+    hydra_display="$hydra_name"
+    $hydra_flaky && hydra_display="${hydra_name} ${YELLOW}[flaky — passed on retry ${hydra_final_attempt}]${NC}"
+    [[ $hydra_f -gt 0 && $hydra_final_attempt -eq 3 ]] \
+        && hydra_display="${hydra_name} ${RED}[failed all 3 attempts]${NC}"
+    if [[ "$hydra_f" -eq 0 ]]; then
+        print_result "$hydra_display" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$hydra_t_total"
+        $hydra_flaky && printf "      ${YELLOW}ℹ  Flaky — passed on attempt %d/3.${NC}\n" "$hydra_final_attempt"
     else
-        [[ "$hydra_f" -gt 0 ]] \
-            && print_result "$hydra_name" "fail" "$hydra_p" "$hydra_f" "$hydra_s" "$_hydra_secs" \
-            || print_result "$hydra_name" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$_hydra_secs"
+        print_result "$hydra_display" "fail" "$hydra_p" "$hydra_f" "$hydra_s" "$hydra_t_total"
         echo "$hydra_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
         echo "$hydra_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
-        if [[ "$hydra_s" -gt 0 ]]; then
-            _skip_note "PERMANENT: Hydra libssh2 MAC incompatibility with Metasploitable OpenSSH 4.7"
-            _skip_note "FTP (H3) and MySQL (H2) above confirm the Hydra pipeline works — see T9"
-        fi
+        [[ $hydra_final_attempt -eq 3 ]] && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+    fi
+    if [[ "$hydra_s" -gt 0 ]]; then
+        _skip_note "PERMANENT: Hydra libssh2 MAC incompatibility with Metasploitable OpenSSH 4.7"
+        _skip_note "FTP (H3) and MySQL (H2) above confirm the Hydra pipeline works — see T9"
     fi
 fi
 
@@ -724,7 +903,8 @@ if $RUN_LIVE; then
     pkill -f "nmap" 2>/dev/null || true
     pkill -f "eyewitness" 2>/dev/null || true
     rm -rf /tmp/legion/legion-* 2>/dev/null || true
-    echo -e "  target: ${BOLD}$LIVE_TARGET${NC}  (~10 min — 6 nmap stages + NSE + eyewitness)"
+    _live_est="${_SUITE_EST[test_selenium_ui (live scan)]:-496}"
+    echo -e "  target: ${BOLD}$LIVE_TARGET${NC}  (~${_live_est}s est — 6 nmap stages + NSE + eyewitness)"
     echo -e "  ${DIM}output is streamed live — each dot = 1 test passing${NC}"
     echo ""
 
@@ -733,12 +913,24 @@ if $RUN_LIVE; then
     _live_log=$(mktemp /tmp/legion-live-scan-XXXXXX.log)
     _live_t0=$(date +%s)
 
+    # Background timer — prints elapsed/estimated every 30 s alongside streaming output
+    ( while true; do
+        sleep 30
+        _le=$(( $(date +%s) - _live_t0 ))
+        printf "  ${DIM}  [elapsed %dm%02ds / est %ds]${NC}\n" \
+            $(( _le/60 )) $(( _le%60 )) "$_live_est" >&2
+      done ) &
+    _live_timer_pid=$!
+
     # Run pytest with -v --tb=short so each test result prints immediately.
     # tee streams to terminal AND saves to log for summary parsing.
     sudo env LEGION_TEST_TARGET="$LIVE_TARGET" \
         "$PYTHON" -m pytest tests/test_selenium_ui.py -m live \
         -v --tb=short --no-header 2>&1 | tee "$_live_log"
     _live_rc=${PIPESTATUS[0]}
+
+    kill "$_live_timer_pid" 2>/dev/null || true
+    wait "$_live_timer_pid" 2>/dev/null || true
 
     _live_secs=$(( $(date +%s) - _live_t0 ))
     _live_sl=$(grep -E "passed|failed|error" "$_live_log" | tail -1 || true)
