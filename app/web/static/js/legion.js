@@ -4173,11 +4173,24 @@ document.addEventListener('DOMContentLoaded', function() {
                             var _activeTabBtn = $('right-tab-bar') &&
                                 $('right-tab-bar').querySelector('.dynamic-tab.active, .tab-btn.active');
                             title = _activeTabBtn ? _activeTabBtn.textContent.trim() : 'Tool Output';
-                            /* Find the visible dyn-output-* element in the active tab panel */
-                            var _dynCont = $('dynamic-tabs-container');
-                            var _activePanel = _dynCont &&
-                                _dynCont.querySelector('.tab-content:not([style*="display:none"]) .tool-output-area, .tab-content.active .tool-output-area');
-                            sourceEl = _activePanel || null;
+                            /* Find the active tab panel via the button's data-tab attribute.
+                               Previously used .tab-content:not([style*="display:none"]) which
+                               checks INLINE style — but tab visibility is controlled by the
+                               CSS class rule (.tab-content { display:none }) not inline style,
+                               so the selector matched ALL panels and returned the first one
+                               in document order (typically an invisible inactive panel when
+                               multiple process tabs exist, e.g. after staged nmap). */
+                            sourceEl = null;
+                            if (_activeTabBtn && _activeTabBtn.dataset.tab) {
+                                var _panel = $(_activeTabBtn.dataset.tab);
+                                sourceEl = _panel ? _panel.querySelector('.tool-output-area') : null;
+                            }
+                            if (!sourceEl) {
+                                /* Fallback: .active class is applied by initTabBar */
+                                var _dynCont = $('dynamic-tabs-container');
+                                sourceEl = _dynCont ?
+                                    _dynCont.querySelector('.tab-content.active .tool-output-area') : null;
+                            }
                             break;
                         }
                         default: {
