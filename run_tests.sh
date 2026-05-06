@@ -562,14 +562,19 @@ run_unit() {
     done
 
     local display_name="$name"
-    $flaky   && display_name="${name} ${YELLOW}[flaky — passed on retry ${final_attempt}]${NC}"
-    [[ $final_f -gt 0 && $final_attempt -eq 3 ]] \
-             && display_name="${name} ${RED}[failed all 3 attempts]${NC}"
+    if [[ "$flaky" == "true" ]]; then
+        display_name="${name} ${YELLOW}[flaky — passed on retry ${final_attempt}]${NC}"
+    fi
+    if [[ $final_f -gt 0 && $final_attempt -eq 3 ]]; then
+        display_name="${name} ${RED}[failed all 3 attempts]${NC}"
+    fi
 
     if [[ "$final_f" -eq 0 ]]; then
         print_result "$display_name" "pass" "$final_p" "$final_f" "$final_s" "$t_total"
-        $flaky && printf "      ${YELLOW}ℹ  Flaky suite — passed on attempt %d/%d. Consider investigating.${NC}\n" \
-                         "$final_attempt" "3"
+        if [[ "$flaky" == "true" ]]; then
+            printf "      ${YELLOW}i  Flaky suite — passed on attempt %d/3. Consider investigating.${NC}\n" \
+                   "$final_attempt"
+        fi
     else
         if [[ -z "$(echo "$final_out" | grep "^Results:")" ]]; then
             print_result "$display_name" "fail" 0 1 0 "$t_total"
@@ -577,20 +582,21 @@ run_unit() {
             return
         fi
         print_result "$display_name" "fail" "$final_p" "$final_f" "$final_s" "$t_total"
-        [[ $final_attempt -eq 3 ]] \
-            && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        if [[ $final_attempt -eq 3 ]]; then
+            printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        fi
         echo "$final_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
         if [[ "$final_s" -gt 0 ]]; then
             echo "$final_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
             if [[ "$file" == *"test_export_and_hydra"* ]]; then
-                if $RUN_LIVE; then
+                if [[ "$RUN_LIVE" == "true" ]]; then
                     _skip_note "PERMANENT: Hydra libssh2 MAC incompatibility with Metasploitable OpenSSH 4.7 (T9)"
                     _skip_note "FTP (H3) and MySQL (H2) confirm the Hydra pipeline — already ran in Live Hydra section"
                 else
                     _skip_note "No live VM target — all ${final_s} rerun in 'Live Hydra tests' with --live or --all 192.168.85.11"
                 fi
             elif [[ "$file" == *"test_terminal"* ]]; then
-                if $RUN_LIVE; then
+                if [[ "$RUN_LIVE" == "true" ]]; then
                     _skip_note "Live tests require LEGION_TEST_TARGET — set on the T7 section which already ran above"
                 else
                     _skip_note "No live VM target — T7 tests rerun in 'Live terminal tests' with --live or --all 192.168.85.11"
@@ -650,15 +656,18 @@ run_pytest() {
     done
 
     # ── Report ────────────────────────────────────────────────────────────────
-    if $no_tests; then
+    if [[ "$no_tests" == "true" ]]; then
         print_result "$name" "skip" 0 0 0 "$t_total"
         return
     fi
 
     local display_name="$name"
-    $flaky && display_name="${name} ${YELLOW}[flaky — passed on retry ${final_attempt}]${NC}"
-    [[ $final_f -gt 0 && $final_attempt -eq 3 ]] \
-           && display_name="${name} ${RED}[failed all 3 attempts]${NC}"
+    if [[ "$flaky" == "true" ]]; then
+        display_name="${name} ${YELLOW}[flaky — passed on retry ${final_attempt}]${NC}"
+    fi
+    if [[ $final_f -gt 0 && $final_attempt -eq 3 ]]; then
+        display_name="${name} ${RED}[failed all 3 attempts]${NC}"
+    fi
 
     if [[ -z "$(echo "$final_out" | grep -E 'passed|failed|error')" ]]; then
         local err
@@ -673,19 +682,22 @@ run_pytest() {
         print_result "$display_name" "pass" "$final_p" "$final_f" "$final_s" "$t_total"
         echo "$final_out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
         if [[ "$final_s" -gt 0 ]]; then
-            _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)}"
+            _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete}"
         fi
-        $flaky && printf "      ${YELLOW}ℹ  Flaky suite — passed on attempt %d/3. Consider investigating.${NC}\n" \
-                         "$final_attempt"
+        if [[ "$flaky" == "true" ]]; then
+            printf "      ${YELLOW}i  Flaky suite — passed on attempt %d/3. Consider investigating.${NC}\n" \
+                   "$final_attempt"
+        fi
     else
         print_result "$display_name" "fail" "$final_p" "$final_f" "$final_s" "$t_total"
         echo "$final_out" | grep "^FAILED" | sed "s/^FAILED /      ${RED}FAILED${NC} /"
         echo "$final_out" | grep "^SKIPPED" | sed "s/^/      ${YELLOW}SKIPPED${NC} /" || true
         if [[ "$final_s" -gt 0 ]]; then
-            _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete (see test_CriticalPaths.py)}"
+            _skip_note "${_SKIP_NOTE:-pytest skipTest() stubs — implement or delete}"
         fi
-        [[ $final_attempt -eq 3 ]] \
-            && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        if [[ $final_attempt -eq 3 ]]; then
+            printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        fi
     fi
 }
 
@@ -791,17 +803,24 @@ if $RUN_LIVE; then
         fi
     done
     t7_display="$local_name"
-    $t7_flaky && t7_display="${local_name} ${YELLOW}[flaky — passed on retry ${t7_final_attempt}]${NC}"
-    [[ $t7_f -gt 0 && $t7_final_attempt -eq 3 ]] \
-        && t7_display="${local_name} ${RED}[failed all 3 attempts]${NC}"
+    if [[ "$t7_flaky" == "true" ]]; then
+        t7_display="${local_name} ${YELLOW}[flaky — passed on retry ${t7_final_attempt}]${NC}"
+    fi
+    if [[ $t7_f -gt 0 && $t7_final_attempt -eq 3 ]]; then
+        t7_display="${local_name} ${RED}[failed all 3 attempts]${NC}"
+    fi
     if [[ "$t7_f" -eq 0 ]]; then
         print_result "$t7_display" "pass" "$t7_p" "$t7_f" "$t7_s" "$t7_t_total"
-        $t7_flaky && printf "      ${YELLOW}ℹ  Flaky — passed on attempt %d/3.${NC}\n" "$t7_final_attempt"
+        if [[ "$t7_flaky" == "true" ]]; then
+            printf "      ${YELLOW}i  Flaky — passed on attempt %d/3.${NC}\n" "$t7_final_attempt"
+        fi
     else
         print_result "$t7_display" "fail" "$t7_p" "$t7_f" "$t7_s" "$t7_t_total"
         echo "$t7_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
         echo "$t7_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
-        [[ $t7_final_attempt -eq 3 ]] && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        if [[ $t7_final_attempt -eq 3 ]]; then
+            printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        fi
     fi
 fi
 
@@ -835,17 +854,24 @@ if $RUN_LIVE; then
         fi
     done
     hydra_display="$hydra_name"
-    $hydra_flaky && hydra_display="${hydra_name} ${YELLOW}[flaky — passed on retry ${hydra_final_attempt}]${NC}"
-    [[ $hydra_f -gt 0 && $hydra_final_attempt -eq 3 ]] \
-        && hydra_display="${hydra_name} ${RED}[failed all 3 attempts]${NC}"
+    if [[ "$hydra_flaky" == "true" ]]; then
+        hydra_display="${hydra_name} ${YELLOW}[flaky — passed on retry ${hydra_final_attempt}]${NC}"
+    fi
+    if [[ $hydra_f -gt 0 && $hydra_final_attempt -eq 3 ]]; then
+        hydra_display="${hydra_name} ${RED}[failed all 3 attempts]${NC}"
+    fi
     if [[ "$hydra_f" -eq 0 ]]; then
         print_result "$hydra_display" "pass" "$hydra_p" "$hydra_f" "$hydra_s" "$hydra_t_total"
-        $hydra_flaky && printf "      ${YELLOW}ℹ  Flaky — passed on attempt %d/3.${NC}\n" "$hydra_final_attempt"
+        if [[ "$hydra_flaky" == "true" ]]; then
+            printf "      ${YELLOW}i  Flaky — passed on attempt %d/3.${NC}\n" "$hydra_final_attempt"
+        fi
     else
         print_result "$hydra_display" "fail" "$hydra_p" "$hydra_f" "$hydra_s" "$hydra_t_total"
         echo "$hydra_out" | grep "^  ✗" | sed "s/^/      ${RED}FAILED${NC} /"
         echo "$hydra_out" | grep "^  ⊘" | sed "s/^/      ${YELLOW}SKIPPED${NC} /"
-        [[ $hydra_final_attempt -eq 3 ]] && printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        if [[ $hydra_final_attempt -eq 3 ]]; then
+            printf "      ${DIM}(3 attempts made — definitive failure)${NC}\n"
+        fi
     fi
     if [[ "$hydra_s" -gt 0 ]]; then
         _skip_note "PERMANENT: Hydra libssh2 MAC incompatibility with Metasploitable OpenSSH 4.7"
