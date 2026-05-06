@@ -188,13 +188,17 @@ spinner_start() {
     local est="${_SUITE_EST[$label]:-0}"
     local est_str=""
     [[ $est -gt 0 ]] && est_str=" ${DIM}~${est}s${NC}"
+    local suite_start; suite_start=$(date +%s)   # captured before subshell
     (
         i=0
         while true; do
             f="${_frames[$((i % 10))]}"
-            e=$(( $(date +%s) - SCRIPT_START ))
-            printf "\r  ${CYAN}%s${NC} %-45s%b  ${YELLOW}[%02d:%02d]${NC}  ${DIM}%s #%d${NC}  " \
-                "$f" "$label" "$est_str" $(( e/60 )) $(( e%60 )) \
+            e=$(( $(date +%s) - SCRIPT_START ))  # total elapsed
+            s=$(( $(date +%s) - suite_start ))   # per-suite elapsed (resets to 0 each suite)
+            printf "\r  ${CYAN}%s${NC} %-45s%b  ${YELLOW}[%02d:%02d | %02d:%02d]${NC}  ${DIM}%s #%d${NC}  " \
+                "$f" "$label" "$est_str" \
+                $(( e/60 )) $(( e%60 )) \
+                $(( s/60 )) $(( s%60 )) \
                 "$SECTION_NAME" "$SECTION_SUITE_DONE" >&2
             sleep 0.1
             i=$(( i+1 ))
