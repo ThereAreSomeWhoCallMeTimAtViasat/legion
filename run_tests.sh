@@ -931,10 +931,16 @@ if $RUN_SELENIUM; then
     free_port 5090; run_pytest "goal5_notes_formatting"       tests/test_goal5_notes_formatting.py
     free_port 5089; run_pytest "goal6_terminal_ctrlb"         tests/test_goal6_terminal_ctrlb.py
     free_port 5085; run_pytest "goal_selection_confinement"   tests/test_goal_selection_confinement.py
+    _SKIP_NOTE="screenshooter skip expected — eyewitness not installed or target unreachable (test_screenshooter_process_appears_in_snapshot)"
     free_port 5092; run_pytest "ui_route_coverage (v10.192)"  tests/test_ui_route_coverage.py
+    unset _SKIP_NOTE
     # Tier D — slowest stable last (~2 min each)
+    _SKIP_NOTE="19 live-scan tests deselected by -m 'not live' — run with --live 192.168.85.11 to include them"
     free_port 5099; run_pytest "test_selenium_ui (offline)"  tests/test_selenium_ui.py -m "not live"
+    unset _SKIP_NOTE
+    _SKIP_NOTE="screenshooter skip expected — eyewitness not installed or target unreachable"
     free_port 5073; run_pytest "save_open_data (v10.65-66)" tests/test_save_open_data.py
+    unset _SKIP_NOTE
 fi
 
 if $RUN_LIVE; then
