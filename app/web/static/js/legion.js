@@ -1217,6 +1217,14 @@ var _checkedProcessIds = new Set();
    user's scroll position is honoured on every 1.5 s poll cycle. */
 var _procScrollPos = {};
 
+/* Per-process rendered-HTML cache for Finished/Killed/Crashed processes.
+   renderDynamicToolTabs() destroys all content every 1.5 s and then calls
+   restoredBtn.click() which triggers loadProcessOutput().  For large outputs
+   (e.g. smbmap 736 KB) ansiToHtml + highlightMatches re-runs on every poll
+   cycle, freezing the UI for several seconds.  Cache the final innerHTML so
+   subsequent reloads are instant.  Cleared on host/project switch. */
+var _dynOutputCache = {};
+
 /* pid (string) to activate in renderDynamicToolTabs after a cross-host goto-tab.
    Set by the goto-tab handler before clicking the new host row; cleared by
    renderDynamicToolTabs once the tab button exists and is activated. */
@@ -1353,6 +1361,24 @@ function loadProcessOutput(processId, targetEl) {
     var _maxChars = (_proc && _proc.has_match && _proc.status !== 'Running')
         ? 2000000   /* effectively unlimited for matched, finished processes */
         : 50000;
+    /* Cache hit: for Finished/Killed/Crashed processes the output never changes.
+       Return the previously rendered HTML instantly — no fetch, no ANSI parse,
+       no highlightMatches regex scan over potentially hundreds of KB. */
+    var _staticStatus = _proc && (_proc.status === 'Finished' ||
+                                   _proc.status === 'Killed'   ||
+                                   _proc.status === 'Crashed');
+    if (_staticStatus && _dynOutputCache[processId] !== undefined) {
+        targetEl.innerHTML = _dynOutputCache[processId];
+        _matchNavInit(targetEl, processId);
+        if (atBottom) {
+            targetEl.scrollTop = targetEl.scrollHeight;
+        } else if (_procScrollPos[processId] !== undefined &&
+                   _procScrollPos[processId] !== 'bottom') {
+            setTimeout(function() { targetEl.scrollTop = _procScrollPos[processId]; }, 0);
+        }
+        return;
+    }
+
     fetchJson('/api/processes/' + processId + '/output?max_chars=' + _maxChars).then(function(data) {
         /* Bail if the project switched while the fetch was in-flight */
         if (L._projectSwitchTime !== _switchTs) return;
@@ -1406,6 +1432,12 @@ function loadProcessOutput(processId, targetEl) {
                       + '\u23f3 Running... ' + fmtE + ' elapsed</div>';
             }
             targetEl.innerHTML = html;
+            /* Cache rendered HTML for static processes — next renderDynamicToolTabs
+               wipe+restore retrieves it instantly without re-fetching or re-parsing. */
+            if (proc && (proc.status === 'Finished' || proc.status === 'Killed' ||
+                         proc.status === 'Crashed')) {
+                _dynOutputCache[processId] = targetEl.innerHTML;
+            }
         }
         /* Wire match navigation buttons (fresh elements created by innerHTML above) */
         if (proc && proc.has_match) {
@@ -4458,6 +4490,7 @@ document.addEventListener('DOMContentLoaded', function() {
         L._uptimeActive     = false;
         _procScrollPos      = {};
         _matchNavState      = {};
+        _dynOutputCache     = {};   /* invalidate rendered-output cache on project switch */
         _checkedProcessIds  = new Set();
         _savedXtermSel      = '';
         _lastNonXtermSelSource = null;
