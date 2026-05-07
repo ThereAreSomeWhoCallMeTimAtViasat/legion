@@ -49,6 +49,12 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Resolve the real (non-root) user and their home directory.
+# When run via 'sudo bash install_tools.sh', SUDO_USER is the invoking user.
+# This is needed so nuclei templates and config dirs land in the right home.
+REAL_USER="${SUDO_USER:-root}"
+REAL_HOME=$(getent passwd "${REAL_USER}" | cut -d: -f6 2>/dev/null || echo "${HOME}")
+
 echo "=== Legion Tool Installer ==="
 echo ""
 
@@ -107,11 +113,6 @@ else
         RDP_DIR=/opt/rdp-sec-check
         if [[ ! -d "$RDP_DIR" ]]; then
             if git clone --depth 1 https://github.com/CiscoCXSecurity/rdp-sec-check.git "$RDP_DIR" 2>/dev/null; then
-                # Install the one CPAN dep (Encoding::BER) if cpanm is available
-                if command -v cpanm &>/dev/null; then
-                    info "Installing Perl dependency Encoding::BER..."
-                    cpanm --quiet Encoding::BER 2>/dev/null || true
-                fi
                 # Wrapper so 'rdp-sec-check HOST:PORT' works from anywhere
                 cat > /usr/local/bin/rdp-sec-check << 'WRAPPER'
 #!/bin/bash
@@ -127,24 +128,55 @@ WRAPPER
     fi
 fi
 
+# Perl dependency: Encoding::BER — required by rdp-sec-check.pl at runtime.
+# Without it rdp-sec-check fails: "Can't locate Encoding/BER.pm in @INC".
+# Try apt (libencoding-ber-perl) first; fall back to CPAN.
+if perl -e 'use Encoding::BER' 2>/dev/null; then
+    skip "Perl Encoding::BER already installed"
+else
+    info "Installing Perl Encoding::BER (rdp-sec-check dependency)..."
+    if apt-get install -y libencoding-ber-perl 2>/dev/null; then
+        ok "libencoding-ber-perl installed via apt"
+    elif command -v cpanm &>/dev/null; then
+        cpanm --quiet Encoding::BER 2>/dev/null \
+            && ok "Encoding::BER installed via cpanm" \
+            || warn "cpanm install failed — try: sudo apt-get install libencoding-ber-perl"
+    else
+        cpan -i Encoding::BER 2>/dev/null \
+            && ok "Encoding::BER installed via cpan" \
+            || warn "CPAN install failed — try: sudo apt-get install libencoding-ber-perl"
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # nuclei templates — required before nuclei can scan for anything.
 # The -duc flag in legion.conf commands suppresses per-scan update checks,
 # but templates must be present. They install to ~/.local/nuclei-templates.
 # ---------------------------------------------------------------------------
-NUCLEI_TEMPLATES_DIR="$HOME/.local/nuclei-templates"
+# Use the real user's home so templates land in /home/kali/.local not /root/.local
+# when this script is invoked via sudo. legion.conf uses -t REAL_HOME/.local/nuclei-templates/http
+NUCLEI_TEMPLATES_DIR="${REAL_HOME}/.local/nuclei-templates"
 if [[ -d "$NUCLEI_TEMPLATES_DIR" ]] && [[ -n "$(ls -A "$NUCLEI_TEMPLATES_DIR" 2>/dev/null)" ]]; then
     skip "nuclei templates already present at $NUCLEI_TEMPLATES_DIR"
 else
     info "Downloading nuclei templates (this may take a moment)..."
-    if nuclei -update-templates 2>&1 | tee /tmp/nuclei-update.log | grep -qE "Successfully installed|up.to.date|No new updates"; then
+    HOME="${REAL_HOME}" nuclei -update-templates 2>&1 | tee /tmp/nuclei-update.log | grep -qE "Successfully|up.to.date|No new" || true
+    if [[ -d "$NUCLEI_TEMPLATES_DIR" ]] && [[ -n "$(ls -A "$NUCLEI_TEMPLATES_DIR" 2>/dev/null)" ]]; then
         ok "nuclei templates ready at $NUCLEI_TEMPLATES_DIR"
-    elif [[ -d "$NUCLEI_TEMPLATES_DIR" ]]; then
-        ok "nuclei templates present at $NUCLEI_TEMPLATES_DIR"
+        [[ "${REAL_USER}" != "root" ]] && chown -R "${REAL_USER}:${REAL_USER}" "$NUCLEI_TEMPLATES_DIR" 2>/dev/null || true
     else
         warn "nuclei template download may have failed — check: nuclei -update-templates"
     fi
 fi
+
+# Create nuclei config directory so nuclei can write its .templates-config.json
+# without 'permission denied' when Legion runs as root (sudo legion-python3 legion.py)
+NUCLEI_CONF="${REAL_HOME}/.config/nuclei"
+if [[ ! -d "$NUCLEI_CONF" ]]; then
+    mkdir -p "$NUCLEI_CONF"
+    ok "nuclei config directory created at $NUCLEI_CONF"
+fi
+[[ "${REAL_USER}" != "root" ]] && chown -R "${REAL_USER}:${REAL_USER}" "$NUCLEI_CONF" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # mongosh — MongoDB shell (optional; needed for mongo terminal actions)
@@ -256,13 +288,20 @@ fi
 
 # ---------------------------------------------------------------------------
 # wig — WebApp Information Gatherer (apt, already on Kali by default)
+# NOTE: wig is BROKEN on Python 3.13+ due to html.parser API change.
+# HTMLParser gained a 'scripting' attribute in 3.12; wig's HTMLStripper
+# subclass does not set it → AttributeError on every page fetch.
+# wig is therefore NOT in SchedulerSettings (auto-run) but remains in
+# PortActions so it can be run manually on Python 3.12 systems.
 # ---------------------------------------------------------------------------
 if command -v wig &>/dev/null; then
     skip "wig already installed at $(command -v wig)"
+    python3 -c "import html.parser; p=html.parser.HTMLParser(); getattr(p,'scripting',None)" 2>/dev/null \
+        || warn "wig is installed but broken on Python 3.13+ (html.parser API change) — disabled in SchedulerSettings"
 else
     info "apt install wig..."
     if apt-get install -y wig 2>/dev/null; then
-        ok "wig installed"
+        ok "wig installed (note: disabled in SchedulerSettings on Python 3.13+)"
     else
         warn "wig not available via apt — try: pip3 install --break-system-packages wig"
         NEWLY_MISSING+=("wig")

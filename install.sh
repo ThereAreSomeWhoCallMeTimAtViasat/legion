@@ -137,7 +137,23 @@ _install_tool() {
                 printf '#!/bin/bash\nexec perl /opt/rdp-sec-check/rdp-sec-check.pl "$@"\n' \
                     | sudo tee /usr/local/bin/rdp-sec-check > /dev/null
                 sudo chmod +x /usr/local/bin/rdp-sec-check
-            } ;;
+            }
+            # Perl dependency: Encoding::BER — required by rdp-sec-check.pl
+            # Without this, rdp-sec-check fails: "Can't locate Encoding/BER.pm"
+            if ! perl -e 'use Encoding::BER' 2>/dev/null; then
+                info "  Installing Perl Encoding::BER for rdp-sec-check…"
+                sudo apt-get install -y libencoding-ber-perl 2>/dev/null \
+                    && ok "  libencoding-ber-perl installed via apt" \
+                    || {
+                        command -v cpanm &>/dev/null \
+                            && sudo cpanm --quiet Encoding::BER 2>/dev/null \
+                            || sudo cpan -i Encoding::BER 2>/dev/null
+                        perl -e 'use Encoding::BER' 2>/dev/null \
+                            && ok "  Encoding::BER installed via CPAN" \
+                            || warn "  Encoding::BER install failed — run: sudo apt-get install libencoding-ber-perl"
+                    }
+            fi
+            ;;
         *)  sudo apt-get install -y --ignore-missing "$tool" 2>/dev/null || true ;;
     esac
     if command -v "$tool" &>/dev/null; then
@@ -470,6 +486,21 @@ if [[ -d "$NUCLEI_DIR" && "${REAL_USER}" != "root" ]]; then
     sudo chown -R "${REAL_USER}:${REAL_USER}" "$NUCLEI_DIR" 2>/dev/null \
         && ok "nuclei templates ownership set to ${REAL_USER}" \
         || warn "could not chown nuclei templates — run: sudo chown -R ${REAL_USER}:${REAL_USER} ${NUCLEI_DIR}"
+fi
+
+# Create nuclei config directory for the real user so nuclei can write its
+# .templates-config.json when invoked as root (e.g. sudo legion-python3 legion.py).
+# Without this, nuclei logs 'failed to write config file: permission denied'
+# on every scan call, which pollutes output and slows startup.
+NUCLEI_CONF_DIR="${REAL_HOME}/.config/nuclei"
+if [[ ! -d "${NUCLEI_CONF_DIR}" ]]; then
+    sudo mkdir -p "${NUCLEI_CONF_DIR}"
+    ok "nuclei config directory created at ${NUCLEI_CONF_DIR}"
+fi
+if [[ "${REAL_USER}" != "root" ]]; then
+    sudo chown -R "${REAL_USER}:${REAL_USER}" "${REAL_HOME}/.config/nuclei" 2>/dev/null \
+        && ok "nuclei config dir ownership set to ${REAL_USER}" \
+        || warn "could not chown nuclei config dir — run: sudo chown -R ${REAL_USER}:${REAL_USER} ${NUCLEI_CONF_DIR}"
 fi
 
 # Patch eyewitness selenium_module.py for Selenium 4 compatibility.
@@ -1021,6 +1052,23 @@ elif _on_kali; then
         sudo apt-get install -y testssl.sh 2>/dev/null \
             && _healed "testssl.sh installed" \
             || _chk_fail "testssl.sh install failed — try: sudo apt-get install testssl.sh"
+    fi
+
+    # Perl Encoding::BER — required by rdp-sec-check.pl (fails silently without it)
+    if perl -e 'use Encoding::BER' 2>/dev/null; then
+        _chk_ok "Perl Encoding::BER module present (rdp-sec-check dependency)"
+    else
+        _chk_fail "Perl Encoding::BER missing — rdp-sec-check will fail — installing…"
+        sudo apt-get install -y libencoding-ber-perl 2>/dev/null \
+            && _healed "libencoding-ber-perl installed" \
+            || {
+                command -v cpanm &>/dev/null \
+                    && sudo cpanm --quiet Encoding::BER 2>/dev/null \
+                    || sudo cpan -i Encoding::BER 2>/dev/null
+                perl -e 'use Encoding::BER' 2>/dev/null \
+                    && _healed "Encoding::BER installed via CPAN" \
+                    || _chk_fail "Encoding::BER install failed — run: sudo apt-get install libencoding-ber-perl"
+            }
     fi
 
     # Go tools — heal individually
