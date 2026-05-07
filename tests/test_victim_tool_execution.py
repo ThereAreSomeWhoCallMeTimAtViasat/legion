@@ -177,12 +177,66 @@ def _free_port(port: int, retries: int = 20):
     raise RuntimeError(f'Port {port} still in use after {retries} retries')
 
 
+def _port_is_open(port: int, udp: bool = False) -> bool:
+    """Return True the moment the port is actually listening (ss check)."""
+    proto = 'u' if udp else 't'
+    r = subprocess.run(['ss', f'-{proto}lnp'], capture_output=True, text=True)
+    return f':{port} ' in r.stdout
+
+
+def _wait_ports_open(tcp_ports: list, udp_ports: list = None,
+                     timeout: int = 30) -> None:
+    """
+    Block until every listed port is confirmed open by ss.
+    Polls tightly (0.2 s) and returns immediately when all are listening.
+    Raises RuntimeError if any port is still closed after timeout.
+    """
+    udp_ports = udp_ports or []
+    deadline = time.time() + timeout
+    tcp_missing = list(tcp_ports)
+    udp_missing = list(udp_ports)
+    while time.time() < deadline:
+        tcp_missing = [p for p in tcp_missing if not _port_is_open(p, udp=False)]
+        udp_missing = [p for p in udp_missing if not _port_is_open(p, udp=True)]
+        if not tcp_missing and not udp_missing:
+            return
+        time.sleep(0.2)
+    still_closed = [f'tcp:{p}' for p in tcp_missing] + [f'udp:{p}' for p in udp_missing]
+    raise RuntimeError(f'Ports not open after {timeout}s: {still_closed}')
+
+
+def _wait_server_ready(url: str, timeout: int = 30) -> None:
+    """Poll /api/snapshot until the server accepts requests — no fixed sleep."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            r = requests.get(f'{url}/api/snapshot', timeout=2)
+            if r.status_code == 200:
+                return
+        except Exception:
+            pass
+        time.sleep(0.1)
+    raise RuntimeError(f'Legion server at {url} did not respond within {timeout}s')
+
+
+def _wait_host_appears(url: str, host_ip: str, timeout: int = 30) -> None:
+    """Poll /api/snapshot until host_ip appears — returns immediately when found."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            snap = requests.get(f'{url}/api/snapshot', timeout=5).json()
+            if any(h.get('ip') == host_ip for h in snap.get('hosts', [])):
+                return
+        except Exception:
+            pass
+        time.sleep(0.2)
+    raise RuntimeError(f'Host {host_ip} never appeared in snapshot after {timeout}s')
+
+
 def _socat_listen(port: int, banner: str = '', udp: bool = False) -> subprocess.Popen | None:
-    """Start a socat listener and return the Popen handle (or None if port in use)."""
-    proto = 'udp' if udp else 'tcp'
-    check = subprocess.run(['ss', f'-{proto[0]}lnp'], capture_output=True, text=True)
-    if f':{port} ' in check.stdout:
-        return None  # already in use — real service
+    """Start a socat listener; return None if the port is already in use."""
+    if _port_is_open(port, udp=udp):
+        return None  # real service already there
     if banner:
         cmd = ['socat', f'TCP4-LISTEN:{port},reuseaddr,fork',
                f'SYSTEM:printf "{banner}"; sleep 30']
@@ -197,7 +251,11 @@ def _socat_listen(port: int, banner: str = '', udp: bool = False) -> subprocess.
 
 
 def _wait_all_done(base_url: str, host_ip: str, timeout: int = TIMEOUT_TOOLS) -> list:
-    """Poll /api/snapshot until no Waiting/Running processes for host_ip. Return all procs."""
+    """
+    Poll /api/snapshot until every process for host_ip is in a terminal state.
+    Returns immediately when all are done — no fixed sleep.
+    Polling interval is 1 s to balance responsiveness vs server load.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -210,7 +268,7 @@ def _wait_all_done(base_url: str, host_ip: str, timeout: int = TIMEOUT_TOOLS) ->
                 return host_procs
         except Exception:
             pass
-        time.sleep(5)
+        time.sleep(1)  # tight poll — returns immediately when done
     raise TimeoutError(
         f'Tools did not finish within {timeout}s — '
         f'try increasing TIMEOUT_TOOLS or check Legion logs'
@@ -234,11 +292,23 @@ def victim_services():
                    capture_output=True)
 
     # Start real services if not already running
-    for svc in ('nginx', 'mariadb', 'postgresql', 'redis-server',
-                 'smbd', 'snmpd', 'xrdp'):
+    # Start real services and wait until their TCP ports are actually open
+    real_service_ports = {
+        'nginx':        [80, 443, 4848, 8080, 8443],
+        'mariadb':      [3306],
+        'postgresql':   [5432],
+        'redis-server': [6379],
+        'smbd':         [139, 445],
+        'snmpd':        [],   # UDP 161 — not checked with _wait_ports_open
+        'xrdp':         [3389],
+    }
+    for svc in real_service_ports:
         subprocess.run(['systemctl', 'start', svc],
                        capture_output=True, timeout=15)
-    time.sleep(2)
+
+    # Block until every real-service TCP port is confirmed listening — no fixed sleep
+    real_tcp = [p for ports in real_service_ports.values() for p in ports]
+    _wait_ports_open(real_tcp, timeout=30)
 
     # Socat listeners for ports real services don't cover
     listeners: dict = {}
@@ -262,9 +332,13 @@ def victim_services():
     }
     for port, banner in socat_ports.items():
         listeners[port] = _socat_listen(port, banner)
-    # UDP
     listeners['500/udp'] = _socat_listen(500, udp=True)
-    time.sleep(2)
+
+    # Wait until every newly-started socat listener is confirmed open — no fixed sleep
+    new_socat_tcp = [p for p in socat_ports if isinstance(p, int)
+                     and listeners.get(p) is not None]
+    if new_socat_tcp:
+        _wait_ports_open(new_socat_tcp, timeout=15)
 
     yield listeners
 
@@ -297,19 +371,16 @@ def srv(victim_services):
     app, logic, wc = create_test_app()
     app.config['TESTING'] = False
 
-    # Enable scheduler-on-import so importing the XML fires all tools
-    conf_text = requests.get(f'http://127.0.0.1:{PORT}/api/settings/legion-conf',
-                             timeout=5).text \
-        if False else ''  # will be set after server starts
-
     httpd = make_server('127.0.0.1', PORT, app, threaded=True)
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
-    time.sleep(2.0)
 
     base = f'http://127.0.0.1:{PORT}'
 
-    # Enable scheduler-on-import and set max-fast-processes=10 for speed
+    # Block until the server accepts /api/snapshot — no fixed sleep
+    _wait_server_ready(base, timeout=30)
+
+    # Enable scheduler-on-import and bump max-fast-processes for speed
     r = requests.get(f'{base}/api/settings/legion-conf', timeout=5)
     conf = r.json()['text']
     conf = conf.replace('enable-scheduler-on-import=False',
@@ -346,15 +417,8 @@ def completed_scan(srv):
     finally:
         os.unlink(xml_path)
 
-    # Wait for host to appear
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        snap = requests.get(f'{srv}/api/snapshot', timeout=5).json()
-        if any(h['ip'] == VICTIM_IP for h in snap.get('hosts', [])):
-            break
-        time.sleep(1)
-    else:
-        pytest.fail(f'Victim host {VICTIM_IP} never appeared in snapshot')
+    # Block until host appears — _wait_host_appears polls and returns immediately
+    _wait_host_appears(srv, VICTIM_IP, timeout=30)
 
     # Wait for all tools to complete
     all_procs = _wait_all_done(srv, VICTIM_IP, timeout=TIMEOUT_TOOLS)
