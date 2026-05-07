@@ -70,7 +70,7 @@ VICTIM_HOST = 'victim.test'
 TIMEOUT_TOOLS = 720          # 12 min ceiling — generous for 120+ processes at concurrency 10
 
 # Interactive tools store no output in process_output table — skip output checks
-INTERACTIVE_TOOLS = frozenset({'vsftpd234-Meta', 'ccproxy-ftpMeta', 'smbenum', 'x11screen'})
+INTERACTIVE_TOOLS = frozenset()   # all tools now produce captured output
 
 # Config-level errors: always a tool/conf bug, never a fake-service issue
 CONF_ERROR_PATTERNS = [
@@ -147,7 +147,7 @@ TOOL_EXPECTED_OUTPUT = {
     'swaks-relay':          ('trying', 'swaks printed its connection attempt'),
     'dig-version':          ('dig', 'dig printed its own name or version'),
     'dig-axfr':             ('dig', 'dig printed its own name or version'),
-    'fierce-dns':           ('', ''),      # fierce may produce empty output on fake DNS
+    'fierce-dns':           ('', ''),      # fierce produces no output against fake DNS — socat PIPE doesn't speak DNS protocol
     'impacket-rpcdump':     ('impacket', 'Impacket header in output'),
     'ldapdomaindump':       ('connecting', 'ldapdomaindump connection attempt'),
     'rpcinfo':              ('', ''),      # rpcinfo produces error from fake service
@@ -160,10 +160,10 @@ TOOL_EXPECTED_OUTPUT = {
     'distcc-cve2004-2687.nse':('nmap', 'nmap ran distcc CVE-2004-2687 NSE'),
     'banner':               ('nmap', 'nmap banner script ran against bindshell port'),
     'x11-access.nse':       ('nmap', 'nmap ran x11-access NSE'),
-    'x11screen':            ('', ''),      # interactive — no stored output
-    'ccproxy-ftpMeta':      ('', ''),      # interactive metasploit session
-    'vsftpd234-Meta':       ('', ''),      # interactive metasploit session
-    'smbenum':              ('', ''),      # interactive bash session
+    'x11screen':            ('xwd', 'xwd ran and printed status (display error or image data)'),
+    'ccproxy-ftpMeta':      ('nmap', 'nmap ran ftp-proftpd-backdoor NSE (non-interactive)'),
+    'vsftpd234-Meta':       ('nmap', 'nmap ran ftp-vsftpd-backdoor NSE (non-interactive)'),
+    'smbenum':              ('smb', 'smbclient share enumeration output'),
 }
 
 # Nmap XML with ALL service names needed to trigger all 62 SchedulerSettings entries
@@ -524,8 +524,7 @@ def test_every_tool_expected_output(tool_id, completed_scan):
     a real response. For socat-backed tools it proves the binary loaded and
     printed its startup header — confirming the tool works end-to-end.
 
-    Empty-pattern entries (fierce-dns, ike-scan, showmount, rpcinfo, snmp-default,
-    and all interactive tools) are excluded from parametrize — those tools may
+    Empty-pattern entries (fierce-dns, ike-scan, showmount, rpcinfo, snmp-default) are excluded from parametrize — those tools may
     produce no output against the fake victim and that is acceptable.
     """
     runs = completed_scan.get(tool_id, [])
