@@ -70,7 +70,7 @@ VICTIM_HOST = 'victim.test'
 TIMEOUT_TOOLS = 720          # 12 min ceiling — generous for 120+ processes at concurrency 10
 
 # Interactive tools store no output in process_output table — skip output checks
-INTERACTIVE_TOOLS = frozenset()   # all tools now produce captured output
+INTERACTIVE_TOOLS = frozenset({'vsftpd234-Meta', 'ccproxy-ftpMeta', 'x11screen'})
 
 # Config-level errors: always a tool/conf bug, never a fake-service issue
 CONF_ERROR_PATTERNS = [
@@ -160,9 +160,9 @@ TOOL_EXPECTED_OUTPUT = {
     'distcc-cve2004-2687.nse':('nmap', 'nmap ran distcc CVE-2004-2687 NSE'),
     'banner':               ('nmap', 'nmap banner script ran against bindshell port'),
     'x11-access.nse':       ('nmap', 'nmap ran x11-access NSE'),
-    'x11screen':            ('xwd', 'xwd ran and printed status (display error or image data)'),
-    'ccproxy-ftpMeta':      ('nmap', 'nmap ran ftp-proftpd-backdoor NSE (non-interactive)'),
-    'vsftpd234-Meta':       ('nmap', 'nmap ran ftp-vsftpd-backdoor NSE (non-interactive)'),
+    'x11screen':            ('', ''),      # bash → Interactive PTY — no stored process_output
+    'ccproxy-ftpMeta':      ('', ''),      # msfconsole → Interactive PTY — no stored process_output
+    'vsftpd234-Meta':       ('', ''),      # msfconsole → Interactive PTY — no stored process_output
     'smbenum':              ('smb', 'smbclient share enumeration output'),
 }
 
