@@ -1304,12 +1304,15 @@ function renderDynamicToolTabs(hostIp) {
     }
 
     /* Refresh scroll arrow opacity after tab list changes */
-    var _lbtn = $('right-tab-scroll-left'), _rbtn = $('right-tab-scroll-right');
-    if (_lbtn && _rbtn && bar) {
+    if (bar) {
         var _atLeft  = bar.scrollLeft <= 0;
         var _atRight = bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 1;
-        _lbtn.style.opacity = _atLeft  ? '0.3' : '1';
-        _rbtn.style.opacity = _atRight ? '0.3' : '1';
+        ['right-tab-scroll-first', 'right-tab-scroll-left'].forEach(function(id) {
+            var b = $(id); if (b) b.style.opacity = _atLeft  ? '0.3' : '1';
+        });
+        ['right-tab-scroll-right', 'right-tab-scroll-last'].forEach(function(id) {
+            var b = $(id); if (b) b.style.opacity = _atRight ? '0.3' : '1';
+        });
     }
 }
 
@@ -5336,19 +5339,33 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!bar) return;
             bar.scrollLeft = Math.max(0, bar.scrollLeft + dir * SCROLL_PX);
         }
+        function jumpRightTabBar(end) {
+            var bar = $('right-tab-bar');
+            if (!bar) return;
+            bar.scrollLeft = end ? bar.scrollWidth : 0;
+        }
         function updateArrows() {
             var bar = $('right-tab-bar');
+            var fbtn = $('right-tab-scroll-first');
             var lbtn = $('right-tab-scroll-left');
             var rbtn = $('right-tab-scroll-right');
-            if (!bar || !lbtn || !rbtn) return;
+            var ebtn = $('right-tab-scroll-last');
+            if (!bar) return;
             var atLeft  = bar.scrollLeft <= 0;
             var atRight = bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 1;
-            lbtn.style.opacity = atLeft  ? '0.3' : '1';
-            rbtn.style.opacity = atRight ? '0.3' : '1';
+            if (fbtn) fbtn.style.opacity = atLeft  ? '0.3' : '1';
+            if (lbtn) lbtn.style.opacity = atLeft  ? '0.3' : '1';
+            if (rbtn) rbtn.style.opacity = atRight ? '0.3' : '1';
+            if (ebtn) ebtn.style.opacity = atRight ? '0.3' : '1';
         }
-        var lbtn = $('right-tab-scroll-left'), rbtn = $('right-tab-scroll-right');
-        if (lbtn) lbtn.addEventListener('click', function() { scrollRightTabBar(-1); updateArrows(); });
-        if (rbtn) rbtn.addEventListener('click', function() { scrollRightTabBar(+1); updateArrows(); });
+        var fbtn = $('right-tab-scroll-first');
+        var lbtn = $('right-tab-scroll-left');
+        var rbtn = $('right-tab-scroll-right');
+        var ebtn = $('right-tab-scroll-last');
+        if (fbtn) fbtn.addEventListener('click', function() { jumpRightTabBar(false); updateArrows(); });
+        if (lbtn) lbtn.addEventListener('click', function() { scrollRightTabBar(-1);  updateArrows(); });
+        if (rbtn) rbtn.addEventListener('click', function() { scrollRightTabBar(+1);  updateArrows(); });
+        if (ebtn) ebtn.addEventListener('click', function() { jumpRightTabBar(true);  updateArrows(); });
         /* Update arrow opacity whenever the tab bar scrolls (e.g. via scrollIntoView) */
         var bar = $('right-tab-bar');
         if (bar) bar.addEventListener('scroll', updateArrows);

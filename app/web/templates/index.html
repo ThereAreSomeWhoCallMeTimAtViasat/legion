@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.201-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.202-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -90,9 +90,16 @@
 <div class="tab-bar" id="main-tab-bar">
     <button class="tab-btn active" type="button" data-tab="scan-tab">Scan</button>
     <button class="tab-btn" type="button" data-tab="brute-tab">Brute</button>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:4px;padding:0 6px;flex-shrink:0">
-        <button id="right-tab-scroll-left"  type="button" title="Scroll output tabs left"  style="padding:0 6px;font-size:11pt;line-height:1">◀</button>
-        <button id="right-tab-scroll-right" type="button" title="Scroll output tabs right" style="padding:0 6px;font-size:11pt;line-height:1">▶</button>
+    <!-- Tab nav arrows: centered between Brute tab and Font controls -->
+    <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:1px">
+        <button id="right-tab-scroll-first" type="button" title="Jump to first output tab"  style="padding:0 5px;font-size:10pt;line-height:1">◀◀</button>
+        <button id="right-tab-scroll-left"  type="button" title="Scroll output tabs left"   style="padding:0 5px;font-size:10pt;line-height:1">◀</button>
+        <span style="font-size:8pt;color:var(--disabled);padding:0 4px;user-select:none">Tab</span>
+        <button id="right-tab-scroll-right" type="button" title="Scroll output tabs right"  style="padding:0 5px;font-size:10pt;line-height:1">▶</button>
+        <button id="right-tab-scroll-last"  type="button" title="Jump to last output tab"   style="padding:0 5px;font-size:10pt;line-height:1">▶▶</button>
+    </div>
+    <!-- Font size controls: right-aligned -->
+    <div style="display:flex;align-items:center;gap:4px;padding:0 6px;flex-shrink:0">
         <span style="width:1px;height:14px;background:var(--border);display:inline-block;margin:0 2px"></span>
         <span style="font-size:9pt;color:var(--disabled)">Font</span>
         <button id="upper-font-dec" type="button" title="Decrease upper panel font size" style="padding:0 5px;font-size:11pt;line-height:1">A−</button>
