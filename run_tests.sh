@@ -739,7 +739,8 @@ if [[ "$RUN_UNIT" == "true" ]]; then
         tests/test_visualupgrades_features.py \
         tests/test_terminal.py \
         tests/test_qt6_gaps.py \
-        tests/test_requirements.py
+        tests/test_requirements.py \
+        tests/test_tool_installation.py
     do
         # test_terminal.py: T7 live tests skip without LEGION_TEST_TARGET.
         # When a live target is given, skip it here — the T7 section runs it
@@ -756,6 +757,12 @@ if [[ "$RUN_UNIT" == "true" ]]; then
         # fixtures — invoke via pytest with --noconftest to skip Selenium setup.
         if [[ "$f" == "tests/test_anti_patterns.py" ]]; then
             run_pytest "anti-pattern guards (v10.188)" tests/test_anti_patterns.py --noconftest
+            continue
+        fi
+        # test_tool_installation.py verifies tool binaries, conf integrity, and
+        # SchedulerSettings consistency — no server, no Selenium, no network.
+        if [[ "$f" == "tests/test_tool_installation.py" ]]; then
+            run_pytest "tool installation audit (v10.206)" tests/test_tool_installation.py --noconftest
             continue
         fi
         run_unit "$f"

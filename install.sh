@@ -606,7 +606,13 @@ while [[ $ROUND -lt $MAX_ROUNDS ]]; do
     info "Verification round ${ROUND}/${MAX_ROUNDS}…"
 
     # Run tests — capture output without letting a non-zero exit kill the script
-    sudo "${VENV_PY}" -m pytest tests/test_requirements.py --noconftest -q --tb=line \
+    # test_requirements.py: Python packages + Qt/Flask init + tool binaries
+    # test_tool_installation.py: conf integrity, SchedulerSettings consistency,
+    #   Perl Encoding::BER, nuclei templates + config dir, wordlist paths
+    sudo "${VENV_PY}" -m pytest \
+        tests/test_requirements.py \
+        tests/test_tool_installation.py \
+        --noconftest -q --tb=line \
         > "$VERIFY_LOG" 2>&1
     pytest_exit=$?
 
