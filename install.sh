@@ -225,6 +225,7 @@ sudo apt-get install -y --ignore-missing \
     masscan hping3 ike-scan \
     feroxbuster gobuster ffuf nikto whatweb wafw00f \
     wpscan joomscan davtest sqlmap sslyze sslscan testssl.sh \
+    fierce seclists \
     dnsrecon dnsenum nbtscan onesixtyone \
     snmpwalk snmpcheck rpcinfo nfs-common ldap-utils \
     netexec smbmap enum4linux-ng ldapdomaindump smbclient \
@@ -1007,6 +1008,7 @@ elif _on_kali; then
         sqlmap sslyze sslscan
         netexec smbmap enum4linux-ng ldapsearch rpcclient smbclient
         hydra searchsploit eyewitness
+        fierce
         dnsrecon dnsenum nbtscan
         snmpwalk onesixtyone
         impacket-rpcdump
@@ -1048,6 +1050,32 @@ elif _on_kali; then
             && _healed "rsh-redone-client installed" \
             || { sudo apt-get install -y rsh-client 2>/dev/null && _healed "rsh-client installed"; } \
             || _chk_fail "Could not install rsh — try: sudo apt-get install rsh-redone-client"
+    fi
+
+    # fierce — DNS brute-force tool required by fierce-dns SchedulerSettings entry
+    if command -v fierce &>/dev/null; then
+        _chk_ok "fierce present at $(command -v fierce)"
+    else
+        _chk_fail "fierce missing — installing…"
+        sudo apt-get install -y fierce 2>/dev/null \
+            && _healed "fierce installed" \
+            || _chk_fail "fierce install failed — run: sudo apt-get install fierce"
+    fi
+
+    # seclists — wordlist package required by feroxbuster, ffuf, gobuster, fierce
+    # Key files used in legion.conf commands:
+    #   DNS:  /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+    #   Web:  /usr/share/seclists/Discovery/Web-Content/big.txt
+    #         /usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt
+    _SECLISTS_DNS="/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+    _SECLISTS_WEB="/usr/share/seclists/Discovery/Web-Content/big.txt"
+    if [[ -f "$_SECLISTS_DNS" && -f "$_SECLISTS_WEB" ]]; then
+        _chk_ok "seclists present (DNS + Web wordlists confirmed)"
+    else
+        _chk_fail "seclists missing — fierce-dns and feroxbuster wordlists not found — installing…"
+        sudo apt-get install -y seclists 2>/dev/null \
+            && _healed "seclists installed" \
+            || _chk_fail "seclists install failed — run: sudo apt-get install seclists"
     fi
 
     # testssl — package is testssl.sh, binary is testssl

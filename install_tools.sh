@@ -309,6 +309,43 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# fierce — DNS brute-force reconnaissance tool
+# Required by fierce-dns SchedulerSettings entry and dig-based DNS tests.
+# ---------------------------------------------------------------------------
+if command -v fierce &>/dev/null; then
+    skip "fierce already installed at $(command -v fierce)"
+else
+    info "apt install fierce..."
+    if apt-get install -y fierce 2>/dev/null; then
+        ok "fierce installed"
+    else
+        warn "fierce not available via apt — try: sudo apt-get install fierce"
+        NEWLY_MISSING+=("fierce")
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# seclists — wordlist collection required by multiple legion.conf commands:
+#   fierce-dns:    --subdomain-file /usr/share/seclists/Discovery/DNS/...
+#   feroxbuster:   -w /usr/share/seclists/Discovery/Web-Content/big.txt
+#   ffuf-files:    -w /usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt
+# Without seclists, these tools produce no output (0 bytes) silently.
+# ---------------------------------------------------------------------------
+_SECLISTS_DNS="/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
+_SECLISTS_WEB="/usr/share/seclists/Discovery/Web-Content/big.txt"
+if [[ -f "$_SECLISTS_DNS" && -f "$_SECLISTS_WEB" ]]; then
+    skip "seclists already present (DNS + Web wordlists confirmed)"
+else
+    info "apt install seclists (wordlists for feroxbuster, ffuf, fierce)..."
+    if apt-get install -y seclists 2>/dev/null; then
+        ok "seclists installed"
+    else
+        warn "seclists not available via apt — try: sudo apt-get install seclists"
+        NEWLY_MISSING+=("seclists")
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # urlfinder — URL extractor from HTTP responses (used in Tools tab)
 # ---------------------------------------------------------------------------
 _go_install_and_link "github.com/projectdiscovery/urlfinder/cmd/urlfinder@latest" "urlfinder" "urlfinder"
@@ -338,7 +375,7 @@ ALL_TOOLS=(nmap masscan feroxbuster gobuster ffuf nuclei testssl netexec smbmap
            enum4linux-ng ldapdomaindump evil-winrm redis-cli amass dnsrecon
            dnsenum wpscan nikto whatweb wafw00f sslyze sslscan sqlmap wig
            hping3 eyewitness searchsploit hydra nbtscan onesixtyone snmpwalk
-           swaks davtest joomscan ike-scan finger ldapsearch)
+           swaks davtest joomscan ike-scan finger ldapsearch fierce)
 for tool in "${ALL_TOOLS[@]}"; do
     if command -v "$tool" &>/dev/null; then
         echo -e "  ${GREEN}✓${NC} $tool"
