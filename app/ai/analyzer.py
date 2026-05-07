@@ -114,12 +114,15 @@ def _assemble_host_data(logic, host_id):
     note_obj  = rc.noteRepository.getNoteByHostId(host_id)
     note_text = (note_obj.text if note_obj else '') or ''
 
-    # Processes — all for this host, output stored in DB
+    # Processes — all for this host, output stored in DB.
+    # showProcesses=True uses LEFT JOIN with process_output so the 'output'
+    # field is already populated from the DB; exclude nmap (verbose progress
+    # text) and screenshooter (no textual findings).
     all_procs = rc.processRepository.getProcesses(
         filters, showProcesses=True, sort='desc', ncol='id')
     host_procs = [p for p in all_procs
                   if str(p.get('hostIp', '')) == host_ip
-                  and p.get('name', '') != 'screenshooter']
+                  and p.get('name', '') not in ('screenshooter', 'nmap')]
 
     # Build fingerprint
     fingerprint = history_db.build_fingerprint(ports, os_family)
@@ -237,19 +240,27 @@ def run_analysis(logic, host_id):
     (host_obj, host_ip, os_family, ports, cves, scripts,
      note_text, processes, fingerprint) = result
 
-    # Fetch process output from DB for each process
+    # getProcesses(showProcesses=True) already fetches output via LEFT JOIN
+    # with process_output, so proc['output'] is already populated for finished
+    # processes.  getProcessById returns no 'output' key and was overwriting
+    # correct data with ''.  Fall back to the .live_output file for processes
+    # that are still running or haven't saved to DB yet.
     rc = logic.activeProject.repositoryContainer
     enriched_procs = []
     for proc in processes:
-        pid    = proc.get('id') or proc.get('pid')
-        output = ''
-        if pid:
-            try:
-                row = rc.processRepository.getProcessById(str(pid))
-                if row:
-                    output = row.get('output', '') or ''
-            except Exception:
-                pass
+        output = proc.get('output', '') or ''
+        if not output.strip():
+            outputfile = proc.get('outputfile', '')
+            if outputfile:
+                for suffix in ('.live_output', ''):
+                    try_path = outputfile + suffix if suffix else outputfile
+                    try:
+                        with open(try_path, 'r', errors='replace') as _f:
+                            output = _f.read()
+                        if output.strip():
+                            break
+                    except Exception:
+                        pass
         enriched_procs.append({**proc, 'output': output})
 
     # Build Phase 1 prompt
@@ -376,15 +387,19 @@ def run_phase1(logic, host_id):
     rc = logic.activeProject.repositoryContainer
     enriched_procs = []
     for proc in processes:
-        pid = proc.get('id') or proc.get('pid')
-        output = ''
-        if pid:
-            try:
-                row = rc.processRepository.getProcessById(str(pid))
-                if row:
-                    output = row.get('output', '') or ''
-            except Exception:
-                pass
+        output = proc.get('output', '') or ''
+        if not output.strip():
+            outputfile = proc.get('outputfile', '')
+            if outputfile:
+                for suffix in ('.live_output', ''):
+                    try_path = outputfile + suffix if suffix else outputfile
+                    try:
+                        with open(try_path, 'r', errors='replace') as _f:
+                            output = _f.read()
+                        if output.strip():
+                            break
+                    except Exception:
+                        pass
         enriched_procs.append({**proc, 'output': output})
 
     prompt_text = _build_phase1_prompt(
@@ -419,7 +434,27 @@ def run_phase1(logic, host_id):
                             'finding': p1_text[:500], 'evidence': ''}]
     phase1_json = json.dumps(phase1_findings, indent=2)
 
-    # Persist Phase 1 to project DB (phase2_markdown=None until user requests it)
+    # Persist Phase 1 to history DB (phase2_markdown=None for now;
+    # run_phase2 will update it when the user requests the attack plan).
+    project_name = getattr(
+        logic.activeProject, 'name',
+        getattr(logic.activeProject, 'projectName', '')) or ''
+    try:
+        history_id = history_db.save_session(
+            host_ip=host_ip,
+            project_name=str(project_name),
+            fingerprint=fingerprint,
+            phase1_json=phase1_json,
+            phase2_markdown=None,
+            tokens_input=tin,
+            tokens_output=tout,
+            cost_usd=cost,
+        )
+    except Exception as e:
+        log.error(f"[AI] Phase 1 history-DB save failed: {e}")
+        history_id = None
+
+    # Persist Phase 1 to project DB
     ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     session = rc.hostRepository.dbAdapter.session()
     project_analysis_id = None
@@ -429,7 +464,7 @@ def run_phase1(logic, host_id):
             host_id=int(host_id), timestamp=ts,
             phase1_json=phase1_json, phase2_markdown=None,
             tokens_input=tin, tokens_output=tout, cost_usd=cost,
-            history_session_id=None,
+            history_session_id=history_id,
         )
         session.add(entry)
         session.commit()
@@ -450,6 +485,7 @@ def run_phase1(logic, host_id):
         'tokens_input':        tin,
         'tokens_output':       tout,
         'cost_usd':            cost,
+        'history_id':          history_id,
         'project_analysis_id': project_analysis_id,
         'timestamp':           ts,
     }
@@ -501,6 +537,7 @@ def run_phase2(logic, host_id):
 
     # Update the project DB entry with Phase 2 results
     session2 = rc.hostRepository.dbAdapter.session()
+    history_session_id = None
     try:
         from db.entities.ai_analysis import AiAnalysis
         entry2 = session2.query(AiAnalysis).filter_by(id=entry_id).first()
@@ -509,12 +546,28 @@ def run_phase2(logic, host_id):
             entry2.tokens_input    = prev_tin  + tin
             entry2.tokens_output   = prev_tout + tout
             entry2.cost_usd        = round(prev_cost + cost2, 4)
+            history_session_id     = entry2.history_session_id
             session2.commit()
     except Exception as e:
         session2.rollback()
         log.error(f"[AI] Phase 2 project-DB update failed: {e}")
     finally:
         session2.close()
+
+    # Update history DB entry with phase2_markdown now that it is complete
+    if history_session_id:
+        try:
+            conn = history_db._get_conn()
+            conn.execute(
+                "UPDATE ai_sessions SET phase2_markdown=?, tokens_input=?, "
+                "tokens_output=?, cost_usd=? WHERE id=?",
+                (phase2_markdown, prev_tin + tin, prev_tout + tout,
+                 round(prev_cost + cost2, 4), history_session_id))
+            conn.commit()
+            conn.close()
+            log.debug(f"[AI] Phase 2 history-DB updated (session {history_session_id})")
+        except Exception as e:
+            log.error(f"[AI] Phase 2 history-DB update failed: {e}")
 
     log.info(f"[AI] Phase 2 complete — host={host_ip} cost=${cost2:.4f} "
              f"tokens={tin}+{tout}")

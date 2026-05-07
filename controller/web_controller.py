@@ -781,8 +781,14 @@ class WebController:
             script_count = 0
 
         if script_count > 0 and not user_triggered:
-            log.debug(f"[checkDuplicate] {toolName} on {hostIp}:{port} — {script_count} NSE scripts exist, mode={mode}")
-            return mode
+            # Only block if a process already exists for this tool+host+port.
+            # If NSE scripts exist but no process ran (existing == 0), the tool was
+            # never triggered — most likely because the port's service name was only
+            # properly resolved by stage-6 -sV, which also stores NSE scripts.
+            # Blocking here permanently prevents the tool from ever running.
+            # Layer-1 (existing > 0) already handles the true re-run case.
+            log.debug(f"[checkDuplicate] {toolName} on {hostIp}:{port} — {script_count} NSE scripts exist but no prior process — allowing")
+            # Fall through to 'run'
 
         return 'run'  # No duplicate at either level
 
@@ -1216,6 +1222,14 @@ class WebController:
                 if not hip:
                     continue
 
+                # Fresh session per host: runCommand() calls for the previous host
+                # dirty the thread-local scoped_session, causing subsequent
+                # getPortsAndServicesByHostIP() calls to see a stale snapshot
+                # (0 ports) even after NmapImporter committed new rows.
+                try:
+                    self.logic.activeProject.database.session.remove()
+                except Exception:
+                    pass
                 port_rows = repo.portRepository.getPortsAndServicesByHostIP(hip, filters)
                 log.info(f'[Scheduler] {hip}: {len(port_rows or [])} open ports')
                 for port_row in (port_rows or []):
