@@ -97,12 +97,19 @@ html,body{
   display:flex;background:var(--dark);
   border-bottom:1px solid var(--border);flex-shrink:0;
   overflow-x:scroll;overflow-y:hidden;
-  scrollbar-width:thin;scrollbar-color:#888 #2a2a2a;
+  scrollbar-width:thin;scrollbar-color:#888 #404040;
 }
-.tab-bar::-webkit-scrollbar{height:8px}
-.tab-bar::-webkit-scrollbar-track{background:#2a2a2a}
-.tab-bar::-webkit-scrollbar-thumb{background:#888;border:none;border-radius:0}
-.tab-bar::-webkit-scrollbar-thumb:hover{background:#aaa}
+.tab-bar::-webkit-scrollbar{height:10px}
+.tab-bar::-webkit-scrollbar-track{
+  background:#404040;       /* clearly distinct from the tab bar background (#232323) */
+  border-top:2px solid #5a5a5a;  /* visible separator so the gutter reads as its own zone */
+}
+.tab-bar::-webkit-scrollbar-thumb{
+  background:#888;
+  border:2px solid #404040; /* inset padding — the thumb appears to float in the gutter */
+  border-radius:5px;
+}
+.tab-bar::-webkit-scrollbar-thumb:hover{background:#b8b8b8}
 .tab-btn{
   background:var(--tab-inactive);border:1px solid var(--border);
   border-bottom:none;color:var(--text);font:inherit;
@@ -562,9 +569,10 @@ tr.host-checked td:last-child{color:var(--highlight,#2a82da)}
   }
   ::-webkit-scrollbar-thumb{background:#aaa;border:2px solid var(--dark)}
   ::-webkit-scrollbar-thumb:hover{background:#888}
-  .tab-bar{scrollbar-color:#aaa var(--dark)}
-  .tab-bar::-webkit-scrollbar-thumb{background:#aaa}
-  .tab-bar::-webkit-scrollbar-thumb:hover{background:#888}
+  .tab-bar{scrollbar-color:#888 #c8c8c8}
+  .tab-bar::-webkit-scrollbar-track{background:#c8c8c8;border-top:2px solid #a0a0a0}
+  .tab-bar::-webkit-scrollbar-thumb{background:#888;border:2px solid #c8c8c8;border-radius:5px}
+  .tab-bar::-webkit-scrollbar-thumb:hover{background:#555}
   .ansi-fg-black{color:#222}
   .ansi-fg-bright-black{color:#444}
   .ansi-fg-white{color:#111}
