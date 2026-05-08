@@ -639,12 +639,17 @@ while [[ $ROUND -lt $MAX_ROUNDS ]]; do
     done < <(grep "Cannot import" "$VERIFY_LOG")
 
     # ── Fix: missing tool binary — format: "'tool' not found in PATH" ──
+    # Deduplicate: the same binary may fail in multiple test files; install once.
+    declare -A _seen_tools
     while IFS= read -r line; do
         tool=$(echo "$line" | grep -oP "'\K[^']+(?=' not found in PATH)")
         [[ -z "$tool" ]] && continue
+        [[ -n "${_seen_tools[$tool]+x}" ]] && continue
+        _seen_tools[$tool]=1
         fail "  Binary '${tool}' not found in PATH — installing…"
         _install_tool "$tool"
     done < <(grep "not found in PATH" "$VERIFY_LOG")
+    unset _seen_tools
 
     # ── Fix: missing /opt script — format: assertion about /opt/X/Y.py ──
     while IFS= read -r line; do

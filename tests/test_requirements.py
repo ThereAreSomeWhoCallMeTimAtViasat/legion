@@ -227,7 +227,7 @@ KALI_APT_TOOLS = [
     # SSH / misc
     "ssh-audit", "vncviewer", "rdesktop",
     # Other
-    "wig", "net",
+    "net",  # wig removed: crashes Python 3.13+ (html.parser API change)
 ]
 
 GO_TOOLS = [

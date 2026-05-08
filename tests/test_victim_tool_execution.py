@@ -60,6 +60,34 @@ def _read_scheduler_tools() -> list:
 
 ALL_SCHEDULER_TOOLS = _read_scheduler_tools()   # 62 entries — known at collection time
 
+
+# =============================================================================
+# Module-level prereq check — skip entire file with a clear reason rather than
+# crashing inside a module-scope fixture (which shows as "0 of 0" in run_tests.sh)
+# =============================================================================
+
+def _victim_prereq_reason() -> str:
+    """Return a human-readable skip reason if prerequisites are missing, else ''."""
+    # Conf must exist before anything else
+    conf = Path(os.path.expanduser('~/.local/share/legion/legion.conf'))
+    if not conf.exists():
+        return f'legion.conf not found at {conf} — run install.sh first'
+    if not ALL_SCHEDULER_TOOLS:
+        return 'No [SchedulerSettings] tools found in legion.conf'
+    # Required system services must be installed
+    for svc in ('nginx', 'mariadb', 'redis-server'):
+        r = subprocess.run(['systemctl', 'list-unit-files', f'{svc}.service'],
+                           capture_output=True, text=True)
+        if svc not in r.stdout:
+            return (f"System service '{svc}' not installed — "
+                    f"victim test requires a full Kali install with "
+                    f"nginx/mariadb/redis-server/postgresql/smbd/snmpd/xrdp")
+    return ''
+
+_SKIP_REASON = _victim_prereq_reason()
+pytestmark = pytest.mark.skipif(bool(_SKIP_REASON), reason=_SKIP_REASON or 'prereqs ok')
+
+
 # =============================================================================
 # Constants
 # =============================================================================

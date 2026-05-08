@@ -207,11 +207,11 @@ class TestNewToolsInContextMenus:
         assert any('sqlmap' in l.lower() for l in labels), \
             f"sqlmap-http not found in HTTP port menu. Labels: {labels[:20]}"
 
-    def test_wig_in_http_port_menu(self, srv):
-        """wig CMS fingerprinter appears in the HTTP port right-click menu."""
+    def test_wig_absent_from_http_port_menu(self, srv):
+        """wig must NOT appear in the HTTP port menu — crashes Python 3.13+ (html.parser removed 'scripting' attr)."""
         labels = self._port_menu_labels(srv, 'http')
-        assert any('wig' in l.lower() for l in labels), \
-            f"wig not found in HTTP port menu. Labels: {labels[:20]}"
+        assert not any('wig' in l.lower() for l in labels), \
+            f"wig wrongly appears in HTTP port menu (crashes Python 3.13+). Labels: {labels[:20]}"
 
     def test_jexboss_in_http_port_menu(self, srv):
         """jexboss appears in the HTTP port right-click menu."""
@@ -270,12 +270,12 @@ class TestNewToolsInContextMenus:
         assert 'pd-httpx' in tool_ids or 'pd-httpx-https' in tool_ids, \
             f"pd-httpx not in automatedAttacks. Found: {sorted(tool_ids)}"
 
-    def test_wig_in_scheduler_settings(self, srv):
-        """wig is in SchedulerSettings so it auto-runs on HTTP discovery."""
+    def test_wig_absent_from_scheduler_settings(self, srv):
+        """wig must NOT be in SchedulerSettings — crashes Python 3.13+."""
         attacks = srv['wc'].settings.automatedAttacks or []
         tool_ids = {str(a[0]).strip() for a in attacks}
-        assert 'wig' in tool_ids, \
-            f"wig not in automatedAttacks. Found: {sorted(tool_ids)}"
+        assert 'wig' not in tool_ids, \
+            f"wig wrongly in automatedAttacks (crashes Python 3.13+). Found: {sorted(tool_ids)}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
