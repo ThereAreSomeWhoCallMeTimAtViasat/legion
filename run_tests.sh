@@ -901,32 +901,33 @@ if [[ "$RUN_SELENIUM" == "true" ]]; then
     # Free each port before binding — a daemon Flask thread from a prior run
     # may linger briefly after pytest exits, causing "Address already in use".
     #
-    # ── Selenium order: tiered for fail-fast (v10.188 reorder) ──
+    # ── Selenium order: tiered for fail-fast ──
+    # Tier 0: Victim tool execution — every scheduler tool runs against a real
+    #         victim at 127.42.0.1; checks triggered + no conf errors + output.
+    #         Passing this IS proof the install is good. Runs first so a broken
+    #         tool conf is caught immediately, not as a confusing failure in a
+    #         UI test 20 minutes later. Skips cleanly if services aren't installed.
     # Tier A: Smoke / fast / formerly-fragile suites (~5 min total)
-    #         Surfaces today's regressions in <2 min instead of waiting through
-    #         the slow stable suites first.
     # Tier B: Recently-added features (biggest blast radius for new code)
     # Tier C: Bulk stable v10.x feature suites
     # Tier D: Slowest stable suites last
     #
-    # Tier A — smoke + recently-fixed
-    free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
-    free_port 5098; run_pytest "test_selenium_project"       tests/test_selenium_project.py
-    free_port 5100; run_pytest "session_fixes (v10.146-157)" tests/test_session_fixes_v10_156.py
-    free_port 5097; run_pytest "test_selenium_multihost"     tests/test_selenium_multihost.py
-    free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
-    # Tier A-extra: Victim tool execution — run before bulk UI suites so a
-    # broken scheduler tool conf surfaces here, not as a confusing UI failure.
-    # Skipped automatically with a clear message if nginx/mariadb/redis aren't installed.
+    # Tier 0 — comprehensive install proof
     if [[ $EUID -eq 0 ]] && grep -qi kali /etc/os-release 2>/dev/null; then
         free_port 5101
         _SKIP_NOTE="Victim services need root + Kali + nginx/mariadb/redis-server installed"
         run_pytest "victim tool execution (v10.206)" tests/test_victim_tool_execution.py
         unset _SKIP_NOTE
     else
-        echo -e "  ${YELLOW}!${NC}  victim tool execution — skipped (requires root on Kali)"
+        echo -e "  ${YELLOW}!${NC}  victim tool execution — skipped (requires root on Kali with services)"
     fi
 
+    # Tier A — smoke + recently-fixed
+    free_port 5094; run_pytest "test_selenium_terminal"      tests/test_selenium_terminal.py
+    free_port 5098; run_pytest "test_selenium_project"       tests/test_selenium_project.py
+    free_port 5100; run_pytest "session_fixes (v10.146-157)" tests/test_session_fixes_v10_156.py
+    free_port 5097; run_pytest "test_selenium_multihost"     tests/test_selenium_multihost.py
+    free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
     # Tier B — recent features (biggest regression risk)
     free_port 5082; run_pytest "ui_new_clear_checkbox (v10.136-143)" tests/test_ui_new_clear_checkbox.py
     free_port 5093; run_pytest "highlight_escaping (v10.145)" tests/test_highlight_escaping.py
