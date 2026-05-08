@@ -66,6 +66,12 @@ ALL_SCHEDULER_TOOLS = _read_scheduler_tools()   # 62 entries — known at collec
 # crashing inside a module-scope fixture (which shows as "0 of 0" in run_tests.sh)
 # =============================================================================
 
+PORT        = 5101
+VICTIM_IP   = '127.42.0.1'
+VICTIM_HOST = 'victim.test'
+TIMEOUT_TOOLS = 720          # 12 min ceiling — generous for 120+ processes at concurrency 10
+
+
 def _victim_prereq_reason() -> str:
     """Return a human-readable skip reason if prerequisites are missing, else ''."""
     # Conf must exist before anything else
@@ -74,15 +80,25 @@ def _victim_prereq_reason() -> str:
         return f'legion.conf not found at {conf} — run install.sh first'
     if not ALL_SCHEDULER_TOOLS:
         return 'No [SchedulerSettings] tools found in legion.conf'
-    # Required system services must be installed
-    for svc in ('nginx', 'mariadb', 'redis-server'):
-        r = subprocess.run(['systemctl', 'list-unit-files', f'{svc}.service'],
-                           capture_output=True, text=True)
-        if svc not in r.stdout:
-            return (f"System service '{svc}' not installed — "
-                    f"victim test requires a full Kali install with "
-                    f"nginx/mariadb/redis-server/postgresql/smbd/snmpd/xrdp")
-    return ''
+    # Try to start required services; probe ports to confirm they're reachable
+    subprocess.run(['ip', 'addr', 'add', f'{VICTIM_IP}/8', 'dev', 'lo'],
+                   capture_output=True)
+    for svc, port in [('nginx', 80), ('mariadb', 3306), ('redis-server', 6379)]:
+        subprocess.run(['systemctl', 'start', svc], capture_output=True, timeout=10)
+    # Give services a moment to bind
+    time.sleep(2)
+    missing = []
+    for svc, port in [('nginx', 80), ('mariadb', 3306), ('redis-server', 6379)]:
+        try:
+            s = socket.socket(); s.settimeout(1)
+            s.connect((VICTIM_IP, port)); s.close()
+        except OSError:
+            missing.append(f'{svc}:{port}')
+    if missing:
+        return (f"Required services not reachable on {VICTIM_IP}: {missing} — "
+                f"victim test needs nginx/mariadb/redis-server running. "
+                f"Install with: sudo apt-get install -y nginx mariadb-server redis-server")
+    return ''  # all good''
 
 _SKIP_REASON = _victim_prereq_reason()
 pytestmark = pytest.mark.skipif(bool(_SKIP_REASON), reason=_SKIP_REASON or 'prereqs ok')
@@ -92,10 +108,6 @@ pytestmark = pytest.mark.skipif(bool(_SKIP_REASON), reason=_SKIP_REASON or 'prer
 # Constants
 # =============================================================================
 
-PORT        = 5101
-VICTIM_IP   = '127.42.0.1'
-VICTIM_HOST = 'victim.test'
-TIMEOUT_TOOLS = 720          # 12 min ceiling — generous for 120+ processes at concurrency 10
 
 # Interactive tools store no output in process_output table — skip output checks
 INTERACTIVE_TOOLS = frozenset({'vsftpd234-Meta', 'ccproxy-ftpMeta', 'smbenum', 'x11screen'})
@@ -371,7 +383,11 @@ def victim_services():
         subprocess.run(['systemctl', 'start', svc], capture_output=True, timeout=15)
 
     real_tcp = [p for ports in real_service_ports.values() for p in ports]
-    _wait_ports_open(real_tcp, timeout=30)
+    try:
+        _wait_ports_open(real_tcp, timeout=30)
+    except RuntimeError as e:
+        pytest.skip(f"Real service ports not ready: {e} — "
+                    f"install nginx/mariadb/redis-server and ensure they start cleanly")
 
     listeners = {}
     socat_ports = {
