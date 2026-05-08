@@ -438,7 +438,7 @@ pkill -f "geckodriver"     2>/dev/null || true
 pkill -f "nmap"            2>/dev/null || true
 pkill -f "eyewitness"      2>/dev/null || true
 # Kill any stale test Flask servers on known test ports
-for _p in 5072 5073 5101 5074 5075 5076 5077 5078 5079 5080 5081 5082 5083 5085 5086 5088 5089 5090 5091 5092 5093 5094 5096 5097 5098 5099 5100; do free_port "$_p"; done
+for _p in 5072 5073 5101 5103 5074 5075 5076 5077 5078 5079 5080 5081 5082 5083 5085 5086 5088 5089 5090 5091 5092 5093 5094 5096 5097 5098 5099 5100; do free_port "$_p"; done
 sleep 1
 rm -rf /tmp/legion/legion-* /tmp/legion-* 2>/dev/null || true
 echo "  Cleared /tmp/legion* artefacts"
@@ -958,6 +958,8 @@ if [[ "$RUN_SELENIUM" == "true" ]]; then
     # Requires root (socat raw listeners + loopback alias).
     # Skipped automatically if not on Kali or not running as root.
     if [[ $EUID -eq 0 ]] && grep -qi kali /etc/os-release 2>/dev/null; then
+    free_port 5103; run_pytest "config_easy_mode (F2 Easy Edit)" tests/test_config_easy_mode.py
+
         free_port 5101
         _SKIP_NOTE="Victim services need root + Kali — skip on non-Kali or non-root"
         run_pytest "victim tool execution (v10.206)" tests/test_victim_tool_execution.py
