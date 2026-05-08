@@ -112,6 +112,7 @@ var L = {
     selectedHostId: null,
     selectedHostIp: null,
     selectedService: null,
+    selectedServicePort: null,
     _hostProcSig: null,
     _nmapSig: null,
     _hostUnreadTabs: {},   /* hostId → {tabId: true} — persists orange indicators across host switches */
@@ -667,7 +668,7 @@ function _drawServices() {
         tr.dataset.service = s.service || '';
         tr.dataset.port = s.port || '';
         tr.style.cursor = 'pointer';
-        if (L.selectedService === s.service) tr.classList.add('selected');
+        if (L.selectedService === s.service && L.selectedServicePort === (s.port || '')) tr.classList.add('selected');
         tr.innerHTML = '<td>' + esc(s.service||'') + '</td><td>' + esc(s.port||'') + '</td>';
         body.appendChild(tr);
     });
@@ -1640,6 +1641,7 @@ function initInteractions() {
         var tr = e.target.closest('tr');
         if (!tr) return;
         L.selectedService = tr.dataset.service || '';
+        L.selectedServicePort = tr.dataset.port || '';
         $('services-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
         });
@@ -2071,9 +2073,12 @@ function updatePortsByService(serviceName) {
                     '<td>' + esc(svc.name||'') + '</td>' +
                     '<td>' + esc((svc.product||'') + ' ' + (svc.version||'')).trim() + '</td>';
                 tr.addEventListener('click', function() {
+                    /* Highlight only this row — stay in service results view */
+                    body.querySelectorAll('tr').forEach(function(r) { r.classList.remove('selected'); });
+                    tr.classList.add('selected');
+                    /* Update host context silently for context-menu support */
                     L.selectedHostId = parseInt(host.id);
-                    loadHostDetail(L.selectedHostId);
-                    renderHosts(L.hosts);
+                    L.selectedHostIp = host.ip || '';
                 });
                 body.appendChild(tr);
             });
