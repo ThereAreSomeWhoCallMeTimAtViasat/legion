@@ -2953,6 +2953,22 @@ document.addEventListener('DOMContentLoaded', function() {
         var _parsed = null;
         var _activeSection = null;
         var _visitedSections = [];   /* sections the user actually opened — only these are re-serialized */
+        var _easyDirty = false;      /* true when an unsaved change has been made in Easy Mode */
+
+        /* Mark the Apply button as needing a click (pulse highlight) */
+        function _markDirty() {
+            if (_easyDirty) return;
+            _easyDirty = true;
+            var btn = $('easy-apply-btn');
+            if (btn) btn.classList.add('easy-apply-dirty');
+        }
+
+        /* Restore the Apply button to its normal state */
+        function _clearDirty() {
+            _easyDirty = false;
+            var btn = $('easy-apply-btn');
+            if (btn) btn.classList.remove('easy-apply-dirty');
+        }
 
         var SECTIONS = [
             'GeneralSettings','BruteSettings','ToolSettings','StagedNmapSettings',
@@ -3064,6 +3080,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
             var content = $('easy-content');
             content.innerHTML = html;
+            /* Mark dirty when any form field changes */
+            content.querySelectorAll('.easy-form-input, .easy-bool, .easy-td-select').forEach(function(el) {
+                el.addEventListener('change', _markDirty);
+                el.addEventListener('input',  _markDirty);
+            });
         }
 
         function collectForm(sec) {
@@ -3119,6 +3140,11 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             html += '</div>';
             $('easy-content').innerHTML = html;
+            /* Mark dirty when any stage field changes */
+            $('easy-content').querySelectorAll('[data-role="type"], [data-role="spec"]').forEach(function(el) {
+                el.addEventListener('change', _markDirty);
+                el.addEventListener('input',  _markDirty);
+            });
         }
 
         function collectStaged() {
@@ -3206,11 +3232,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 /* Inline cmd validation on change */
                 tbody.querySelectorAll('[data-role="cmd"]').forEach(function(inp) {
                     inp.addEventListener('input', function() {
+                        _markDirty();
                         var requirePort = isPort;
                         if (!inp.value.includes('[IP]')) inp.classList.add('easy-error');
                         else if (requirePort && !inp.value.includes('[PORT]')) inp.classList.add('easy-error');
                         else inp.classList.remove('easy-error');
                     });
+                });
+                /* Mark dirty on key/label/svc edits too */
+                tbody.querySelectorAll('[data-role="key"], [data-role="label"], [data-role="svc"]').forEach(function(inp) {
+                    inp.addEventListener('input', _markDirty);
                 });
 
                 /* Delete buttons */
@@ -3244,6 +3275,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!cmd.includes('[IP]')) { setText('easy-status', 'Command must contain [IP]'); return; }
                 if (isPort && !cmd.includes('[PORT]')) { setText('easy-status', 'Command must contain [PORT]'); return; }
                 setText('easy-status', '');
+                _markDirty();
                 var fullCmd = (isTerm && term) ? '[term] ' + cmd : cmd;
                 var value;
                 if (isPort) { value = quoteIfNeeded(label) + ',' + quoteIfNeeded(fullCmd) + ',' + quoteIfNeeded(svc); }
@@ -3336,7 +3368,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         rows += '<option value="' + esc(k) + '"' + (k===e.key?' selected':'') + '>' + esc(k) + '</option>';
                     });
                     rows += '</select></td>';
-                    rows += '<td><input class="easy-td-input" data-role="svc" value="' + esc(svc) + '"></td>';
+                    rows += '<td><input class="easy-td-input" data-role="svc" value="' + esc(svc) + '" oninput="_markDirty()"></td>';
                     rows += '<td><select class="easy-td-select" data-role="proto"><option' + (proto==='tcp'?' selected':'') + '>tcp</option><option' + (proto==='udp'?' selected':'') + '>udp</option></select></td>';
                     rows += '<td><button class="easy-del-btn" data-idx="' + idx + '">✕</button></td>';
                     rows += '</tr>';
@@ -3347,6 +3379,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 tbody.querySelectorAll('.easy-del-btn').forEach(function(btn) {
                     btn.addEventListener('click', function() {
                         entries.splice(parseInt(btn.dataset.idx), 1);
+                        _markDirty();
                         renderRows(search);
                     });
                 });
@@ -3363,6 +3396,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 var proto = ($('add-proto') || {}).value.trim() || 'tcp';
                 if (!tool) { setText('easy-status', 'Tool is required'); return; }
                 setText('easy-status', '');
+                _markDirty();
                 var value = quoteIfNeeded(svc) + ',' + proto;
                 entries.push({ key: tool, value: value });
                 renderRows(search);
@@ -3449,6 +3483,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         var i   = parseInt(btn.dataset.i);
                         var kwList = src === 'pos' ? posKWs : negKWs;
                         var key   = src === 'pos' ? 'global-positive' : 'global-negative';
+                        _markDirty();
                         kwList.splice(i, 1);
                         var entry = map[key];
                         if (entry) entry.value = '"' + kwList.join(',') + '"';
@@ -3466,6 +3501,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (!kw) return;
                         var key   = src === 'pos' ? 'global-positive' : 'global-negative';
                         var kwList = src === 'pos' ? posKWs : negKWs;
+                        _markDirty();
                         kwList.push(kw);
                         if (!map[key]) {
                             var newEntry = { key: key, value: '"' + kwList.join(',') + '"' };
@@ -3521,6 +3557,7 @@ document.addEventListener('DOMContentLoaded', function() {
             _parsed = parseConf(text);
             _activeSection = null;
             _visitedSections = [];   /* reset visit tracking for this session */
+            _clearDirty();           /* reset dirty flag on each open */
 
             /* Build section tabs */
             var tabsEl = $('easy-section-tabs');
@@ -3605,6 +3642,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (applyBtn) applyBtn.addEventListener('click', function() {
             if (_activeSection) collectSection(_activeSection);
             if (_parsed) cfgSetCurrentText(serializeConf(_parsed));
+            _clearDirty();
             setText('easy-status', '✓ Applied to config — review in Advanced mode then Save');
         });
 
