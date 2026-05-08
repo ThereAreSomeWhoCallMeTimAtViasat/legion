@@ -706,15 +706,18 @@ run_pytest() {
 # ══════════════════════════════════════════════════════════════════════════════
 if [[ "$RUN_UNIT" == "true" ]]; then
     section "Unit / API tests"
-    # ── Test order: tiered for fail-fast (v10.188 reorder) ──
+    # ── Test order: tiered for fail-fast (v10.188 reorder, env-first v10.210) ──
+    # Tier 0: Environment prereqs — tool binaries, conf integrity, wordlists (2s)
+    #         If these fail, every subsequent test that uses scheduler tools fails
+    #         with misleading errors. Surface broken installs in <5s, not after 2.5 min.
     # Tier 1: Anti-pattern guards + smoke baselines (sub-second, no fixtures)
     # Tier 2: Historically fragile suites (catch regressions early)
     # Tier 3: Fast unit/API tests
     # Tier 4: Slow unit suites last
-    # Rationale: a regression in code touched today should surface in <1 min,
-    # not after waiting through all 27 suites.
     for f in \
         tests/test_anti_patterns.py \
+        tests/test_requirements.py \
+        tests/test_tool_installation.py \
         tests/test_behavioral.py \
         tests/test_export_and_hydra.py \
         tests/test_gap_implementations.py \
@@ -738,9 +741,7 @@ if [[ "$RUN_UNIT" == "true" ]]; then
         tests/test_new_dialogs.py \
         tests/test_visualupgrades_features.py \
         tests/test_terminal.py \
-        tests/test_qt6_gaps.py \
-        tests/test_requirements.py \
-        tests/test_tool_installation.py
+        tests/test_qt6_gaps.py
     do
         # test_terminal.py: T7 live tests skip without LEGION_TEST_TARGET.
         # When a live target is given, skip it here — the T7 section runs it
@@ -914,6 +915,18 @@ if [[ "$RUN_SELENIUM" == "true" ]]; then
     free_port 5100; run_pytest "session_fixes (v10.146-157)" tests/test_session_fixes_v10_156.py
     free_port 5097; run_pytest "test_selenium_multihost"     tests/test_selenium_multihost.py
     free_port 5096; run_pytest "test_selenium_gaps"          tests/test_selenium_gaps.py
+    # Tier A-extra: Victim tool execution — run before bulk UI suites so a
+    # broken scheduler tool conf surfaces here, not as a confusing UI failure.
+    # Skipped automatically with a clear message if nginx/mariadb/redis aren't installed.
+    if [[ $EUID -eq 0 ]] && grep -qi kali /etc/os-release 2>/dev/null; then
+        free_port 5101
+        _SKIP_NOTE="Victim services need root + Kali + nginx/mariadb/redis-server installed"
+        run_pytest "victim tool execution (v10.206)" tests/test_victim_tool_execution.py
+        unset _SKIP_NOTE
+    else
+        echo -e "  ${YELLOW}!${NC}  victim tool execution — skipped (requires root on Kali)"
+    fi
+
     # Tier B — recent features (biggest regression risk)
     free_port 5082; run_pytest "ui_new_clear_checkbox (v10.136-143)" tests/test_ui_new_clear_checkbox.py
     free_port 5093; run_pytest "highlight_escaping (v10.145)" tests/test_highlight_escaping.py
@@ -951,22 +964,7 @@ if [[ "$RUN_SELENIUM" == "true" ]]; then
     free_port 5073; run_pytest "save_open_data (v10.65-66)" tests/test_save_open_data.py
     unset _SKIP_NOTE
 
-    # ── Victim tool execution (Tier D-extra: ~8 min) ─────────────────────────
-    # Starts a local victim host at 127.42.0.1 with socat/real services,
-    # imports an nmap XML with all required service names, lets the scheduler
-    # auto-run every configured tool, then checks each output for conf errors.
-    # Requires root (socat raw listeners + loopback alias).
-    # Skipped automatically if not on Kali or not running as root.
-    if [[ $EUID -eq 0 ]] && grep -qi kali /etc/os-release 2>/dev/null; then
     free_port 5103; run_pytest "config_easy_mode (F2 Easy Edit)" tests/test_config_easy_mode.py
-
-        free_port 5101
-        _SKIP_NOTE="Victim services need root + Kali — skip on non-Kali or non-root"
-        run_pytest "victim tool execution (v10.206)" tests/test_victim_tool_execution.py
-        unset _SKIP_NOTE
-    else
-        echo -e "  ${YELLOW}!${NC}  victim tool execution — skipped (requires root on Kali)"
-    fi
 fi
 
 if [[ "$RUN_LIVE" == "true" ]]; then
