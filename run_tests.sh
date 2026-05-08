@@ -632,7 +632,7 @@ run_pytest() {
         t_total=$(( t_total + secs ))
 
         local sl p f s
-        sl=$(echo "$out" | grep -E "passed|failed|error" | tail -1 || true)
+        sl=$(echo "$out" | grep -E "passed|failed|error|skipped" | tail -1 || true)
 
         if [[ -z "$sl" ]]; then
             final_out="$out"; final_rc=$rc
@@ -671,7 +671,7 @@ run_pytest() {
         display_name="${name} ${RED}[failed all 3 attempts]${NC}"
     fi
 
-    if [[ -z "$(echo "$final_out" | grep -E 'passed|failed|error')" ]]; then
+    if [[ -z "$(echo "$final_out" | grep -E 'passed|failed|error|skipped')" ]]; then
         local err
         err=$(echo "$final_out" | grep -i "error" | head -2 | tr '\n' ' ' || true)
         print_result "$display_name" "fail" 0 1 0 "$t_total"
@@ -1003,7 +1003,7 @@ if [[ "$RUN_LIVE" == "true" ]]; then
     wait "$_live_timer_pid" 2>/dev/null || true
 
     _live_secs=$(( $(date +%s) - _live_t0 ))
-    _live_sl=$(grep -E "passed|failed|error" "$_live_log" | tail -1 || true)
+    _live_sl=$(grep -E "passed|failed|error|skipped" "$_live_log" | tail -1 || true)
     _live_p=$(_extract "$_live_sl" "passed")
     _live_f=$(_extract "$_live_sl" "failed")
     _live_s=$(echo "$_live_sl" | grep -oP '\d+(?= (skipped|deselected))' | head -1 || echo "0")
@@ -1078,7 +1078,7 @@ PYEOF
                 --tb=no -q 2>&1) || true
         spinner_stop
         _us_live_secs=$(( $(date +%s) - _us_live_t0 ))
-        _us_live_sl=$(echo "$_us_live_out" | grep -E "passed|failed|error" | tail -1 || true)
+        _us_live_sl=$(echo "$_us_live_out" | grep -E "passed|failed|error|skipped" | tail -1 || true)
         _us_live_p=$(_extract "$_us_live_sl" "passed")
         _us_live_f=$(_extract "$_us_live_sl" "failed")
         _us_live_s=$(echo "$_us_live_sl" | grep -oP '\d+(?= (skipped|deselected))' | head -1 || echo "0")
