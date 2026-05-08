@@ -136,6 +136,8 @@ TOOL_EXPECTED_OUTPUT = {
     'snmp-default':         ('', ''),      # just must have output — no specific pattern
 
     # ── Fake/socat services — tool startup proves binary works ─────────────────
+    'dnsrecon':            ('Starting enumeration', 'dnsrecon printed enumeration status line'),
+    'nbtscan':             ('netbios name table', 'nbtscan queried NetBIOS names for host'),
     'ftp-default':          ('hydra v', 'Hydra version header'),
     'telnet-default':       ('hydra v', 'Hydra version header'),
     'mssql-default':        ('hydra v', 'Hydra version header'),
@@ -183,6 +185,7 @@ VICTIM_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
     <port protocol="tcp" portid="80"><state state="open"/><service name="http" product="nginx" version="1.28.1" method="probed" conf="10"/></port>
     <port protocol="tcp" portid="111"><state state="open"/><service name="rpcbind" version="2-4" method="probed" conf="10"/></port>
     <port protocol="tcp" portid="135"><state state="open"/><service name="msrpc" product="Microsoft Windows RPC" method="probed" conf="10"/></port>
+    <port protocol="tcp" portid="137"><state state="open"/><service name="netbios-ns" product="Samba nmbd" method="probed" conf="10"/></port>
     <port protocol="tcp" portid="139"><state state="open"/><service name="netbios-ssn" product="Samba smbd" version="4.X" method="probed" conf="10"/></port>
     <port protocol="tcp" portid="389"><state state="open"/><service name="ldap" product="OpenLDAP" version="2.4.57" method="probed" conf="10"/></port>
     <port protocol="tcp" portid="443"><state state="open"/><service name="ssl" product="nginx" version="1.28.1" tunnel="ssl" method="probed" conf="10"/></port>
@@ -344,6 +347,7 @@ def victim_services():
 
     listeners = {}
     socat_ports = {
+        137:  '',   # netbios-ns — nbtscan queries via its own protocol
         21:   '220 (vsFTPd 2.3.4)\\r\\n',
         23:   '',
         25:   '220 victim.test ESMTP Postfix\\r\\n',

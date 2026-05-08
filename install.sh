@@ -1008,7 +1008,7 @@ elif _on_kali; then
         sqlmap sslyze sslscan
         netexec smbmap enum4linux-ng ldapsearch rpcclient smbclient
         hydra searchsploit eyewitness
-        fierce
+        fierce kerbrute
         dnsrecon dnsenum nbtscan
         snmpwalk onesixtyone
         impacket-rpcdump

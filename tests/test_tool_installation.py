@@ -217,6 +217,50 @@ class TestConfIntegrity:
             + '\nFix: add -t /home/kali/.local/nuclei-templates/http to nuclei commands'
         )
 
+    def test_dnsrecon_uses_correct_flags(self):
+        """
+        dnsrecon uses -n (not --dns-servers, which does not exist in dnsrecon)
+        and -x (not --xml) for XML output.
+        These were the exact bugs in the original conf command that caused
+        dnsrecon to exit immediately with 'unrecognized arguments'.
+        """
+        raw = _conf_raw()
+        dnsrecon_lines = [l for l in raw.splitlines()
+                          if l.startswith('dnsrecon=') and 'dnsrecon -d' in l]
+        assert dnsrecon_lines, 'No dnsrecon PortActions command found in conf'
+        for line in dnsrecon_lines:
+            assert '--dns-servers' not in line, (
+                f"dnsrecon command uses --dns-servers (not a valid flag — use -n):\n  {line}"
+            )
+            assert '--xml' not in line, (
+                f"dnsrecon command uses --xml (not a valid flag — use -x):\n  {line}"
+            )
+            assert ' -n ' in line or line.endswith('-n'), (
+                f"dnsrecon command missing -n NS_SERVER flag:\n  {line}"
+            )
+
+    def test_kerbrute_scanning_mode_only(self):
+        """
+        kerbrute must use 'userenum' (enumerate valid usernames via Kerberos
+        pre-auth errors — scanning only, no passwords attempted).
+        Brute-force commands (bruteuser, passwordspray, brute) are hacking
+        tools and must NOT appear in any auto-run context.
+        """
+        raw = _conf_raw()
+        kerb_lines = [l for l in raw.splitlines()
+                      if 'kerbrute' in l.lower()]
+        for line in kerb_lines:
+            for hacking_cmd in ('bruteuser', 'passwordspray', ' brute '):
+                assert hacking_cmd not in line.lower(), (
+                    f"kerbrute in hacking mode ('{hacking_cmd}') found in conf:\n  {line}"
+                )
+        # Confirm userenum (scanning mode) is the configured command
+        userenum_lines = [l for l in kerb_lines if 'userenum' in l.lower()]
+        assert userenum_lines, (
+            "No kerbrute userenum entry found in conf. "
+            "kerbrute must be configured in scanning mode (userenum only)."
+        )
+
     def test_wig_absent_from_scheduler_settings(self):
         """
         Fix-5: wig must not be in [SchedulerSettings].
@@ -511,6 +555,9 @@ _SCHEDULER_BINARIES = [
     ('testssl',        'testssl'),
     ('davtest',        'davtest'),
     ('joomscan',       'joomscan'),
+    ('dnsrecon',       'dnsrecon'),
+    ('nbtscan',        'nbtscan'),
+    ('kerbrute',       'kerbrute'),
     ('fierce',         'fierce-dns'),
 ]
 
