@@ -241,6 +241,14 @@ sudo apt-get install -y --ignore-missing \
     net-tools nbtscan \
     2>/dev/null || true
 
+# Victim test infrastructure — servers that test_victim_tool_execution.py scans
+# against locally.  These are NOT Legion runtime deps; they are the target services
+# that let the test verify every scheduler tool actually runs and produces output.
+sudo apt-get install -y --ignore-missing \
+    nginx mariadb-server redis-server postgresql \
+    samba snmpd xrdp \
+    2>/dev/null || true
+
 ok "Security tool packages done (some may be skipped on non-Kali)"
 
 # testssl.sh — dedicated install step so it is never silently dropped by --ignore-missing
@@ -1020,6 +1028,7 @@ elif _on_kali; then
         ssh-audit
         redis-cli mysql psql
         dig finger
+        nginx mysqld redis-server
     )
     _missing_tools=()
     for _t in "${_CRITICAL_TOOLS[@]}"; do
