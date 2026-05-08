@@ -3592,6 +3592,21 @@ document.addEventListener('DOMContentLoaded', function() {
             setText('easy-status', '✓ Applied to config — review in Advanced mode then Save');
         });
 
+        /* Auto-collect Easy Mode changes when the Save button is clicked directly
+           while Easy Mode is still open. The Save button lives outside the Easy Mode
+           panel and its regular listener reads cfgGetCurrentText() from the textarea —
+           which is stale until cfgSetCurrentText() is called. Using capture:true here
+           ensures this runs BEFORE the regular Save listener so the textarea is already
+           up-to-date when Save reads it. This fixes: "changes not saved after pressing
+           Save while still in Easy Mode". */
+        var cfgSaveForEasy = $('config-save');
+        if (cfgSaveForEasy) cfgSaveForEasy.addEventListener('click', function() {
+            var panel = $('easy-mode-panel');
+            if (!panel || panel.style.display === 'none') return; /* Easy Mode not open */
+            if (_activeSection) collectSection(_activeSection);
+            if (_parsed) cfgSetCurrentText(serializeConf(_parsed));
+        }, true /* capture — fires before the regular Save listener */);
+
     })(); /* end Easy Mode IIFE */
 
     /* ── Process management buttons ── */
