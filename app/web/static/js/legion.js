@@ -1995,7 +1995,23 @@ function initInteractions() {
             /* Mount xterm.js in the dynamic tab output area */
             _connectDynTerminal(sessionId, outputEl);
         } else {
-            outputEl.textContent = 'Loading...';
+            /* Only show 'Loading...' on a genuine first-ever load of this tab
+               (no prior scroll position means we have never rendered it).
+               On poll-driven rebuilds (renderDynamicToolTabs fires every 1.5 s)
+               _procScrollPos[procId] is already populated, so we skip the text
+               mutation entirely.  This prevents two cascading problems:
+               1. The 'Loading...' flash visible for 200ms–2s on every poll cycle
+                  for Running processes (the partially-fixed loading delay).
+               2. The scroll-to-top regression: textContent='Loading...' resets
+                  scrollTop=0, and if the element is saved in that state the saved
+                  position becomes 0 or 'bottom', overwriting the user's actual
+                  scroll position and creating a persistent reset loop.
+               For Finished/Killed/Crashed processes the _dynOutputCache fills
+               the element synchronously anyway, so 'Loading...' was never
+               visible to the user in those cases either. */
+            var _isFirstLoad = (_procScrollPos[procId] === undefined &&
+                                _dynOutputCache[procId] === undefined);
+            if (_isFirstLoad) outputEl.textContent = 'Loading...';
             loadProcessOutput(procId, outputEl);
             /* Auto-refresh while Running or Waiting (survives Waiting→Running transition) */
             if (proc && (proc.status === 'Running' || proc.status === 'Waiting')) {
