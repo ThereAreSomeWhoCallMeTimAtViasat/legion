@@ -623,7 +623,7 @@ while [[ $ROUND -lt $MAX_ROUNDS ]]; do
     # test_requirements.py: Python packages + Qt/Flask init + tool binaries
     # test_tool_installation.py: conf integrity, SchedulerSettings consistency,
     #   Perl Encoding::BER, nuclei templates + config dir, wordlist paths
-    sudo "${VENV_PY}" -m pytest \
+    sudo SUDO_USER="${REAL_USER}" "${VENV_PY}" -m pytest \
         tests/test_requirements.py \
         tests/test_tool_installation.py \
         --noconftest -q --tb=line \
