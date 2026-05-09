@@ -74,7 +74,25 @@ def _read_scheduler_tools() -> list:
     return list(p.options('SchedulerSettings')) if p.has_section('SchedulerSettings') else []
 
 
-ALL_SCHEDULER_TOOLS = _read_scheduler_tools()   # 62 entries — known at collection time
+def _read_scheduler_scopes() -> dict:
+    """Return {tool_id: 'svc_scope,tcp_udp'} from SchedulerSettings values."""
+    conf = Path(os.path.expanduser('~/.local/share/legion/legion.conf'))
+    if not conf.exists():
+        return {}
+    p = configparser.RawConfigParser()
+    p.optionxform = str
+    p.read(conf)
+    if not p.has_section('SchedulerSettings'):
+        return {}
+    result = {}
+    for key, val in p.items('SchedulerSettings'):
+        parts = [v.strip() for v in val.split(',')]
+        result[key] = val.strip()   # raw value e.g. "http,https,ssl,tcp"
+    return result
+
+
+ALL_SCHEDULER_TOOLS  = _read_scheduler_tools()   # 62 entries — known at collection time
+ALL_SCHEDULER_SCOPES = _read_scheduler_scopes()  # {tool_id: raw_conf_value}
 
 
 # =============================================================================
@@ -563,6 +581,7 @@ def completed_scan(srv) -> dict:
             'status':       proc.get('status', ''),
             'output':       output,
             'output_bytes': len(output),
+            'command':      proc.get('command', ''),
         }
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
@@ -699,8 +718,9 @@ def test_print_full_report(completed_scan):
 
         # Check 1: triggered
         if not runs:
+            scope = ALL_SCHEDULER_SCOPES.get(tool_id, '?')
             failures.append((tool_id, 'not-triggered',
-                             'scheduler never ran this tool — service-name mismatch?', ''))
+                             f'scheduler never ran — conf scope: [{scope}]', ''))
             continue
         terminal = [r for r in runs if r['status'] in
                     ('Finished', 'Killed', 'Crashed', 'Interactive')]
@@ -777,8 +797,17 @@ def test_print_full_report(completed_scan):
         for tool_id, check, detail, snippet in failures:
             tty(f"  ✗ {tool_id}  [{check}]")
             tty(f"      {detail}")
+            # Show command — lets you immediately see if it's a template/flag issue
+            runs = completed_scan.get(tool_id, [])
+            if runs:
+                cmd = runs[0].get('command', '')
+                if cmd:
+                    tty(f"      cmd: {cmd[:120]}")
             if snippet:
-                tty(f"      output: {snippet[:120]}")
+                # Show up to 400 chars split into readable lines
+                for i in range(0, min(len(snippet), 400), 120):
+                    label = '      output: ' if i == 0 else '              '
+                    tty(f"{label}{snippet[i:i+120]}")
     tty('=' * W)
     tty()
     # Always pass — this is a reporting test
