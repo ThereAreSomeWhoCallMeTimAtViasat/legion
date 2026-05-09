@@ -244,10 +244,14 @@ sudo apt-get install -y --ignore-missing \
 # Victim test infrastructure — servers that test_victim_tool_execution.py scans
 # against locally.  These are NOT Legion runtime deps; they are the target services
 # that let the test verify every scheduler tool actually runs and produces output.
-sudo apt-get install -y --ignore-missing \
+info "  Installing victim test server dependencies (nginx, mariadb, redis, postgresql, samba, snmpd, xrdp)…"
+if sudo apt-get install -y \
     nginx mariadb-server redis-server postgresql \
-    samba snmpd xrdp \
-    2>/dev/null || true
+    samba snmpd xrdp; then
+    ok "  Victim test server packages installed"
+else
+    warn "  Some victim test server packages failed — victim tool execution test may skip"
+fi
 
 ok "Security tool packages done (some may be skipped on non-Kali)"
 
@@ -1028,9 +1032,17 @@ elif _on_kali; then
         ssh-audit
         redis-cli mysql psql
         dig finger
-        nginx mysqld redis-server
+        nginx redis-server
     )
     _missing_tools=()
+    # Check victim server packages via dpkg (binaries in /usr/sbin, not on PATH)
+    for _pkg in mariadb-server postgresql samba snmpd xrdp; do
+        if ! dpkg -l "$_pkg" 2>/dev/null | grep -q "^ii"; then
+            warn "  Victim test server package not installed: $_pkg"
+            warn "  Run: sudo apt-get install -y $_pkg"
+        fi
+    done
+
     for _t in "${_CRITICAL_TOOLS[@]}"; do
         command -v "${_t}" &>/dev/null || _missing_tools+=("${_t}")
     done
