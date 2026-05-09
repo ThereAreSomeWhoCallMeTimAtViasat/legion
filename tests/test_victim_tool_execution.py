@@ -490,7 +490,7 @@ def victim_services():
     #   GET anything else     → 404  (avoids wildcard detection which suppresses output)
     import ssl as _ssl
     import tempfile as _tempfile
-    from http.server import HTTPServer as _HTTPServer, BaseHTTPRequestHandler as _Handler
+    from http.server import ThreadingHTTPServer as _HTTPServer, BaseHTTPRequestHandler as _Handler
 
     _cert_dir = _tempfile.mkdtemp(prefix='legion-victim-cert-')
     _key_pem  = os.path.join(_cert_dir, 'victim.key')
@@ -501,13 +501,22 @@ def victim_services():
          '-days', '1', '-nodes', '-subj', '/CN=127.42.0.1'],
         capture_output=True)
 
+    # Paths that return 200 — must include entries near the top of big.txt
+    # so feroxbuster finds them within the process-timeout (300s).
+    # /admin and /login appear early (feroxbuster probes them as wildcard targets);
+    # /index is line 9568 in big.txt, reached in ~5s with 50 threads.
+    _HTTPS_OK = {'/', '/index.html', '/index', '/admin', '/login'}
+
     class _HttpsHandler(_Handler):
         def do_GET(self):
-            if self.path in ('/', '/index.html'):
-                self.send_response(200); self.end_headers()
-                self.wfile.write(b'<html>OK</html>\n')
-            else:
-                self.send_response(404); self.end_headers()
+            try:
+                if self.path in _HTTPS_OK:
+                    self.send_response(200); self.end_headers()
+                    self.wfile.write(b'<html>OK</html>\n')
+                else:
+                    self.send_response(404); self.end_headers()
+            except Exception:
+                pass  # feroxbuster resets connections — don't crash the server
         def log_message(self, *a): pass
 
     try:
@@ -517,7 +526,7 @@ def victim_services():
         _https_srv.socket = _ctx.wrap_socket(_https_srv.socket, server_side=True)
         threading.Thread(target=_https_srv.serve_forever, daemon=True).start()
         listeners['8443-https'] = _https_srv
-        _tty_print('Python HTTPS server on 8443 (self-signed cert)')
+        _tty_print('Python HTTPS server on 8443 (ThreadingHTTPServer, self-signed cert)')
     except Exception as e:
         listeners[8443] = _socat_listen(8443, '')
         _tty_print(f'WARNING: HTTPS server failed ({e}) — 8443 is plain TCP')
