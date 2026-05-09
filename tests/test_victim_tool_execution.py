@@ -244,9 +244,22 @@ TOOL_EXPECTED_OUTPUT = {
     'ccproxy-ftpMeta':      ('', ''),      # interactive metasploit session
     'vsftpd234-Meta':       ('', ''),      # interactive metasploit session
     'smbenum':              ('', ''),      # interactive bash session
+    # ── New scheduler tools (v10.210) ─────────────────────────────────────
+    'nikto':                ('Nikto', 'nikto printed its header'),
+    'wpscan':               ('WPScan', 'wpscan printed its header'),
+    'whatweb':              ('http://', 'whatweb reported a scanned URL'),
+    'wafw00f':              ('', ''),      # may produce no useful output against socat TLS
+    'katana':               ('', ''),      # crawler depends on links found
+    'katana-https':         ('', ''),      # crawler depends on links found
+    'nomore403':            ('', ''),      # output depends on target response
+    'sslscan':              ('ssl/tls', 'sslscan showed protocol info'),
+    'sslyze':               ('scan results', 'sslyze completed TLS scan'),
+    'sqlmap-scan':          ('sqlmap', 'sqlmap printed its header'),
+    'jexboss':              ('jexboss', 'jexboss printed its header'),
+    'theharvester':         ('theharvester', 'theharvester printed its header'),
 }
 
-# Nmap XML with ALL service names needed to trigger all 62 SchedulerSettings entries
+# Nmap XML with ALL service names needed to trigger all 76 SchedulerSettings entries
 VICTIM_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE nmaprun>
 <nmaprun scanner="nmap" args="nmap -Pn -sV {VICTIM_IP}" start="1746632000" version="7.98">
@@ -766,12 +779,41 @@ def test_every_tool_expected_output(tool_id, completed_scan):
 # =============================================================================
 
 def test_minimum_tool_count(completed_scan):
-    """At least 55 of the 62 scheduler tools must have produced at least one process."""
+    """At least 65 of the 76 scheduler tools must have produced at least one process."""
     triggered = sum(1 for t in ALL_SCHEDULER_TOOLS if completed_scan.get(t))
-    assert triggered >= 55, (
+    assert triggered >= 65, (
         f"Only {triggered}/{len(ALL_SCHEDULER_TOOLS)} scheduler tools ran.\n"
         f"Missing: {[t for t in ALL_SCHEDULER_TOOLS if not completed_scan.get(t)]}"
     )
+
+
+# =============================================================================
+# Manual tool tests — tools that can't auto-trigger via SchedulerSettings
+# (host-based OSINT, credential-requiring, offline DB lookups)
+# =============================================================================
+
+@pytest.mark.parametrize('tool_id,cmd,pattern', [
+    ('searchsploit',      ['searchsploit', 'apache', '2.2'], 'exploit'),
+    ('masscan',           ['masscan', VICTIM_IP, '-p80', '--rate=100', '--wait=0'], 'masscan'),
+    ('gau',               ['gau', '--help'], ''),
+    ('waybackurls',       ['sh', '-c', 'echo test | timeout 5 waybackurls'], ''),
+    ('leaksearch',        ['python3', '/opt/LeakSearch/LeakSearch.py', '--help'], ''),
+    ('evil-winrm',        ['evil-winrm', '-i', '127.0.0.1', '-u', 'test', '-p', 'test'], 'evil-winrm'),
+    ('kerbrute',          ['kerbrute', '--help'], 'kerbrute'),
+    ('bloodhound-python', ['bloodhound-python', '--help'], 'bloodhound'),
+])
+def test_manual_tools(tool_id, cmd, pattern):
+    """Tools that can't auto-trigger — verify binary starts and produces output."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        pytest.fail(f"'{tool_id}' binary not found — run install.sh")
+    combined = r.stdout + r.stderr
+    assert combined, f"'{tool_id}' produced no output — binary may be broken"
+    if pattern:
+        assert pattern.lower() in combined.lower(), (
+            f"'{tool_id}' output missing '{pattern}'\n"
+            f"First 300 chars:\n{combined[:300]}")
 
 
 def test_print_full_report(completed_scan):
