@@ -666,46 +666,106 @@ def test_minimum_tool_count(completed_scan):
     )
 
 
-def test_print_full_report(completed_scan, capsys):
+def test_print_full_report(completed_scan):
     """
-    Always-pass: prints a complete table of every tool's status and output sample.
-    Use -s to see it: pytest tests/test_victim_tool_execution.py -v -s
+    Always-pass: prints a complete pass/fail table to /dev/tty so it is visible
+    whether run manually or through run_tests.sh (which captures stdout/stderr).
+    Re-runs the same checks as the parametrized tests so failures are explained
+    with output snippets, not just tool names.
     """
-    print(f"\n\n{'='*100}")
-    print(f"VICTIM TOOL EXECUTION REPORT — {VICTIM_IP} ({len(ALL_SCHEDULER_TOOLS)} scheduler tools)")
-    print(f"{'='*100}")
-    print(f"{'Tool':<40} {'Port':<6} {'Status':<12} {'Bytes':>6}  {'Output / Error'}")
-    print(f"{'-'*100}")
+    W = 72  # line width
 
-    conf_errors = []
-    empty_runs   = []
-    missing      = []
+    def tty(msg=''):
+        _tty_print(msg)
+
+    # ── Re-run every check inline ─────────────────────────────────────────
+    failures = []   # (tool_id, check, detail, snippet)
 
     for tool_id in sorted(ALL_SCHEDULER_TOOLS):
-        runs = completed_scan.get(tool_id)
-        if not runs:
-            missing.append(tool_id)
-            print(f"  {'[MISSING]':<8} {tool_id}")
-            continue
-        for run in runs:
-            lines = [l.strip() for l in run['output'].splitlines() if l.strip()]
-            first = lines[0][:60] if lines else '(empty)'
-            has_err, pat = _is_conf_error(run['output'])
-            tag = f'[CONF_ERR:{pat[:20]}]' if has_err else ''
-            if has_err:
-                conf_errors.append((tool_id, run['port'], pat))
-            if run['output_bytes'] == 0 and tool_id not in INTERACTIVE_TOOLS:
-                empty_runs.append((tool_id, run['port']))
-            print(f"  {tool_id:<38} {run['port']:<6} {run['status']:<12} "
-                  f"{run['output_bytes']:>6}  {tag}{first}")
+        runs = completed_scan.get(tool_id, [])
 
-    print(f"\n{'='*100}")
-    print(f"Missing tools:     {len(missing)}")
-    print(f"Config errors:     {len(conf_errors)}")
-    print(f"Empty outputs:     {len(empty_runs)}")
-    print(f"Total tool runs:   {sum(len(v) for v in completed_scan.values())}")
-    if conf_errors:
-        print(f"\nCONFIG ERRORS:")
-        for t, p, pat in conf_errors:
-            print(f"  {t} port={p}: {pat}")
+        # Check 1: triggered
+        if not runs:
+            failures.append((tool_id, 'not-triggered',
+                             'scheduler never ran this tool — service-name mismatch?', ''))
+            continue
+        terminal = [r for r in runs if r['status'] in
+                    ('Finished', 'Killed', 'Crashed', 'Interactive')]
+        if not terminal:
+            failures.append((tool_id, 'not-terminal',
+                             f"statuses: {[r['status'] for r in runs]}", ''))
+            continue
+
+        # Check 2: no config errors
+        for run in runs:
+            has_err, pat = _is_conf_error(run['output'])
+            if has_err:
+                snippet = run['output'][:200].replace('\n', ' ')
+                failures.append((tool_id, 'config-error',
+                                 f"pattern '{pat}' in output (port {run['port']})", snippet))
+
+        # Check 3: expected output pattern
+        if tool_id in TOOL_EXPECTED_OUTPUT and tool_id not in INTERACTIVE_TOOLS:
+            pattern, description = TOOL_EXPECTED_OUTPUT[tool_id]
+            if pattern:
+                matched = any(pattern.lower() in r['output'].lower() for r in runs)
+                if not matched:
+                    best = max(runs, key=lambda r: r['output_bytes'])
+                    snippet = best['output'][:200].replace('\n', ' ')
+                    failures.append((tool_id, 'expected-output',
+                                     f"'{pattern}' not found ({description}), "
+                                     f"port={best['port']} {best['output_bytes']}b",
+                                     snippet))
+
+    # ── Per-tool table ────────────────────────────────────────────────────
+    tty()
+    tty('=' * W)
+    tty(f"VICTIM TOOL EXECUTION REPORT — {VICTIM_IP}")
+    tty(f"{len(ALL_SCHEDULER_TOOLS)} scheduler tools  |  "
+        f"{sum(len(v) for v in completed_scan.values())} total processes")
+    tty('=' * W)
+    tty(f"  {'Tool':<36} {'Trg':>3}  {'Cfg':>3}  {'Out':>3}  {'Bytes':>6}  Status")
+    tty(f"  {'-'*36}  ---  ---  ---  ------  ------")
+
+    failed_tools = {f[0] for f in failures}
+    for tool_id in sorted(ALL_SCHEDULER_TOOLS):
+        runs = completed_scan.get(tool_id, [])
+        if not runs:
+            tty(f"  {tool_id:<36}  {'✗':>3}   {'—':>3}   {'—':>3}  {'—':>6}  MISSING")
+            continue
+        best = max(runs, key=lambda r: r['output_bytes'])
+        trg = '✓' if any(r['status'] in ('Finished','Killed','Crashed','Interactive')
+                          for r in runs) else '✗'
+        cfg_errs = [f for f in failures if f[0] == tool_id and f[1] == 'config-error']
+        cfg = '✗' if cfg_errs else '✓'
+        if tool_id in TOOL_EXPECTED_OUTPUT and TOOL_EXPECTED_OUTPUT[tool_id][0] \
+                and tool_id not in INTERACTIVE_TOOLS:
+            out_errs = [f for f in failures if f[0] == tool_id and f[1] == 'expected-output']
+            out = '✗' if out_errs else '✓'
+        else:
+            out = '—'
+        marker = ' ◄' if tool_id in failed_tools else ''
+        tty(f"  {tool_id:<36}  {trg:>3}  {cfg:>3}  {out:>3}  "
+            f"{best['output_bytes']:>6}  {best['status']}{marker}")
+
+    # ── Summary + failure details ─────────────────────────────────────────
+    tty()
+    tty('=' * W)
+    total  = len(ALL_SCHEDULER_TOOLS)
+    n_fail = len(failed_tools)
+    n_pass = total - n_fail
+    tty(f"  {'✓ PASS':<10} {n_pass:>3}  of {total} tools")
+    tty(f"  {'✗ FAIL':<10} {n_fail:>3}  of {total} tools")
+
+    if failures:
+        tty()
+        tty('FAILURES:')
+        tty('-' * W)
+        for tool_id, check, detail, snippet in failures:
+            tty(f"  ✗ {tool_id}  [{check}]")
+            tty(f"      {detail}")
+            if snippet:
+                tty(f"      output: {snippet[:120]}")
+    tty('=' * W)
+    tty()
     # Always pass — this is a reporting test
