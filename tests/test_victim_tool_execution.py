@@ -372,9 +372,8 @@ def victim_services():
                    capture_output=True)
 
     real_service_ports = {
-        'nginx':        [80, 443, 4848, 8080, 8443],
+        'nginx':        [80],
         'mariadb':      [3306],
-        'postgresql':   [5432],
         'redis-server': [6379],
         'smbd':         [139, 445],
         'snmpd':        [],
@@ -400,15 +399,20 @@ def victim_services():
         111:  '',
         135:  '',
         389:  '',
+        443:  '',   # HTTPS — nginx default only listens on 80; socat provides the port
         1433: '',
         1521: '',
         1524: 'root@victim:~# ',
         2049: '',
         2121: '220 CCProxy FTP Service Ready\\r\\n',
         3632: '',
+        4848: '',   # GlassFish admin — socat placeholder
+        5432: '',   # postgresql — already installed via metasploit-framework
         5900: 'RFB 003.008\\n',
         6000: '',
         6667: ':victim.test NOTICE AUTH :*** Looking up your hostname...\\r\\n',
+        8080: '',   # HTTP alternate — socat placeholder
+        8443: '',   # HTTPS alternate — socat placeholder
     }
     for port, banner in socat_ports.items():
         listeners[port] = _socat_listen(port, banner)
