@@ -654,7 +654,8 @@ run_pytest() {
             [[ $attempt -gt 1 ]] && flaky=true
             break
         fi
-        # Still failing — try again (up to 3 total)
+        # Still failing — show debug info and try again (up to 3 total)
+        printf "        ${YELLOW}rc=%d p=%s f=%s sl=[%s]${NC}\n" "$rc" "$p" "$f" "${sl:0:80}" >&2
     done
 
     # ── Report ────────────────────────────────────────────────────────────────
