@@ -177,12 +177,6 @@ _install_pkg() {
 # =============================================================================
 step "1/10  apt-get update + install packages"
 
-# Hold postgresql for the ENTIRE install to prevent pg_upgradecluster from
-# showing its blocking whiptail dialog. Any apt-get install call can trigger
-# a postgresql upgrade as a side-effect of dependency resolution — not just
-# explicit postgresql installs. The hold must cover every apt-get in this script.
-sudo apt-mark hold postgresql postgresql-common "postgresql-1[0-9]" 2>/dev/null || true
-
 info "Updating package index…"
 sudo apt-get update -q
 ok "Package index updated"
@@ -250,26 +244,11 @@ sudo apt-get install -y --ignore-missing \
 # Victim test infrastructure — servers that test_victim_tool_execution.py scans
 # against locally.  These are NOT Legion runtime deps; they are the target services
 # that let the test verify every scheduler tool actually runs and produces output.
-info "  Installing victim test server dependencies (nginx, mariadb, redis, postgresql, samba, snmpd, xrdp)…"
+info "  Installing victim test server dependencies (nginx, mariadb, redis, samba, snmpd, xrdp)…"
 if sudo apt-get install -y nginx mariadb-server redis-server samba snmpd xrdp; then
-    ok "  Victim test server packages installed (nginx mariadb redis samba snmpd xrdp)"
+    ok "  Victim test server packages installed"
 else
     warn "  Some victim test server packages failed — victim tool execution test may skip"
-fi
-
-# Install postgresql only if no version is already present.
-# Fresh install has no existing cluster so pg_upgradecluster is never called.
-if dpkg -l postgresql 2>/dev/null | grep -q "^ii"; then
-    ok "  postgresql already installed — skipping"
-elif dpkg -l | grep -qP '^ii\s+postgresql-[0-9]'; then
-    ok "  postgresql server already installed — skipping"
-else
-    # Temporarily release the hold to install postgresql fresh (no existing cluster = no dialog)
-    sudo apt-mark unhold postgresql postgresql-common 2>/dev/null || true
-    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y postgresql \
-        && ok "  postgresql installed" \
-        || warn "  postgresql install failed — victim test may skip postgres tools"
-    sudo apt-mark hold postgresql postgresql-common 2>/dev/null || true
 fi
 
 ok "Security tool packages done (some may be skipped on non-Kali)"
@@ -1055,7 +1034,7 @@ elif _on_kali; then
     )
     _missing_tools=()
     # Check victim server packages via dpkg (binaries in /usr/sbin, not on PATH)
-    for _pkg in mariadb-server postgresql samba snmpd xrdp; do
+    for _pkg in mariadb-server samba snmpd xrdp; do
         if ! dpkg -l "$_pkg" 2>/dev/null | grep -q "^ii"; then
             warn "  Victim test server package not installed: $_pkg"
             warn "  Run: sudo apt-get install -y $_pkg"
@@ -1284,9 +1263,6 @@ echo ""
 echo -e "  Full install log saved to: ${INSTALL_LOG}"
 
 set -e
-
-# Release the postgresql hold now that all apt-get calls are complete
-sudo apt-mark unhold postgresql postgresql-common "postgresql-1[0-9]" 2>/dev/null || true
 
 # =============================================================================
 # Done
