@@ -42,6 +42,21 @@ from pathlib import Path
 import pytest
 import requests
 
+
+# ---------------------------------------------------------------------------
+# Progress reporter — writes to /dev/tty so output is visible even when
+# pytest captures stdout/stderr (e.g. run_tests.sh pipes output through $(...))
+# ---------------------------------------------------------------------------
+
+def _tty_print(msg: str):
+    """Write a progress line directly to the terminal, bypassing pytest capture."""
+    try:
+        with open('/dev/tty', 'w') as tty:
+            tty.write(f'\r\033[K  [victim] {msg}\n')
+            tty.flush()
+    except OSError:
+        pass  # headless / no tty — silently skip
+
 # =============================================================================
 # Read ALL tool IDs from SchedulerSettings at module-import time so pytest
 # can use them in @pytest.mark.parametrize at collection time.
@@ -331,13 +346,38 @@ def _wait_host_appears(url: str, host_ip: str, timeout: int = 30):
 def _wait_all_done(base_url: str, host_ip: str, timeout: int = TIMEOUT_TOOLS) -> list:
     """Poll until all processes for host_ip are in a terminal state. Return them all."""
     deadline = time.time() + timeout
+    t_start = time.time()
+    last_report = 0.0
+    REPORT_INTERVAL = 15  # seconds between progress lines
+
     while time.time() < deadline:
         try:
             snap = requests.get(f'{base_url}/api/snapshot', timeout=10).json()
             host_procs = [p for p in snap.get('processes', [])
                           if p.get('hostIp') == host_ip]
-            pending = [p for p in host_procs if p.get('status') in ('Running', 'Waiting')]
+            non_nmap = [p for p in host_procs if p.get('name') != 'nmap']
+            running  = [p for p in non_nmap if p.get('status') == 'Running']
+            waiting  = [p for p in non_nmap if p.get('status') == 'Waiting']
+            done     = [p for p in non_nmap if p.get('status') in
+                        ('Finished', 'Killed', 'Crashed', 'Interactive')]
+
+            now = time.time()
+            if now - last_report >= REPORT_INTERVAL and non_nmap:
+                elapsed = int(now - t_start)
+                running_names = ' '.join(p.get('name', '?') for p in running[:6])
+                if len(running) > 6:
+                    running_names += f' +{len(running)-6} more'
+                status = (f'{elapsed//60}:{elapsed%60:02d} elapsed — '
+                          f'{len(done)} done, {len(running)} running, {len(waiting)} waiting')
+                if running_names:
+                    status += f' | running: {running_names}'
+                _tty_print(status)
+                last_report = now
+
+            pending = running + waiting
             if host_procs and not pending:
+                elapsed = int(time.time() - t_start)
+                _tty_print(f'All {len(non_nmap)} tools finished in {elapsed//60}:{elapsed%60:02d}')
                 return host_procs
         except Exception:
             pass
@@ -379,6 +419,7 @@ def victim_services():
         'snmpd':        [],
         'xrdp':         [3389],
     }
+    _tty_print(f'Starting services: {" ".join(real_service_ports)} ...')
     for svc in real_service_ports:
         subprocess.run(['systemctl', 'start', svc], capture_output=True, timeout=15)
 
@@ -388,6 +429,7 @@ def victim_services():
     except RuntimeError as e:
         pytest.skip(f"Real service ports not ready: {e} — "
                     f"install nginx/mariadb/redis-server and ensure they start cleanly")
+    _tty_print('Real services ready.')
 
     listeners = {}
     socat_ports = {
@@ -420,7 +462,9 @@ def victim_services():
 
     new_socat = [p for p in socat_ports if isinstance(p, int) and listeners.get(p) is not None]
     if new_socat:
+        _tty_print(f'Waiting for {len(new_socat)} socat listeners ...')
         _wait_ports_open(new_socat, timeout=15)
+    _tty_print(f'All services ready — {len(socat_ports)} socat ports + real nginx/mariadb/redis/smb/snmp/xrdp')
 
     yield listeners
 
@@ -476,6 +520,7 @@ def completed_scan(srv) -> dict:
     Returns: {tool_id: [{'port', 'status', 'output', 'output_bytes'}, ...]}
     One tool_id may have multiple entries (same tool on different ports).
     """
+    _tty_print(f'Importing victim XML for {VICTIM_IP} ...')
     with tempfile.NamedTemporaryFile(suffix='.xml', mode='w', delete=False) as f:
         f.write(VICTIM_XML); xml_path = f.name
     try:
@@ -486,11 +531,14 @@ def completed_scan(srv) -> dict:
         os.unlink(xml_path)
 
     _wait_host_appears(srv, VICTIM_IP, timeout=30)
+    _tty_print(f'Host {VICTIM_IP} appeared. Waiting for {len(ALL_SCHEDULER_TOOLS)} tools to finish (up to {TIMEOUT_TOOLS//60} min) ...')
     all_procs = _wait_all_done(srv, VICTIM_IP, timeout=TIMEOUT_TOOLS)
     tool_procs = [p for p in all_procs if p.get('name') not in ('nmap',)]
+    _tty_print(f'Scan complete — {len(tool_procs)} tool processes finished. Collecting outputs ...')
 
     # Fetch outputs via API — same path the UI uses
     results: dict = {}
+    _tty_print(f'Fetching output for {len(tool_procs)} processes ...')
     for proc in tool_procs:
         pid = proc['id']
         name = proc.get('name', '')
