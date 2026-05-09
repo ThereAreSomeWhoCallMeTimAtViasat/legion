@@ -417,7 +417,7 @@ class TestNucleiSetup:
     def test_nuclei_conf_path_exists(self):
         """The -t path in legion.conf nuclei commands must exist on disk."""
         raw = _conf_raw()
-        t_paths = re.findall(r'nuclei\b[^,\n"]*-t\s+(\S+)', raw)
+        t_paths = re.findall(r'nuclei\b[^,\n"]*-t\s+([^\s,]+)', raw)
         assert t_paths, (
             'No nuclei -t argument in conf — nuclei will fail as root.\n'
             'Fix: add -t /home/kali/.local/nuclei-templates/http to nuclei commands'
