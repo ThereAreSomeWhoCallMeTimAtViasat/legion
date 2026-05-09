@@ -245,13 +245,20 @@ sudo apt-get install -y --ignore-missing \
 # against locally.  These are NOT Legion runtime deps; they are the target services
 # that let the test verify every scheduler tool actually runs and produces output.
 info "  Installing victim test server dependencies (nginx, mariadb, redis, postgresql, samba, snmpd, xrdp)…"
-# DEBIAN_FRONTEND=noninteractive suppresses the PostgreSQL cluster-upgrade dialog
-# (pg_dropcluster / "Upgrade cluster 17/main to 18?") which blocks stdin
-# and causes Ctrl+C to kill the entire install process.
-if DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
-    nginx mariadb-server redis-server postgresql \
-    samba snmpd xrdp; then
-    ok "  Victim test server packages installed"
+# postgresql is installed SEPARATELY and only when no version is already present.
+# Installing the 'postgresql' metapackage when an older cluster exists triggers
+# pg_upgradecluster which shows a whiptail dialog ("Upgrade cluster 17/main to 18?")
+# that blocks stdin permanently — DEBIAN_FRONTEND=noninteractive has no effect on it
+# because pg_upgradecluster calls whiptail directly, not through debconf.
+# The victim test only needs *a* postgres server on port 5432; upgrading is never required.
+if dpkg -l | grep -qE '^ii\s+postgresql(-[0-9]+)?\s'; then
+    ok "  postgresql already installed — skipping to avoid cluster-upgrade dialog"
+else
+    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y postgresql 2>&1         && ok "  postgresql installed"         || warn "  postgresql install failed — victim test may skip postgres tools"
+fi
+# The remaining server packages are safe to install non-interactively
+if sudo apt-get install -y nginx mariadb-server redis-server samba snmpd xrdp; then
+    ok "  Victim test server packages installed (nginx mariadb redis samba snmpd xrdp)"
 else
     warn "  Some victim test server packages failed — victim tool execution test may skip"
 fi
