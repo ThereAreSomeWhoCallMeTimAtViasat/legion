@@ -422,12 +422,15 @@ sudo "${VENV_PY}" -m pip install --quiet --upgrade pip 2>/dev/null || true
 info "Installing Flask + Qt6 + shared + AI dependencies into venv…"
 echo ""
 
-if sudo "${VENV_PIP}" install \
+PIP_OUTPUT=$(sudo "${VENV_PIP}" install \
         --root-user-action=ignore \
-        -r requirements.txt 2>&1 \
-        | grep -E "^Collecting|Installing collected|Successfully installed|Successfully uninstalled|error:|ERROR:"; then
+        -r requirements.txt 2>&1)
+PIP_RC=$?
+echo "$PIP_OUTPUT" | grep -E "^Collecting|Installing collected|Successfully installed|error:|ERROR:|Requirement already" || true
+if [[ $PIP_RC -eq 0 ]]; then
     ok "requirements.txt installed into ${LEGION_VENV}"
 else
+    echo "$PIP_OUTPUT" | tail -20
     die "pip install into venv failed.\nRun manually:\n  sudo ${VENV_PIP} install -r requirements.txt"
 fi
 
