@@ -50,13 +50,16 @@ import requests
 # ---------------------------------------------------------------------------
 
 def _tty_print(msg: str):
-    """Write a progress line directly to the terminal, bypassing pytest capture."""
+    """Write a progress line to /dev/tty (bypasses pytest capture) and stdout."""
+    line = f'  [victim] {msg}\n'
     try:
         with open('/dev/tty', 'w') as tty:
-            tty.write(f'\r\033[K  [victim] {msg}\n')
+            tty.write(f'\r\033[K{line}')
             tty.flush()
     except OSError:
-        pass  # headless / no tty — silently skip
+        pass  # headless / no tty
+    # Also print to stdout so output is visible when piped (tee, grep, etc.)
+    print(line, end='', flush=True)
 
 # =============================================================================
 # Read ALL tool IDs from SchedulerSettings at module-import time so pytest
