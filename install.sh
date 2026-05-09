@@ -245,7 +245,10 @@ sudo apt-get install -y --ignore-missing \
 # against locally.  These are NOT Legion runtime deps; they are the target services
 # that let the test verify every scheduler tool actually runs and produces output.
 info "  Installing victim test server dependencies (nginx, mariadb, redis, postgresql, samba, snmpd, xrdp)…"
-if sudo apt-get install -y \
+# DEBIAN_FRONTEND=noninteractive suppresses the PostgreSQL cluster-upgrade dialog
+# (pg_dropcluster / "Upgrade cluster 17/main to 18?") which blocks stdin
+# and causes Ctrl+C to kill the entire install process.
+if DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
     nginx mariadb-server redis-server postgresql \
     samba snmpd xrdp; then
     ok "  Victim test server packages installed"
