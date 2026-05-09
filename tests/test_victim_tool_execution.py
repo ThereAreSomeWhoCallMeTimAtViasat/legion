@@ -212,7 +212,7 @@ TOOL_EXPECTED_OUTPUT = {
 
     # ── Fake/socat services — tool startup proves binary works ─────────────────
     'dnsrecon':            ('Starting enumeration', 'dnsrecon printed enumeration status line'),
-    'nbtscan':             ('netbios name table', 'nbtscan queried NetBIOS names for host'),
+    'nbtscan':             ('Doing NBT name scan', 'nbtscan ran and attempted NetBIOS query'),
     'ftp-default':          ('hydra v', 'Hydra version header'),
     'telnet-default':       ('hydra v', 'Hydra version header'),
     'mssql-default':        ('hydra v', 'Hydra version header'),
@@ -473,17 +473,59 @@ def victim_services():
         6000: '',
         6667: ':victim.test NOTICE AUTH :*** Looking up your hostname...\\r\\n',
         8080: '',   # HTTP alternate — socat placeholder
-        8443: '',   # HTTPS alternate — socat placeholder
+        # 8443 handled separately below with TLS (plain socat breaks feroxbuster-https/pd-httpx-https)
     }
     for port, banner in socat_ports.items():
         listeners[port] = _socat_listen(port, banner)
     listeners['500/udp'] = _socat_listen(500, udp=True)
 
-    new_socat = [p for p in socat_ports if isinstance(p, int) and listeners.get(p) is not None]
+    # ── TLS listener on 8443 ─────────────────────────────────────────────
+    # feroxbuster-https and pd-httpx-https do TLS negotiation — plain socat
+    # gets an immediate connection error. Use socat OPENSSL-LISTEN with a
+    # self-signed cert so clients can complete the handshake.
+    import tempfile as _tempfile
+    _cert_dir = _tempfile.mkdtemp(prefix='legion-victim-cert-')
+    _cert_pem = os.path.join(_cert_dir, 'victim.pem')
+    _cert_ok = subprocess.run(
+        ['openssl', 'req', '-x509', '-newkey', 'rsa:2048',
+         '-keyout', _cert_pem, '-out', _cert_pem,
+         '-days', '1', '-nodes', '-subj', '/CN=127.42.0.1'],
+        capture_output=True).returncode == 0
+    if _cert_ok:
+        listeners[8443] = subprocess.Popen(
+            ['socat',
+             f'OPENSSL-LISTEN:8443,cert={_cert_pem},verify=0,reuseaddr,fork',
+             'PIPE'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _tty_print('TLS listener on 8443 (self-signed cert)')
+    else:
+        listeners[8443] = _socat_listen(8443, '')
+        _tty_print('WARNING: openssl cert generation failed — 8443 is plain TCP')
+
+    # ── Redis relay 127.42.0.1:6379 → 127.0.0.1:6379 ────────────────────
+    # Redis binds to 127.0.0.1 only; tools connect to VICTIM_IP (127.42.0.1).
+    # Relay lets redis-cli and other redis tools reach the real server.
+    listeners['redis-relay'] = subprocess.Popen(
+        ['socat',
+         'TCP4-LISTEN:6379,bind=127.42.0.1,reuseaddr,fork',
+         'TCP4:127.0.0.1:6379'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _tty_print('Redis relay 127.42.0.1:6379 → 127.0.0.1:6379')
+
+    new_socat = [p for p in list(socat_ports.keys()) + [8443]
+                 if isinstance(p, int) and listeners.get(p) is not None]
     if new_socat:
         _tty_print(f'Waiting for {len(new_socat)} socat listeners ...')
         _wait_ports_open(new_socat, timeout=15)
-    _tty_print(f'All services ready — {len(socat_ports)} socat ports + real nginx/mariadb/redis/smb/snmp/xrdp')
+    # Wait for redis relay to bind on 127.42.0.1:6379 specifically
+    _deadline = time.time() + 10
+    while time.time() < _deadline:
+        try:
+            s = socket.socket(); s.settimeout(1)
+            s.connect((VICTIM_IP, 6379)); s.close(); break
+        except OSError:
+            time.sleep(0.2)
+    _tty_print(f'All services ready — {len(new_socat)} socat ports + real nginx/mariadb/redis/smb/snmp/xrdp')
 
     yield listeners
 
@@ -491,6 +533,8 @@ def victim_services():
         if handle is not None:
             try: handle.kill()
             except Exception: pass
+    import shutil as _shutil
+    _shutil.rmtree(_cert_dir, ignore_errors=True)
 
 
 @pytest.fixture(scope='module')
