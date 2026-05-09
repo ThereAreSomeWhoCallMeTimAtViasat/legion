@@ -503,7 +503,11 @@ def victim_services():
     #   GET anything else     → 404  (avoids wildcard detection which suppresses output)
     import ssl as _ssl
     import tempfile as _tempfile
-    from http.server import ThreadingHTTPServer as _HTTPServer, BaseHTTPRequestHandler as _Handler
+    from http.server import ThreadingHTTPServer as _ThreadHTTPServer, BaseHTTPRequestHandler as _Handler
+
+    class _HTTPServer(_ThreadHTTPServer):
+        def handle_error(self, request, client_address):
+            pass  # suppress stderr tracebacks from feroxbuster connection resets
 
     _cert_dir = _tempfile.mkdtemp(prefix='legion-victim-cert-')
     _key_pem  = os.path.join(_cert_dir, 'victim.key')
