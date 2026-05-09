@@ -482,28 +482,45 @@ def victim_services():
         listeners[port] = _socat_listen(port, banner)
     listeners['500/udp'] = _socat_listen(500, udp=True)
 
-    # ── TLS listener on 8443 ─────────────────────────────────────────────
-    # feroxbuster-https and pd-httpx-https do TLS negotiation — plain socat
-    # gets an immediate connection error. Use socat OPENSSL-LISTEN with a
-    # self-signed cert so clients can complete the handshake.
+    # ── HTTPS server on 8443 ─────────────────────────────────────────────
+    # feroxbuster-https and pd-httpx-https do real TLS negotiation — socat
+    # OPENSSL-LISTEN doesn't produce output those tools accept. Use Python's
+    # ssl module to serve a proper HTTPS server:
+    #   GET /  or /index.html → 200  (feroxbuster finds it, prints https:// URL)
+    #   GET anything else     → 404  (avoids wildcard detection which suppresses output)
+    import ssl as _ssl
     import tempfile as _tempfile
+    from http.server import HTTPServer as _HTTPServer, BaseHTTPRequestHandler as _Handler
+
     _cert_dir = _tempfile.mkdtemp(prefix='legion-victim-cert-')
-    _cert_pem = os.path.join(_cert_dir, 'victim.pem')
-    _cert_ok = subprocess.run(
+    _key_pem  = os.path.join(_cert_dir, 'victim.key')
+    _cert_pem = os.path.join(_cert_dir, 'victim.crt')
+    subprocess.run(
         ['openssl', 'req', '-x509', '-newkey', 'rsa:2048',
-         '-keyout', _cert_pem, '-out', _cert_pem,
+         '-keyout', _key_pem, '-out', _cert_pem,
          '-days', '1', '-nodes', '-subj', '/CN=127.42.0.1'],
-        capture_output=True).returncode == 0
-    if _cert_ok:
-        listeners[8443] = subprocess.Popen(
-            ['socat',
-             f'OPENSSL-LISTEN:8443,cert={_cert_pem},verify=0,reuseaddr,fork',
-             'PIPE'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _tty_print('TLS listener on 8443 (self-signed cert)')
-    else:
+        capture_output=True)
+
+    class _HttpsHandler(_Handler):
+        def do_GET(self):
+            if self.path in ('/', '/index.html'):
+                self.send_response(200); self.end_headers()
+                self.wfile.write(b'<html>OK</html>\n')
+            else:
+                self.send_response(404); self.end_headers()
+        def log_message(self, *a): pass
+
+    try:
+        _ctx = _ssl.create_default_context(_ssl.Purpose.CLIENT_AUTH)
+        _ctx.load_cert_chain(_cert_pem, _key_pem)
+        _https_srv = _HTTPServer(('0.0.0.0', 8443), _HttpsHandler)
+        _https_srv.socket = _ctx.wrap_socket(_https_srv.socket, server_side=True)
+        threading.Thread(target=_https_srv.serve_forever, daemon=True).start()
+        listeners['8443-https'] = _https_srv
+        _tty_print('Python HTTPS server on 8443 (self-signed cert)')
+    except Exception as e:
         listeners[8443] = _socat_listen(8443, '')
-        _tty_print('WARNING: openssl cert generation failed — 8443 is plain TCP')
+        _tty_print(f'WARNING: HTTPS server failed ({e}) — 8443 is plain TCP')
 
     # ── Redis relay 127.42.0.1:6379 → 127.0.0.1:6379 ────────────────────
     # Redis binds to 127.0.0.1 only; tools connect to VICTIM_IP (127.42.0.1).
@@ -515,11 +532,12 @@ def victim_services():
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _tty_print('Redis relay 127.42.0.1:6379 → 127.0.0.1:6379')
 
-    new_socat = [p for p in list(socat_ports.keys()) + [8443]
+    new_socat = [p for p in socat_ports
                  if isinstance(p, int) and listeners.get(p) is not None]
     if new_socat:
         _tty_print(f'Waiting for {len(new_socat)} socat listeners ...')
         _wait_ports_open(new_socat, timeout=15)
+    _wait_ports_open([8443], timeout=10)   # wait for Python HTTPS server
     # Wait for redis relay to bind on 127.42.0.1:6379 specifically
     _deadline = time.time() + 10
     while time.time() < _deadline:
@@ -534,7 +552,9 @@ def victim_services():
 
     for handle in listeners.values():
         if handle is not None:
-            try: handle.kill()
+            try: handle.shutdown()          # HTTPServer
+            except Exception: pass
+            try: handle.kill()              # subprocess.Popen
             except Exception: pass
     import shutil as _shutil
     _shutil.rmtree(_cert_dir, ignore_errors=True)
