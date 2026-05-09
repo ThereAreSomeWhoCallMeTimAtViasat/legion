@@ -80,25 +80,26 @@ def _victim_prereq_reason() -> str:
         return f'legion.conf not found at {conf} — run install.sh first'
     if not ALL_SCHEDULER_TOOLS:
         return 'No [SchedulerSettings] tools found in legion.conf'
-    # Try to start required services; probe ports to confirm they're reachable
+    # Try to start required services; probe ports on 127.0.0.1 (not VICTIM_IP)
+    # because mariadb and redis bind to 127.0.0.1 only, not 0.0.0.0.
+    # The fixture handles the VICTIM_IP loopback alias and service routing.
     subprocess.run(['ip', 'addr', 'add', f'{VICTIM_IP}/8', 'dev', 'lo'],
                    capture_output=True)
     for svc, port in [('nginx', 80), ('mariadb', 3306), ('redis-server', 6379)]:
         subprocess.run(['systemctl', 'start', svc], capture_output=True, timeout=10)
-    # Give services a moment to bind
     time.sleep(2)
     missing = []
     for svc, port in [('nginx', 80), ('mariadb', 3306), ('redis-server', 6379)]:
         try:
             s = socket.socket(); s.settimeout(1)
-            s.connect((VICTIM_IP, port)); s.close()
+            s.connect(('127.0.0.1', port)); s.close()
         except OSError:
             missing.append(f'{svc}:{port}')
     if missing:
-        return (f"Required services not reachable on {VICTIM_IP}: {missing} — "
+        return (f"Required services not reachable on 127.0.0.1: {missing} — "
                 f"victim test needs nginx/mariadb/redis-server running. "
                 f"Install with: sudo apt-get install -y nginx mariadb-server redis-server")
-    return ''  # all good''
+    return ''
 
 _SKIP_REASON = _victim_prereq_reason()
 pytestmark = pytest.mark.skipif(bool(_SKIP_REASON), reason=_SKIP_REASON or 'prereqs ok')
