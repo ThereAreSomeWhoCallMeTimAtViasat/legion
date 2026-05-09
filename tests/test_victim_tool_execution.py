@@ -29,6 +29,7 @@ Integrated into run_tests.sh --selenium section (PORT=5101).
 """
 
 import configparser
+import concurrent.futures
 import csv
 import os
 import re
@@ -536,11 +537,15 @@ def completed_scan(srv) -> dict:
     tool_procs = [p for p in all_procs if p.get('name') not in ('nmap',)]
     _tty_print(f'Scan complete — {len(tool_procs)} tool processes finished. Collecting outputs ...')
 
-    # Fetch outputs via API — same path the UI uses
+    # Fetch outputs in parallel — sequential was ~0.7s × N processes = 70s+ silence
     results: dict = {}
-    _tty_print(f'Fetching output for {len(tool_procs)} processes ...')
-    for proc in tool_procs:
-        pid = proc['id']
+    total = len(tool_procs)
+    done_count = [0]
+    lock = threading.Lock()
+    _tty_print(f'Fetching output for {total} processes (parallel) ...')
+
+    def _fetch(proc):
+        pid  = proc['id']
         name = proc.get('name', '')
         try:
             ro = requests.get(f'{srv}/api/processes/{pid}/output?max_chars=10000',
@@ -548,13 +553,21 @@ def completed_scan(srv) -> dict:
             output = ANSI.sub('', ro.get('output_chunk') or ro.get('output') or '')
         except Exception:
             output = ''
-        entry = {
+        with lock:
+            done_count[0] += 1
+            n = done_count[0]
+            if n % 10 == 0 or n == total:
+                _tty_print(f'Fetched {n}/{total} process outputs ...')
+        return name, {
             'port':         str(proc.get('port', '')),
             'status':       proc.get('status', ''),
             'output':       output,
             'output_bytes': len(output),
         }
-        results.setdefault(name, []).append(entry)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        for name, entry in pool.map(_fetch, tool_procs):
+            results.setdefault(name, []).append(entry)
 
     return results
 
