@@ -2773,6 +2773,11 @@ class WebController:
                 log.info(f"[Chain{stage}] Stale generation ({generation} vs {current_gen}) after wait for {host_arg} — exiting")
                 return
 
+            # Check if host was deleted while this stage was running
+            if host_arg in getattr(self, '_deleted_hosts', set()):
+                log.info(f"[Chain{stage}] Host {host_arg} deleted — skipping import")
+                return
+
             processRepo = self.logic.activeProject.repositoryContainer.processRepository
             if processRepo.isKilledProcess(str(proc_id)):
                 log.info(f"[Chain{stage}] Stage {stage} was killed")
@@ -2836,6 +2841,9 @@ class WebController:
                 self._append_to_host_notes(host_arg, _deferred_note)
             except Exception as _ne:
                 log.warning(f"[WebController] Could not write deferred scan notes for {host_arg}: {_ne}")
+        if host_arg in getattr(self, '_deleted_hosts', set()):
+            log.info(f"[WebController] _stage_completed: host {host_arg} deleted — skipping NSE launch")
+            return
         if all_done and nse_stage:
             nse_stage_num, nse_values = nse_stage
             self._launch_nse_stage(host_arg, nse_stage_num, nse_values,
@@ -2845,6 +2853,9 @@ class WebController:
         """Query all discovered open ports for host, then run NSE against them.
         Runs after all PORTS stages complete so vulners sees every discovered port.
         generation: if a new scan supersedes this one, _wait_nse exits without importing."""
+        if host_arg in getattr(self, '_deleted_hosts', set()):
+            log.info(f"[WebController] _launch_nse_stage: host {host_arg} deleted — skipping")
+            return
         from app.timing import getTimestamp
         import sqlite3 as _sq3
 
@@ -3000,6 +3011,11 @@ class WebController:
                 current_gen = self._scan_generation.get(host_arg, 0)
             if current_gen != generation:
                 log.info(f"[NSE] Stale generation ({generation} vs {current_gen}) after wait for {host_arg} — exiting")
+                return
+
+            # Check if host was deleted while NSE was running
+            if host_arg in getattr(self, '_deleted_hosts', set()):
+                log.info(f"[NSE] Host {host_arg} deleted — skipping import")
                 return
 
             processRepo = self.logic.activeProject.repositoryContainer.processRepository
