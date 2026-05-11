@@ -854,3 +854,30 @@ class TestMatchNavigation:
         assert after != before, (
             f"Upper panel .match-current did not move.\n"
             f"  Before={before}  After={after}")
+
+    # ── post-cache regression test (v10.204 _dynOutputCache) ─────────────
+
+    def test_lower_arrows_work_after_cache_rebuild(self, drv, srv, match_setup):
+        """Match nav arrows must still work after a poll cycle rebuilds from cache.
+
+        v10.204 added _dynOutputCache which restores innerHTML from cache on
+        every poll. The cached path must re-wire .match-prev/.match-next click
+        listeners — without this, the arrows stop working after the first render.
+        """
+        _, proc_id = self._load_lower(drv, srv, 'nav-cache1')
+        # Verify arrows work on first render (fetch path)
+        counter_before = self._counter(drv)
+        self._click_next(drv)
+        counter_after = self._counter(drv)
+        assert counter_after != counter_before, "Arrows should work on first render"
+        # Wait for 2+ snapshot polls (each 1.5s) — the cache path runs on rebuild
+        time.sleep(4.0)  # DETERMINISM-EXEMPT: must survive multiple cache-rebuild cycles
+        # Verify arrows STILL work after cache rebuild
+        counter_pre = self._counter(drv)
+        self._click_next(drv)
+        counter_post = self._counter(drv)
+        assert counter_post != counter_pre, (
+            "Match nav arrows stopped working after cache rebuild.\n"
+            f"  Pre-click counter:  {counter_pre}\n"
+            f"  Post-click counter: {counter_post}\n"
+            "  This means _dynOutputCache path did not re-wire button listeners.")
