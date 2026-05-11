@@ -3622,7 +3622,6 @@ document.addEventListener('DOMContentLoaded', function() {
             _parsed = parseConf(text);
             _activeSection = null;
             _visitedSections = [];   /* reset visit tracking for this session */
-            _clearDirty();           /* reset dirty flag on each open */
 
             /* Build section tabs */
             var tabsEl = $('easy-section-tabs');
