@@ -270,12 +270,12 @@ class TestNewToolsInContextMenus:
         assert 'pd-httpx' in tool_ids or 'pd-httpx-https' in tool_ids, \
             f"pd-httpx not in automatedAttacks. Found: {sorted(tool_ids)}"
 
-    def test_wig_absent_from_scheduler_settings(self, srv):
-        """wig must NOT be in SchedulerSettings — crashes Python 3.13+."""
+    def test_wig_in_scheduler_settings(self, srv):
+        """wig must be in SchedulerSettings (auto-trigger on http services)."""
         attacks = srv['wc'].settings.automatedAttacks or []
         tool_ids = {str(a[0]).strip() for a in attacks}
-        assert 'wig' not in tool_ids, \
-            f"wig wrongly in automatedAttacks (crashes Python 3.13+). Found: {sorted(tool_ids)}"
+        assert 'wig' in tool_ids, \
+            f"wig not found in automatedAttacks. Found: {sorted(tool_ids)}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

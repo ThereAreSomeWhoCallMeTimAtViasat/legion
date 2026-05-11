@@ -261,17 +261,13 @@ class TestConfIntegrity:
             "kerbrute must be configured in scanning mode (userenum only)."
         )
 
-    def test_wig_absent_from_scheduler_settings(self):
-        """
-        Fix-5: wig must not be in [SchedulerSettings].
-        wig crashes Python 3.13+ with AttributeError (html.parser API change).
-        """
+    def test_wig_in_scheduler_settings(self):
+        """wig must be in [SchedulerSettings] (auto-trigger on http services)."""
         parser = _conf_parser()
         scheduler = _scheduler_settings(parser)
-        assert 'wig' not in scheduler, (
-            'wig is in [SchedulerSettings] but crashes Python 3.13+ '
-            "(AttributeError: 'HTMLStripper' has no attribute 'scripting'). "
-            'Remove it from SchedulerSettings.'
+        assert 'wig' in scheduler, (
+            'wig is missing from [SchedulerSettings]. '
+            'Add: wig="http,https,ssl",tcp'
         )
 
     def test_scheduler_service_names_lowercase(self):
