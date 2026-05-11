@@ -96,7 +96,36 @@ if __name__ == "__main__":
                         help="Skip interactive startup prompts (continue alongside other instances)")
     parser.add_argument("--no-browser", action="store_true",
                         help="Skip auto-opening Firefox (headless / CI use)")
+    parser.add_argument("--reset-conf", action="store_true",
+                        help="Restore legion.conf from bundled master (recovery for air-gapped systems)")
     args = parser.parse_args()
+
+    if args.reset_conf:
+        import shutil
+        conf_dir = os.path.expanduser('~/.local/share/legion')
+        conf_path = os.path.join(conf_dir, 'legion.conf')
+        master = os.path.join(os.path.dirname(__file__), 'app', 'masterLegion.conf')
+        if not os.path.exists(master):
+            print(f"ERROR: Master config not found at {master}")
+            sys.exit(1)
+        os.makedirs(conf_dir, exist_ok=True)
+        # Backup current conf if it exists
+        if os.path.exists(conf_path):
+            backup_dir = os.path.join(conf_dir, 'backup')
+            os.makedirs(backup_dir, exist_ok=True)
+            from app.timing import getTimestamp
+            backup = os.path.join(backup_dir, f'pre-reset-{getTimestamp()}.conf')
+            shutil.copy(conf_path, backup)
+            print(f"Backed up current conf to: {backup}")
+        shutil.copy(master, conf_path)
+        # Also reset default profile
+        profiles_dir = os.path.join(conf_dir, 'profiles')
+        os.makedirs(profiles_dir, exist_ok=True)
+        shutil.copy(master, os.path.join(profiles_dir, 'default.conf'))
+        print(f"Restored legion.conf from master ({os.path.getsize(master)} bytes)")
+        print(f"  → {conf_path}")
+        print(f"  → {os.path.join(profiles_dir, 'default.conf')}")
+        sys.exit(0)
 
     if args.mcp_server:
         # Start MCP server as a subprocess (separate stdio)

@@ -68,18 +68,18 @@ class AppSettings():
         if not os.path.exists(configpath):
             if not os.path.isdir(configdir):
                 os.makedirs(configdir, exist_ok=True)
+            # Try repo legion.conf first, then bundled masterLegion.conf as fallback
             reporoot = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
             defaultconf = os.path.join(reporoot, 'legion.conf')
-            log.debug(f"defaultconf is: {defaultconf}")
-            
-            # ADD THIS DEBUG LINE
-            #print(f"DEBUG: Copying default config from: {defaultconf}")
-            
+            masterconf = os.path.join(os.path.dirname(__file__), 'masterLegion.conf')
             if os.path.exists(defaultconf):
                 shutil.copy(defaultconf, configpath)
-                log.debug(f"copied {defaultconf} configuration to {configpath}.")
+                log.info(f"Created legion.conf from repo default: {defaultconf}")
+            elif os.path.exists(masterconf):
+                shutil.copy(masterconf, configpath)
+                log.info(f"Created legion.conf from bundled master: {masterconf}")
             else:
-                log.error(f"Default configuration file not found at {defaultconf}.")
+                log.error(f"No default config found at {defaultconf} or {masterconf}")
         
         log.info(f"Loading settings file: {configpath}")
         
