@@ -383,17 +383,39 @@ function highlightMatches(html) {
     var result = html;
     matchPositive.forEach(function(pattern) {
         if (!pattern) return;
-        var stripped = pattern.replace(/^ | $/g, '');   /* strip leading/trailing spaces only */
+        var stripped = pattern.replace(/^ | $/g, '');
         if (!stripped) return;
-        /* ansiToHtml() HTML-escapes <, >, & before we search — match the entity forms
-           so keywords like "<ACTIVE>" and "==> DIRECTORY" find their escaped equivalents */
         var htmlEscaped = stripped.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         var core    = htmlEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         var prefix  = (pattern[0]                    === ' ') ? '(?<![\\w])' : '';
         var suffix  = (pattern[pattern.length - 1]   === ' ') ? '(?![\\w])'  : '';
-        var re = new RegExp('(' + prefix + core + suffix + ')', 'g'); /* no 'i' — case-sensitive */
+        var re = new RegExp('(' + prefix + core + suffix + ')', 'g');
         result = result.replace(re, '<span class="match-positive">$1</span>');
     });
+    /* P2: Un-highlight spans that fall within a negative pattern match.
+       "not vulnerable" should NOT have "vulnerable" highlighted — the negative
+       pattern cancels the positive, matching backend _getMatches() behavior.
+       Build a regex per negative pattern where each word can optionally be
+       wrapped in <span class="match-positive">...</span> tags. */
+    if (matchNegative && matchNegative.length > 0) {
+        matchNegative.forEach(function(pattern) {
+            if (!pattern) return;
+            var stripped = pattern.replace(/^ | $/g, '');
+            if (!stripped) return;
+            var words = stripped.split(/\s+/);
+            var reStr = words.map(function(w) {
+                var esc = w.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                           .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                return '(?:<span class="match-positive">)?' + esc + '(?:</span>)?';
+            }).join('\\s+');
+            var prefix = (pattern[0]                  === ' ') ? '(?<![\\w])' : '';
+            var suffix = (pattern[pattern.length - 1] === ' ') ? '(?![\\w])'  : '';
+            var re = new RegExp(prefix + reStr + suffix, 'g');
+            result = result.replace(re, function(m) {
+                return m.replace(/<span class="match-positive">/g, '').replace(/<\/span>/g, '');
+            });
+        });
+    }
     return result;
 }
 
