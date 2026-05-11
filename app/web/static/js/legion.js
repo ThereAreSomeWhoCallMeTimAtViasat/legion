@@ -2568,6 +2568,10 @@ document.addEventListener('DOMContentLoaded', function() {
             overlay.setAttribute('aria-hidden', 'true');
             /* Keep overlay scroll in sync when user scrolls the textarea */
             ta.addEventListener('scroll', function() { overlay.scrollTop = ta.scrollTop; });
+            ta.addEventListener('input', function() {
+                var sb = $('config-save');
+                if (sb) sb.classList.add('config-save-dirty');
+            });
 
             wrap.appendChild(ta);
             wrap.appendChild(overlay);
@@ -2727,6 +2731,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     var configBtn = $('action-config');
     if (configBtn) configBtn.addEventListener('click', function() {
+        setText('config-status', '');
+        setText('easy-status', '');
         openModal('config-modal');
         cfgLoadProfiles();
     });
@@ -2767,6 +2773,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('Cannot save — ' + d.errors.length + ' syntax error(s):\n\n' + d.errors.join('\n\n'));
             } else {
                 setText('config-status', d.applied ? '✓ Saved & applied ' + name : '✓ Saved ' + name);
+                var saveBtn = $('config-save');
+                if (saveBtn) saveBtn.classList.remove('config-save-dirty');
                 if (d.applied) reapplyLiveSettings();
             }
         })
@@ -2960,19 +2968,19 @@ document.addEventListener('DOMContentLoaded', function() {
         var _visitedSections = [];   /* sections the user actually opened — only these are re-serialized */
         var _easyDirty = false;      /* true when an unsaved change has been made in Easy Mode */
 
-        /* Mark the Apply button as needing a click (pulse highlight) */
+        /* Mark the Save button as needing a click (pulse highlight) */
         function _markDirty() {
             if (_easyDirty) return;
             _easyDirty = true;
-            var btn = $('easy-apply-btn');
-            if (btn) btn.classList.add('easy-apply-dirty');
+            var btn = $('config-save');
+            if (btn) btn.classList.add('config-save-dirty');
         }
 
-        /* Restore the Apply button to its normal state */
+        /* Restore the Save button to its normal state */
         function _clearDirty() {
             _easyDirty = false;
-            var btn = $('easy-apply-btn');
-            if (btn) btn.classList.remove('easy-apply-dirty');
+            var btn = $('config-save');
+            if (btn) btn.classList.remove('config-save-dirty');
         }
 
         var SECTIONS = [
@@ -3643,25 +3651,15 @@ document.addEventListener('DOMContentLoaded', function() {
         var backBtn = $('easy-back-btn');
         if (backBtn) backBtn.addEventListener('click', closeEasy);
 
-        var applyBtn = $('easy-apply-btn');
-        if (applyBtn) applyBtn.addEventListener('click', function() {
-            if (_activeSection) collectSection(_activeSection);
-            if (_parsed) cfgSetCurrentText(serializeConf(_parsed));
-            _clearDirty();
-            setText('easy-status', '✓ Applied to config — review in Advanced mode then Save');
-        });
-
-        /* Auto-collect Easy Mode changes when the Save button is clicked directly
-           while Easy Mode is still open. The Save button lives outside the Easy Mode
-           panel and its regular listener reads cfgGetCurrentText() from the textarea —
-           which is stale until cfgSetCurrentText() is called. Using capture:true here
-           ensures this runs BEFORE the regular Save listener so the textarea is already
-           up-to-date when Save reads it. This fixes: "changes not saved after pressing
-           Save while still in Easy Mode". */
+        /* Auto-collect Easy Mode changes when the Save button is clicked.
+           The Save button lives outside the Easy Mode panel and its regular
+           listener reads cfgGetCurrentText() from the textarea — which is stale
+           until cfgSetCurrentText() is called. Using capture:true ensures this
+           runs BEFORE the regular Save listener so the textarea is up-to-date. */
         var cfgSaveForEasy = $('config-save');
         if (cfgSaveForEasy) cfgSaveForEasy.addEventListener('click', function() {
             var panel = $('easy-mode-panel');
-            if (!panel || panel.style.display === 'none') return; /* Easy Mode not open */
+            if (!panel || panel.style.display === 'none') return;
             if (_activeSection) collectSection(_activeSection);
             if (_parsed) cfgSetCurrentText(serializeConf(_parsed));
         }, true /* capture — fires before the regular Save listener */);

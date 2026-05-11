@@ -277,9 +277,9 @@ body.black-output-bg .tool-output-area{background:#000}
 #easy-section-tabs .easy-tab{padding:4px 12px;font-size:8.5pt;border-radius:3px;cursor:pointer;background:var(--midlight);border:1px solid var(--border);color:var(--text)}
 #easy-section-tabs .easy-tab.active{background:var(--highlight);color:#fff;border-color:var(--highlight)}
 #easy-section-tabs .easy-tab:hover:not(.active){background:var(--hover)}
-/* Apply button pulses when unsaved changes exist in Easy Mode */
-@keyframes easyApplyPulse{0%{box-shadow:0 0 0 0 rgba(78,166,220,.7)}70%{box-shadow:0 0 0 7px rgba(78,166,220,0)}100%{box-shadow:0 0 0 0 rgba(78,166,220,0)}}
-#easy-apply-btn.easy-apply-dirty{animation:easyApplyPulse 1.4s ease-in-out infinite;background:rgba(78,166,220,.18)!important;border-color:var(--accent)!important;color:var(--accent)!important;font-weight:700}
+/* Save button pulses when unsaved changes exist */
+@keyframes configSavePulse{0%{box-shadow:0 0 0 0 rgba(78,166,220,.7)}70%{box-shadow:0 0 0 7px rgba(78,166,220,0)}100%{box-shadow:0 0 0 0 rgba(78,166,220,0)}}
+#config-save.config-save-dirty{animation:configSavePulse 1.4s ease-in-out infinite;background:rgba(78,166,220,.18)!important;border-color:var(--accent)!important;color:var(--accent)!important;font-weight:700}
 /* Form sections */
 .easy-form-row{display:grid;grid-template-columns:220px 1fr;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--dark)}
 .easy-form-row:last-child{border-bottom:none}
