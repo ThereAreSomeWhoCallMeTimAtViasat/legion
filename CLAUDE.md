@@ -45,8 +45,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.209-flask
-- **Static asset cache:** CSS `?v=89`, JS `?v=113` in `base.html`
+- **Current Flask version:** v10.213-flask
+- **Static asset cache:** CSS `?v=90`, JS `?v=116` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -278,6 +278,11 @@ Called automatically from `start()` on every project open/create:
   - **run_tests.sh**: Added `skipped` to all four `grep -E "passed|failed|error"` patterns — "184 skipped in 2.15s" was invisible, treated as failure, retried 3×.
   - **gcloudInstall_V5.sh**: Master VM setup script. Uses `$SUDO_USER` for real user home. Firefox wrapper opens tab in background (`& exit 0`) so gcloud doesn't block. Runs `setup-claude-code.sh` as kali user. Extracts tar into `$REAL_HOME`. Auto-detects `claude-data*.tar.gz`. Pipes `y\ny\n` to auto-answer interactive prompts.
 - **v10.210 — 12 scanning tools added to SchedulerSettings**: All from `legion_tools.html`, scanning mode only. nikto, wpscan, whatweb, wafw00f, katana, katana-https, nomore403, sslscan, sslyze, jexboss, theharvester + new `sqlmap-scan` (safe: `--level=1 --risk=1 --crawl=1`, separate from attack-mode `sqlmap-http`). SchedulerSettings total: 64→76. Victim test: 12 new `TOOL_EXPECTED_OUTPUT` patterns; 8 `test_manual_tools` parametrized tests (searchsploit, masscan, gau, waybackurls, leaksearch, evil-winrm, kerbrute, bloodhound-python); `test_minimum_tool_count` threshold 55→65. Victim test fixture: `ThreadingHTTPServer` on 8443 with self-signed cert (returns 200 for `/`,`/index`,`/admin`,`/login`, 404 else — avoids feroxbuster wildcard detection); socat redis relay `127.42.0.1:6379→127.0.0.1:6379`; `_tty_print` writes to both `/dev/tty` + stdout; parallel output fetching via `ThreadPoolExecutor(16)` (70s→5s). Verified: 224 passed, 0 failed.
+- **v10.211**: Config Manager single Save button — removed "Apply to Config" button (was confusing — only wrote to textarea without saving). Save button now handles both Easy Mode and Advanced mode. Dirty-state pulse (`config-save-dirty` CSS class) highlights Save when changes detected in either mode. Status text (`config-status`) clears on modal reopen — no stale "Saved & applied" messages. CSS `?v=90`, JS `?v=114`.
+- **v10.212**: Negative match un-highlighting — `highlightMatches()` now has a P2 pass that strips `<span class="match-positive">` tags when the highlighted word appears within a negative pattern context. "not vulnerable" no longer has "vulnerable" highlighted in yellow. Each negative pattern is split into words; regex allows optional match-positive spans between words. Matches backend `_getMatches()` behavior where negatives cancel positives per line. JS `?v=115`.
+- **v10.213**: Cross-host service view survives snapshot poll — clicking a service in the left panel's Services tab calls `updatePortsByService()` which shows all hosts with that service in the right panel. Previously, `loadHostDetail()` overwrote this every 1.5s poll. Fix: `L._serviceViewActive` flag set true on service click, false on host click; all three `loadHostDetail()` triggers in `pollSnapshot()` skip when flag is set. Cross-host view refreshed via `updatePortsByService()` every ~6s during scans. JS `?v=116`.
+- **Tests**: `tests/test_ui_v10f_features.py` (port 5074, 9 tests): config manager Apply button absent, status clears on reopen, Save pulses on edit, Save clears pulse; negative match highlight (standalone "vulnerable" highlighted, "not vulnerable" NOT highlighted — 1 span not 3); service view cross-host results appear, survive 5s of polls, flag cleared on host click. Integrated into `run_tests.sh --selenium`.
+- **conf fixes**: `nomore403` changed `--url` → `-u` (correct flag is `--uri`/`-u`); `nikto` added `-maxtime 120s` (prevents hanging on non-HTTP ports — socat listeners don't speak HTTP, nikto waits indefinitely); `wpscan --update` added to `install.sh` (downloads vulnerability DB on fresh install so `--no-update` in runtime command works).
 
 ---
 
