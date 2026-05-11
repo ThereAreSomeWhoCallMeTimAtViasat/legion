@@ -1393,6 +1393,18 @@ function loadProcessOutput(processId, targetEl) {
                                    _proc.status === 'Crashed');
     if (_staticStatus && _dynOutputCache[processId] !== undefined) {
         targetEl.innerHTML = _dynOutputCache[processId];
+        /* Re-wire match nav buttons — innerHTML destroyed the old listeners */
+        var _cp = L.processes.find(function(p) { return String(p.id) === String(processId); });
+        if (_cp && _cp.has_match) {
+            var _cprev = targetEl.querySelector('.match-prev');
+            var _cnext = targetEl.querySelector('.match-next');
+            if (_cprev) _cprev.addEventListener('click', function(e) {
+                e.stopPropagation(); _matchNav(targetEl, processId, -1);
+            });
+            if (_cnext) _cnext.addEventListener('click', function(e) {
+                e.stopPropagation(); _matchNav(targetEl, processId, +1);
+            });
+        }
         _matchNavInit(targetEl, processId);
         if (atBottom) {
             targetEl.scrollTop = targetEl.scrollHeight;
