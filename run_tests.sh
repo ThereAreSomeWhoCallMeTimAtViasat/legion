@@ -933,6 +933,7 @@ if [[ "$RUN_SELENIUM" == "true" ]]; then
     free_port 5082; run_pytest "ui_new_clear_checkbox (v10.136-143)" tests/test_ui_new_clear_checkbox.py
     free_port 5093; run_pytest "highlight_escaping (v10.145)" tests/test_highlight_escaping.py
     free_port 5082; run_pytest "ui_v10e_features (v10.137-143)" tests/test_ui_v10e_features.py
+    free_port 5074; run_pytest "ui_v10f_features (v10.211-213)" tests/test_ui_v10f_features.py
     free_port 5081; run_pytest "ui_v10d_features (v10.128-133)" tests/test_ui_v10d_features.py
     free_port 5072; run_pytest "ui_session_features (v10.59-63)" tests/test_ui_session_features.py
     free_port 5074
