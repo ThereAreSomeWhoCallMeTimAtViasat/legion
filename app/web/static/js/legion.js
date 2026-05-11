@@ -113,6 +113,7 @@ var L = {
     selectedHostIp: null,
     selectedService: null,
     selectedServicePort: null,
+    _serviceViewActive: false,  /* true when cross-host service results shown in right panel */
     _hostProcSig: null,
     _nmapSig: null,
     _hostUnreadTabs: {},   /* hostId → {tabId: true} — persists orange indicators across host switches */
@@ -1566,6 +1567,7 @@ function initInteractions() {
             });
         }
         L.selectedHostId = hostId;
+        L._serviceViewActive = false;
         /* highlight */
         $('hosts-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
@@ -1664,6 +1666,7 @@ function initInteractions() {
         if (!tr) return;
         L.selectedService = tr.dataset.service || '';
         L.selectedServicePort = tr.dataset.port || '';
+        L._serviceViewActive = true;
         $('services-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
         });
@@ -2191,7 +2194,7 @@ function pollSnapshot() {
             if (sig !== L._hostProcSig) {
                 L._hostProcSig = sig;
                 renderDynamicToolTabs(L.selectedHostIp);
-                if (L.selectedHostId && $('tools-display').style.display !== 'flex') {
+                if (L.selectedHostId && !L._serviceViewActive && $('tools-display').style.display !== 'flex') {
                     loadHostDetail(L.selectedHostId);
                 }
             }
@@ -2208,7 +2211,7 @@ function pollSnapshot() {
                 .sort().join(',');
             if (nmapSig !== L._nmapSig) {
                 L._nmapSig = nmapSig;
-                if ($('tools-display').style.display !== 'flex') {
+                if (!L._serviceViewActive && $('tools-display').style.display !== 'flex') {
                     loadHostDetail(L.selectedHostId);
                 }
             }
@@ -2226,9 +2229,14 @@ function pollSnapshot() {
                when the user watched the stage 2 output tab → complete UI freeze.
                renderDynamicToolTabs already restores the active dynamic tab, so removing
                the dynActive guard is safe — no permanent blank screen. */
-            if ($('tools-display').style.display !== 'flex') {
+            if (!L._serviceViewActive && $('tools-display').style.display !== 'flex') {
                 loadHostDetail(L.selectedHostId);
             }
+        }
+
+        /* Keep cross-host service view current while active */
+        if (L._serviceViewActive && L.selectedService && L._pollCount % 4 === 0) {
+            updatePortsByService(L.selectedService);
         }
 
         /* Keep OS list current when OS tab is active */
