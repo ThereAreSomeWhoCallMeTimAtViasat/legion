@@ -570,6 +570,21 @@ else
     warn "eyewitness not found at ${EW_MOD} — skipping patch (install eyewitness first)"
 fi
 
+# Patch wig HTMLStripper for Python 3.13+ compatibility.
+# Python 3.13 added a 'scripting' attribute to HTMLParser.__init__().
+# wig's HTMLStripper calls self.reset() instead of super().__init__(),
+# so self.scripting is never set → AttributeError on every page parse.
+WIG_REQ="/usr/share/wig/classes/request2.py"
+if [[ -f "$WIG_REQ" ]]; then
+    if grep -q 'self\.reset()' "$WIG_REQ" 2>/dev/null; then
+        sudo sed -i 's/self\.reset()/super().__init__()/' "$WIG_REQ" \
+            && ok "wig patched for Python 3.13+ (HTMLStripper.__init__)" \
+            || warn "wig patch failed"
+    else
+        ok "wig already patched (no self.reset() found)"
+    fi
+fi
+
 # =============================================================================
 # 7. geckodriver + Firefox profile
 # =============================================================================
