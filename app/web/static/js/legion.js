@@ -3512,6 +3512,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             function fullRender() {
+                /* Save filter text + cursor before innerHTML destroys the input */
+                var oldMf = document.getElementById('match-filter');
+                var filterVal = oldMf ? oldMf.value : '';
+                var cursorPos = oldMf ? oldMf.selectionStart : 0;
+
                 var posKWs = getKWs('global-positive');
                 var negKWs = getKWs('global-negative');
                 var filterBar = '<div class="easy-search-bar" style="margin-bottom:12px">' +
@@ -3521,6 +3526,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 $('easy-content').innerHTML = filterBar +
                     renderSection('pos', 'global-positive (' + posKWs.length + ' keywords)', posKWs) +
                     renderSection('neg', 'global-negative (' + negKWs.length + ' keywords)', negKWs);
+
+                /* Restore filter text + focus on the new input element */
+                var newMf = document.getElementById('match-filter');
+                if (newMf && filterVal) {
+                    newMf.value = filterVal;
+                    newMf.focus();
+                    newMf.setSelectionRange(cursorPos, cursorPos);
+                }
                 wireMatch(posKWs, negKWs);
             }
 
