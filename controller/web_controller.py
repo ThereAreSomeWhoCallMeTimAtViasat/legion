@@ -1891,8 +1891,13 @@ class WebController:
                         pass
 
                 # P1: Match detection on every line (auxiliary.py:285-331)
+                # Strip ANSI escape codes before matching — tools like nuclei wrap
+                # severity in ANSI color ([\x1b[31mhigh\x1b[0m]) which breaks the
+                # plain substring match for patterns like [high].
                 try:
-                    line_matches = self.detectMatches(text, toolName)
+                    import re as _re
+                    _clean = _re.sub(r'\x1b\[[0-9;]*m', '', text)
+                    line_matches = self.detectMatches(_clean, toolName)
                     if line_matches:
                         all_matches.update(line_matches)
                         self.handleMatch(hostIp, tabTitle, ', '.join(line_matches))
