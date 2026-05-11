@@ -2996,19 +2996,16 @@ document.addEventListener('DOMContentLoaded', function() {
         var _parsed = null;
         var _activeSection = null;
         var _visitedSections = [];   /* sections the user actually opened — only these are re-serialized */
-        var _easyDirty = false;      /* true when an unsaved change has been made in Easy Mode */
+        /* _easyDirty guard removed — it blocked re-highlighting after Save cleared the class */
 
         /* Mark the Save button as needing a click (pulse highlight) */
         function _markDirty() {
-            if (_easyDirty) return;
-            _easyDirty = true;
             var btn = $('config-save');
             if (btn) btn.classList.add('config-save-dirty');
         }
 
         /* Restore the Save button to its normal state */
         function _clearDirty() {
-            _easyDirty = false;
             var btn = $('config-save');
             if (btn) btn.classList.remove('config-save-dirty');
         }
