@@ -207,11 +207,11 @@ class TestNewToolsInContextMenus:
         assert any('sqlmap' in l.lower() for l in labels), \
             f"sqlmap-http not found in HTTP port menu. Labels: {labels[:20]}"
 
-    def test_wig_absent_from_http_port_menu(self, srv):
-        """wig must NOT appear in the HTTP port menu — crashes Python 3.13+ (html.parser removed 'scripting' attr)."""
+    def test_wig_in_http_port_menu(self, srv):
+        """wig appears in the HTTP port right-click menu."""
         labels = self._port_menu_labels(srv, 'http')
-        assert not any('wig' in l.lower() for l in labels), \
-            f"wig wrongly appears in HTTP port menu (crashes Python 3.13+). Labels: {labels[:20]}"
+        assert any('wig' in l.lower() for l in labels), \
+            f"wig not found in HTTP port menu. Labels: {labels[:20]}"
 
     def test_jexboss_in_http_port_menu(self, srv):
         """jexboss appears in the HTTP port right-click menu."""
