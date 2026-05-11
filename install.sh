@@ -517,6 +517,18 @@ if [[ "${REAL_USER}" != "root" ]]; then
         || warn "could not chown nuclei config dir — run: sudo chown -R ${REAL_USER}:${REAL_USER} ${NUCLEI_CONF_DIR}"
 fi
 
+# wpscan vulnerability database — without this, wpscan --no-update fails with
+# "No WPScan database found" on the first run. The --no-update flag in the
+# legion.conf command prevents network calls during scans (correct for runtime),
+# but the initial DB must exist.
+if command -v wpscan &>/dev/null; then
+    if wpscan --update 2>&1 | grep -q "Update completed"; then
+        ok "wpscan database updated"
+    else
+        warn "wpscan --update failed — wpscan will error on first scan"
+    fi
+fi
+
 # Patch eyewitness selenium_module.py for Selenium 4 compatibility.
 # The Kali apt package still uses the Selenium 3 DesiredCapabilities API
 # which was removed in Selenium 4.  The venv installs selenium>=4.9.0 so
