@@ -45,8 +45,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.213-flask
-- **Static asset cache:** CSS `?v=90`, JS `?v=116` in `base.html`
+- **Current Flask version:** v10.219-flask
+- **Static asset cache:** CSS `?v=91`, JS `?v=120` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -283,6 +283,12 @@ Called automatically from `start()` on every project open/create:
 - **v10.213**: Cross-host service view survives snapshot poll — clicking a service in the left panel's Services tab calls `updatePortsByService()` which shows all hosts with that service in the right panel. Previously, `loadHostDetail()` overwrote this every 1.5s poll. Fix: `L._serviceViewActive` flag set true on service click, false on host click; all three `loadHostDetail()` triggers in `pollSnapshot()` skip when flag is set. Cross-host view refreshed via `updatePortsByService()` every ~6s during scans. JS `?v=116`.
 - **Tests**: `tests/test_ui_v10f_features.py` (port 5074, 9 tests): config manager Apply button absent, status clears on reopen, Save pulses on edit, Save clears pulse; negative match highlight (standalone "vulnerable" highlighted, "not vulnerable" NOT highlighted — 1 span not 3); service view cross-host results appear, survive 5s of polls, flag cleared on host click. Integrated into `run_tests.sh --selenium`.
 - **conf fixes**: `nomore403` changed `--url` → `-u` (correct flag is `--uri`/`-u`); `nikto` added `-maxtime 120s` (prevents hanging on non-HTTP ports — socat listeners don't speak HTTP, nikto waits indefinitely); `wpscan --update` added to `install.sh` (downloads vulnerability DB on fresh install so `--no-update` in runtime command works).
+- **v10.214**: Batch version bump covering: wig restored to PortActions + SchedulerSettings; gau/waybackurls/leaksearch passive auto-trigger on HTTP; goal2 test skip (headless Firefox limitation); smbenum.sh +x; Save button pulse fix (`_easyDirty` guard removed); match nav arrows fixed (cached output path re-wires listeners); match nav post-cache regression test; deleted host reappears fix (`_deleted_hosts` check in staged nmap threads).
+- **v10.215**: Config Save button changed from blue to flashing yellow for visibility. CSS `?v=91`.
+- **v10.216**: MatchSettings keyword filter fix — `fullRender()` destroyed the `#match-filter` input on every keystroke (innerHTML replace). Fix: save/restore filter value + cursor + focus across the rebuild. Also patched wig for Python 3.13+ (`HTMLStripper.__init__` calls `super().__init__()` instead of `self.reset()` — sets `self.scripting` attribute). Patch added to `install.sh`.
+- **v10.217**: Save button highlight persists across Easy↔Advanced switches — `openEasy()` was calling `_clearDirty()` which killed the pulse. Removed that call. Also fixed `waybackurls` command: `> [OUTPUT].txt` → `| tee [OUTPUT].txt` (stdout was redirected to file, nothing for `_capture_output` to read).
+- **v10.218**: Match detection broken by ANSI color codes — tools like nuclei wrap severity in ANSI (`[\x1b[31mhigh\x1b[0m]`), breaking the plain substring match `'[high]' in text`. Fix: strip ANSI codes with `re.sub(r'\x1b\[[0-9;]*m', '', text)` before `detectMatches()`. Also fixed `sqlmap-scan` and `sqlmap-http` commands: removed embedded double-quotes from `-u` argument.
+- **v10.219**: Bundled `app/masterLegion.conf` for air-gapped recovery. Three paths: (1) automatic fallback when `AppSettings.__init__` can't find repo `legion.conf`; (2) `python3 legion.py --reset-conf` CLI; (3) direct file copy. Also restored 34 user-added match keywords (5 positive + 29 negative) that were lost by `sudo cp` repo→live conf syncs. Consolidated from 42 timestamped backups. Total: 104 positive, 45 negative keywords.
 
 ---
 
