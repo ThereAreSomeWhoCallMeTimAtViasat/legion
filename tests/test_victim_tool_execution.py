@@ -257,9 +257,13 @@ TOOL_EXPECTED_OUTPUT = {
     'sqlmap-scan':          ('sqlmap', 'sqlmap printed its header'),
     'jexboss':              ('jexboss', 'jexboss printed its header'),
     'theharvester':         ('theharvester', 'theharvester printed its header'),
+    'wig':                  ('', ''),      # wig may crash on Python 3.13+ — just verify triggered
+    'gau-passive':          ('', ''),      # OSINT — needs internet, no output against localhost
+    'waybackurls-passive':  ('', ''),      # OSINT — needs internet, no output against localhost
+    'leaksearch-passive':   ('', ''),      # OSINT — needs internet, no output against localhost
 }
 
-# Nmap XML with ALL service names needed to trigger all 76 SchedulerSettings entries
+# Nmap XML with ALL service names needed to trigger all 80 SchedulerSettings entries
 VICTIM_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE nmaprun>
 <nmaprun scanner="nmap" args="nmap -Pn -sV {VICTIM_IP}" start="1746632000" version="7.98">
@@ -783,9 +787,9 @@ def test_every_tool_expected_output(tool_id, completed_scan):
 # =============================================================================
 
 def test_minimum_tool_count(completed_scan):
-    """At least 65 of the 76 scheduler tools must have produced at least one process."""
+    """At least 68 of the 80 scheduler tools must have produced at least one process."""
     triggered = sum(1 for t in ALL_SCHEDULER_TOOLS if completed_scan.get(t))
-    assert triggered >= 65, (
+    assert triggered >= 68, (
         f"Only {triggered}/{len(ALL_SCHEDULER_TOOLS)} scheduler tools ran.\n"
         f"Missing: {[t for t in ALL_SCHEDULER_TOOLS if not completed_scan.get(t)]}"
     )
