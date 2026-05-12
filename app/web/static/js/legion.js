@@ -1418,13 +1418,6 @@ function loadProcessOutput(processId, targetEl) {
     fetchJson('/api/processes/' + processId + '/output?max_chars=' + _maxChars).then(function(data) {
         /* Bail if the project switched while the fetch was in-flight */
         if (L._projectSwitchTime !== _switchTs) return;
-        /* Re-resolve targetEl — renderDynamicToolTabs may have destroyed and
-           recreated it (container.innerHTML='') while the fetch was in-flight.
-           Without this, innerHTML is set on an orphaned DOM node → invisible. */
-        if (targetEl.id && !document.contains(targetEl)) {
-            targetEl = $(targetEl.id);
-            if (!targetEl) return;
-        }
         /* For dynamic-tab output (dyn-output-*): honour the container-level lock.
            _dynSelLocked is set on mousedown in the container and maintained by
            selectionchange, so it is already true before the first DOM rebuild
