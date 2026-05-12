@@ -1463,9 +1463,22 @@ function loadProcessOutput(processId, targetEl) {
         }
 
         var text = data.output_chunk || data.output || '';
+        var proc = L.processes.find(function(p) { return String(p.id) === String(processId); });
+        /* Show status when process has no output yet */
+        if (!text && proc) {
+            if (proc.status === 'Waiting') {
+                targetEl.innerHTML = '<div style="color:var(--disabled);padding:12px;font-style:italic">'
+                    + '⏳ Waiting in queue… process will start when a concurrency slot opens.</div>';
+                return;
+            } else if (proc.status === 'Running') {
+                var elapsed = proc.elapsed_secs || 0;
+                targetEl.innerHTML = '<div style="color:var(--disabled);padding:12px;font-style:italic">'
+                    + '⏳ Running… ' + Math.floor(elapsed/60) + 'm ' + (elapsed%60) + 's elapsed. No output yet.</div>';
+                return;
+            }
+        }
         /* Prepend match banner when process has match hits (Qt6: yellow QLabel at top) */
         var matchBanner = '';
-        var proc = L.processes.find(function(p) { return String(p.id) === String(processId); });
         if (proc && proc.has_match && proc.match_text) {
             matchBanner = '<div class="match-banner">'
                 + '\u2605 Matches: ' + esc(proc.match_text)
