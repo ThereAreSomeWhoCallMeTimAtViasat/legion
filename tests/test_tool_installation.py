@@ -226,7 +226,8 @@ class TestConfIntegrity:
         """
         raw = _conf_raw()
         dnsrecon_lines = [l for l in raw.splitlines()
-                          if l.startswith('dnsrecon=') and 'dnsrecon -d' in l]
+                          if l.strip().startswith('dnsrecon') and 'dnsrecon -d' in l
+                          and not l.strip().startswith('dnsrecon-')]
         assert dnsrecon_lines, 'No dnsrecon PortActions command found in conf'
         for line in dnsrecon_lines:
             assert '--dns-servers' not in line, (
