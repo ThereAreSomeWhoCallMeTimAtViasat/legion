@@ -5858,6 +5858,24 @@ document.addEventListener('DOMContentLoaded', function() {
             var el = $(id); if (el) el.style.display = 'none';
         });
         var el = $(state); if (el) el.style.display = '';
+        /* Update toolbar button states */
+        var analyzeBtn  = $('ai-analyze-btn');
+        var phase2Btn   = $('ai-phase2-btn');
+        var reanalyzeBtn = $('ai-reanalyze-btn');
+        var exportBtn   = $('ai-export-html-btn');
+        var spinner     = $('ai-spinner');
+        var statusText  = $('ai-status-text');
+        if (analyzeBtn)   analyzeBtn.disabled   = (state !== 'ai-ready');
+        if (phase2Btn)    phase2Btn.disabled    = true;  /* enabled explicitly after Phase 1 */
+        if (reanalyzeBtn) reanalyzeBtn.disabled = (state !== 'ai-results');
+        if (exportBtn)    exportBtn.disabled    = true;  /* enabled after Phase 2 */
+        if (spinner)      spinner.style.display = (state === 'ai-running') ? '' : 'none';
+        if (statusText) {
+            if (state === 'ai-blocking') statusText.textContent = 'Waiting for scans to finish…';
+            else if (state === 'ai-running') statusText.textContent = 'Running analysis…';
+            else if (state === 'ai-no-host') statusText.textContent = 'Select a host';
+            else statusText.textContent = '';
+        }
     }
 
     function _aiLoadStatus(hostId) {
@@ -5902,20 +5920,22 @@ document.addEventListener('DOMContentLoaded', function() {
         var p2run = $('ai-p2-running');
         var p2res = $('ai-p2-result');
         var p2md  = $('ai-p2-markdown');
+        var phase2Btn = $('ai-phase2-btn');
         var exportBtn = $('ai-export-html-btn');
         if (phase2_markdown) {
             if (p2req) p2req.style.display = 'none';
             if (p2run) p2run.style.display = 'none';
             if (p2res) p2res.style.display = '';
             if (p2md)  p2md.innerHTML = _aiMd(phase2_markdown);
-            /* Both phases complete — show export button */
-            if (exportBtn) exportBtn.style.display = '';
+            if (phase2Btn) phase2Btn.disabled = true;
+            if (exportBtn) exportBtn.disabled = false;
         } else {
-            /* Phase 2 not yet run — show the request button, hide export */
-            if (p2req) p2req.style.display = '';
+            /* Phase 2 not yet run — enable the button in toolbar */
+            if (p2req) p2req.style.display = 'none';
             if (p2run) p2run.style.display = 'none';
             if (p2res) p2res.style.display = 'none';
-            if (exportBtn) exportBtn.style.display = 'none';
+            if (phase2Btn) phase2Btn.disabled = false;
+            if (exportBtn) exportBtn.disabled = true;
         }
     }
 
@@ -6114,7 +6134,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function _aiRunPhase1() {
         _aiRunning       = true;
         _aiRunningHostId = _aiHostId;
-        var rt = $('ai-running-text');
+        var rt = $('ai-status-text');
         if (rt) rt.textContent = 'Running Phase 1 — synthesising findings…';
         _aiShowState('ai-running');
         postJson('/api/ai/analyze-host/' + _aiHostId + '/phase1', {})
@@ -6209,7 +6229,7 @@ document.addEventListener('DOMContentLoaded', function() {
             /* If Phase 1 is currently running for this host, stay in running state */
             if (_aiRunning && _aiRunningHostId === L.selectedHostId) {
                 _aiHostId = L.selectedHostId;
-                var rt = $('ai-running-text');
+                var rt = $('ai-status-text');
                 if (rt) rt.textContent = 'Running Phase 1 — synthesising findings…';
                 _aiShowState('ai-running');
                 return;
@@ -6258,18 +6278,19 @@ document.addEventListener('DOMContentLoaded', function() {
     if (_aiPhase2Btn) {
         _aiPhase2Btn.addEventListener('click', function() {
             if (!_aiHostId) return;
-            var p2req = $('ai-p2-request'); if (p2req) p2req.style.display = 'none';
-            var p2run = $('ai-p2-running'); if (p2run) p2run.style.display = '';
+            _aiPhase2Btn.disabled = true;
+            var spinner = $('ai-spinner'); if (spinner) spinner.style.display = '';
+            var st = $('ai-status-text'); if (st) st.textContent = 'Running attack planner…';
             postJson('/api/ai/analyze-host/' + _aiHostId + '/phase2', {})
                 .then(function(r) {
-                    var p2run2 = $('ai-p2-running'); if (p2run2) p2run2.style.display = 'none';
+                    if (spinner) spinner.style.display = 'none';
+                    if (st) st.textContent = '';
                     if (r.error) {
-                        var p2req2 = $('ai-p2-request'); if (p2req2) p2req2.style.display = '';
+                        _aiPhase2Btn.disabled = false;
                         alert('Phase 2 failed: ' + r.error);
                         return;
                     }
                     _aiUpdatePhase2UI(r.phase2_markdown);
-                    /* Update cost banner */
                     var costText = $('ai-cost-text');
                     if (costText && _aiResults) {
                         var total = ((_aiResults.cost_usd || 0) + (r.cost_usd || 0)).toFixed(4);
@@ -6279,8 +6300,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 })
                 .catch(function(e) {
-                    var p2run3 = $('ai-p2-running'); if (p2run3) p2run3.style.display = 'none';
-                    var p2req3 = $('ai-p2-request'); if (p2req3) p2req3.style.display = '';
+                    if (spinner) spinner.style.display = 'none';
+                    if (st) st.textContent = '';
+                    _aiPhase2Btn.disabled = false;
                     alert('Phase 2 failed: ' + (e.message || e));
                 });
         });

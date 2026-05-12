@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.219-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.220-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -266,7 +266,17 @@
 </div>
 
 <!-- AI Analysis tab -->
-<div class="tab-content" id="ai-right" style="overflow:auto;padding:0">
+<div class="tab-content" id="ai-right" style="overflow:hidden;padding:0;display:flex;flex-direction:column">
+    <!-- Persistent toolbar — always visible at top -->
+    <div id="ai-toolbar" style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0">
+        <button id="ai-analyze-btn" type="button" style="font-size:10pt;padding:4px 14px" disabled>Analyze</button>
+        <button id="ai-phase2-btn" type="button" style="font-size:10pt;padding:4px 14px" disabled>Get Attack Advice</button>
+        <button id="ai-reanalyze-btn" type="button" style="font-size:8pt;padding:2px 10px" disabled>Re-analyze</button>
+        <button id="ai-export-html-btn" type="button" style="font-size:8pt;padding:2px 10px" disabled title="Export full report as HTML file">Export HTML</button>
+        <span id="ai-cost-hint" style="font-size:9pt;color:var(--disabled);margin-left:4px"></span>
+        <span id="ai-status-text" style="font-size:9pt;color:var(--disabled);margin-left:auto"></span>
+        <span id="ai-spinner" class="spinner" style="display:none"></span>
+    </div>
     <!-- State: blocking | ready | running | done -->
     <div id="ai-blocking" style="padding:12px;display:none">
         <p style="color:var(--disabled);font-size:11pt;margin-bottom:8px">
@@ -275,12 +285,8 @@
         <ul id="ai-blocking-list" style="padding-left:20px;color:var(--disabled);font-size:10pt"></ul>
     </div>
     <div id="ai-ready" style="padding:12px;display:none">
-        <button id="ai-analyze-btn" type="button" style="font-size:11pt;padding:6px 18px">
-            Analyze (~$0.00)
-        </button>
-        <span style="font-size:9pt;color:var(--disabled);margin-left:10px" id="ai-cost-hint"></span>
         <!-- Previous analyses — shown whenever history exists, before running a new one -->
-        <div id="ai-ready-history" style="display:none;margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+        <div id="ai-ready-history" style="display:none;margin-top:4px;border-top:1px solid var(--border);padding-top:14px">
             <p style="font-size:9pt;color:var(--disabled);margin-bottom:8px">Previous analyses for this host:</p>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <select id="ai-ready-history-select" style="font:inherit;background:var(--base);color:var(--text);border:1px solid var(--border);padding:2px 6px;min-width:320px">
@@ -291,12 +297,9 @@
             <p style="font-size:8pt;color:var(--muted);margin-top:6px">Review a previous analysis before deciding whether to run a new one.</p>
         </div>
     </div>
-    <div id="ai-running" style="padding:12px;display:none">
-        <span class="spinner"></span>
-        <span id="ai-running-text" style="color:var(--disabled);margin-left:8px">Running Phase 1 analysis…</span>
-    </div>
-    <div id="ai-results" style="display:none;height:100%;overflow:auto">
-        <!-- Cost banner -->
+    <div id="ai-running" style="padding:12px;display:none"></div>
+    <div id="ai-results" style="display:none;flex:1;min-height:0;overflow:auto">
+        <!-- Cost + compare bar -->
         <div id="ai-cost-bar" style="padding:4px 10px;font-size:9pt;color:var(--disabled);
              border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;flex-wrap:wrap">
             <span id="ai-cost-text"></span>
@@ -306,8 +309,6 @@
                     <option value="">— No similar hosts in history —</option>
                 </select>
             </span>
-            <button id="ai-reanalyze-btn" type="button" style="font-size:8pt;padding:1px 8px;margin-left:auto">Re-analyze</button>
-            <button id="ai-export-html-btn" type="button" style="font-size:8pt;padding:1px 8px;display:none" title="Export full report as HTML file">Export HTML Report</button>
         </div>
         <!-- Side-by-side panels -->
         <div id="ai-panels" style="display:flex;flex:1;min-height:0;overflow:hidden;height:calc(100% - 28px)">
@@ -333,16 +334,10 @@
                 </div>
                 <pre id="ai-p1-json" style="display:none;font-size:8pt;overflow:auto;max-height:280px;
                      background:var(--dark);padding:6px;border:1px solid var(--border);margin-bottom:8px"></pre>
-                <!-- Phase 2 — on demand -->
+                <!-- Phase 2 results -->
                 <div id="ai-p2-section" style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
-                    <div id="ai-p2-request" style="display:none">
-                        <button id="ai-phase2-btn" type="button" style="font-size:10pt;padding:4px 14px">Get Attack Advice</button>
-                        <span style="font-size:8pt;color:var(--disabled);margin-left:8px">Asks the AI for exploitation recommendations based on the findings above.</span>
-                    </div>
-                    <div id="ai-p2-running" style="display:none">
-                        <span class="spinner"></span>
-                        <span style="color:var(--disabled);margin-left:8px">Running attack planner…</span>
-                    </div>
+                    <div id="ai-p2-request" style="display:none"></div>
+                    <div id="ai-p2-running" style="display:none"></div>
                     <div id="ai-p2-result" style="display:none">
                         <strong style="font-size:9pt">Attack Plan</strong>
                         <div id="ai-p2-markdown" style="font-size:9pt;line-height:1.6;margin-top:4px;overflow:auto;max-height:400px"></div>
