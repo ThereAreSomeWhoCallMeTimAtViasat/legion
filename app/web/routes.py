@@ -1026,7 +1026,11 @@ _client_log_buf = []
 @web_bp.post("/api/client-log")
 def client_log():
     """Receive [DynTab] debug logs from browser JS for server-side inspection."""
-    msg = (request.json or {}).get('msg', '')
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        body = {}
+    msg = body.get('msg', '')
     if msg:
         import time as _t
         _client_log_buf.append(f"[{_t.strftime('%H:%M:%S')}] {msg}")
