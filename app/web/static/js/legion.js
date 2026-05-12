@@ -2738,6 +2738,10 @@ document.addEventListener('DOMContentLoaded', function() {
     function cfgFindHide() {
         var bar = $('cfg-find-bar');
         if (bar) bar.style.display = 'none';
+        cfgFindClear();
+    }
+
+    function cfgFindClear() {
         cfgFind.matches = []; cfgFind.current = -1; cfgFind.query = '';
         setText('cfg-find-count', '');
         var inp = $('cfg-find-input');
@@ -2753,7 +2757,7 @@ document.addEventListener('DOMContentLoaded', function() {
         cfgFindInp.addEventListener('keydown', function(e) {
             if (e.key === 'ArrowDown' || (e.key === 'Enter' && !e.shiftKey))  { e.preventDefault(); cfgFindNext(); }
             else if (e.key === 'ArrowUp' || (e.key === 'Enter' && e.shiftKey)) { e.preventDefault(); cfgFindPrev(); }
-            else if (e.key === 'Escape') { cfgFindHide(); }
+            else if (e.key === 'Escape') { cfgFindClear(); }
         });
     }
     var cfgFPrev = $('cfg-find-prev');
@@ -2777,6 +2781,7 @@ document.addEventListener('DOMContentLoaded', function() {
         setText('easy-status', '');
         openModal('config-modal');
         cfgLoadProfiles();
+        cfgFindShow();
     });
     var configClose = $('config-close');
     if (configClose) configClose.addEventListener('click', function() {
@@ -3691,7 +3696,7 @@ document.addEventListener('DOMContentLoaded', function() {
             var findBar = $('cfg-find-bar');
             var panel   = $('easy-mode-panel');
             if (editors) editors.style.display = '';
-            if (findBar) /* keep hidden unless user opens find */ ;
+            if (findBar) findBar.style.display = '';
             if (panel)   panel.style.display   = 'none';
         }
 
