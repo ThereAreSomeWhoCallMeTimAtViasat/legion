@@ -1274,6 +1274,7 @@ function renderDynamicToolTabs(hostIp) {
        selected) text in the upper output area, skip this rebuild entirely.
        The next poll will run normally once the selection is released. */
     if (_dynSelLocked) return;
+    var _dtStart = performance.now();
 
     var bar = $('right-tab-bar');
     var container = $('dynamic-tabs-container');
@@ -1297,6 +1298,9 @@ function renderDynamicToolTabs(hostIp) {
     /* Find processes for this host — matched ones sort first (Qt6: tab turns red) */
     var hostProcs = L.processes.filter(function(p) { return p.hostIp === hostIp; });
     hostProcs.sort(function(a, b) { return (b.has_match ? 1 : 0) - (a.has_match ? 1 : 0); });
+    console.info('[DynTab] rebuild host=%s procs=%d prev=%s order=[%s]',
+        hostIp, hostProcs.length, prevActiveTabId || 'none',
+        hostProcs.map(function(p){return p.id+':'+p.name+(p.has_match?'*':'');}).join(', '));
     hostProcs.forEach(function(proc) {
         var tabId = 'dyntab-' + proc.id;
         var btn = document.createElement('button');
@@ -1327,13 +1331,24 @@ function renderDynamicToolTabs(hostIp) {
         if (gotoBtn) {
             gotoBtn.click();
             gotoBtn.scrollIntoView({behavior:'smooth', block:'nearest', inline:'nearest'});
+            console.info('[DynTab] goto tab=%s', gotoBtn.dataset.tab);
         }
     } else if (prevActiveTabId) {
         var restoredBtn = bar.querySelector('[data-tab="' + prevActiveTabId + '"]');
         if (restoredBtn) {
-            restoredBtn.click();  /* re-activates tab and reloads its output */
+            restoredBtn.click();
+        } else {
+            console.info('[DynTab] RESTORE FAILED — prev=%s not found in bar', prevActiveTabId);
         }
+    } else {
+        console.info('[DynTab] NO RESTORE — no prevActiveTabId (static tab was active?)');
     }
+    var _activeAfter = bar.querySelector('.dynamic-tab.active');
+    var _containerVis = container.offsetHeight > 0;
+    var _activePanels = container.querySelectorAll('.tab-content.active').length;
+    console.info('[DynTab] result: activeBtn=%s activePanels=%d containerVisible=%s elapsed=%dms',
+        _activeAfter ? _activeAfter.dataset.tab : 'NONE', _activePanels, _containerVis,
+        Math.round(performance.now() - _dtStart));
 
     /* Refresh scroll arrow opacity after tab list changes */
     if (bar) {
@@ -1418,6 +1433,13 @@ function loadProcessOutput(processId, targetEl) {
     fetchJson('/api/processes/' + processId + '/output?max_chars=' + _maxChars).then(function(data) {
         /* Bail if the project switched while the fetch was in-flight */
         if (L._projectSwitchTime !== _switchTs) return;
+        var _isDyn = targetEl.id && targetEl.id.indexOf('dyn-output-') === 0;
+        if (_isDyn) {
+            var _inDoc = document.contains(targetEl);
+            var _bytes = (data.output_chunk || data.output || '').length;
+            console.info('[DynTab] fetch done proc=%s inDOM=%s bytes=%d elId=%s',
+                processId, _inDoc, _bytes, targetEl.id);
+        }
         /* For dynamic-tab output (dyn-output-*): honour the container-level lock.
            _dynSelLocked is set on mousedown in the container and maintained by
            selectionchange, so it is already true before the first DOM rebuild
@@ -2024,7 +2046,15 @@ function initInteractions() {
         if (!tabId) return;
         var procId = tabId.replace('dyntab-', '');
         var outputEl = $('dyn-output-' + procId);
-        if (!outputEl) return;
+        if (!outputEl) {
+            console.info('[DynTab] CLICK FAILED — dyn-output-%s not found in DOM', procId);
+            return;
+        }
+        var _inDoc = document.contains(outputEl);
+        var _panel = $(tabId);
+        var _panelActive = _panel ? _panel.classList.contains('active') : false;
+        console.info('[DynTab] click tab=%s proc=%s inDOM=%s panelActive=%s containerVis=%s',
+            tabId, procId, _inDoc, _panelActive, ($('dynamic-tabs-container').offsetHeight > 0));
 
         /* Check if this is an Interactive process with a terminal session */
         var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
