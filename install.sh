@@ -962,13 +962,7 @@ elif _on_kali; then
         nginx redis-server
     )
     _missing_tools=()
-    # Check victim server packages via dpkg (binaries in /usr/sbin, not on PATH)
-    for _pkg in mariadb-server samba snmpd xrdp; do
-        if ! dpkg -l "$_pkg" 2>/dev/null | grep -q "^ii"; then
-            warn "  Victim test server package not installed: $_pkg"
-            warn "  Run: sudo apt-get install -y $_pkg"
-        fi
-    done
+    # (Victim test server packages removed — not needed for production)
 
     for _t in "${_CRITICAL_TOOLS[@]}"; do
         command -v "${_t}" &>/dev/null || _missing_tools+=("${_t}")
@@ -1129,11 +1123,6 @@ _log_check \
     "pip uninstall-no-record-file (Debian-managed package)" \
     "uninstall-no-record-file|no-record-file" \
     "Use venv (already done) — this error only appears on system-python installs"
-
-_log_check \
-    "No module named pytest — pytest missing from venv during step 8" \
-    "No module named pytest" \
-    "sudo /opt/legion-venv/bin/pip install pytest"
 
 _log_check \
     "rsh-client install conflict" \
