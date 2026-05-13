@@ -154,6 +154,11 @@ _install_tool() {
                     }
             fi
             ;;
+        ssh-audit)
+            sudo apt-get install -y ssh-audit 2>/dev/null || {
+                sudo "${VENV}/bin/pip" install ssh-audit 2>/dev/null \
+                    && sudo ln -sf "${VENV}/bin/ssh-audit" /usr/local/bin/ssh-audit
+            } ;;
         *)  sudo apt-get install -y --ignore-missing "$tool" 2>/dev/null || true ;;
     esac
     if command -v "$tool" &>/dev/null; then
