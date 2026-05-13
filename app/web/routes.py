@@ -1021,28 +1021,6 @@ def settings_save():
     _wc().applySettings()
     return jsonify({"status": "ok", "path": path})
 
-_client_log_buf = []
-
-@web_bp.post("/api/client-log")
-def client_log():
-    """Receive [DynTab] debug logs from browser JS for server-side inspection."""
-    try:
-        body = request.get_json(force=True, silent=True) or {}
-    except Exception:
-        body = {}
-    msg = body.get('msg', '')
-    if msg:
-        import time as _t
-        _client_log_buf.append(f"[{_t.strftime('%H:%M:%S')}] {msg}")
-        if len(_client_log_buf) > 500:
-            _client_log_buf[:] = _client_log_buf[-250:]
-    return {'ok': True}
-
-@web_bp.get("/api/client-log")
-def client_log_read():
-    """Read collected [DynTab] client logs."""
-    return {'lines': _client_log_buf}
-
 @web_bp.get("/api/logs")
 def get_logs():
     """Qt6: reloadLogFile reads log file and filters by INFO/DEBUG level.

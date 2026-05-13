@@ -4,12 +4,6 @@
    ================================================================ */
 'use strict';
 
-/* ── [DynTab] debug logger — sends to server for terminal inspection ── */
-function _dtLog(msg) {
-    console.info(msg);
-    try { navigator.sendBeacon('/api/client-log', JSON.stringify({msg: msg})); } catch(e) {}
-}
-
 /* ── Notes rendering: headers + ANSI colour ── */
 /* Qt6: notesCursor.insertText(header, headerFormat) — orange bg, black text.
    Lines may contain ANSI codes when inserted via Ctrl+B from terminal output;
@@ -1280,7 +1274,6 @@ function renderDynamicToolTabs(hostIp) {
        selected) text in the upper output area, skip this rebuild entirely.
        The next poll will run normally once the selection is released. */
     if (_dynSelLocked) return;
-    var _dtStart = performance.now();
 
     var bar = $('right-tab-bar');
     var container = $('dynamic-tabs-container');
@@ -1304,7 +1297,6 @@ function renderDynamicToolTabs(hostIp) {
     /* Find processes for this host — matched ones sort first (Qt6: tab turns red) */
     var hostProcs = L.processes.filter(function(p) { return p.hostIp === hostIp; });
     hostProcs.sort(function(a, b) { return (b.has_match ? 1 : 0) - (a.has_match ? 1 : 0); });
-    _dtLog('[DynTab] rebuild host=' + hostIp + ' procs=' + hostProcs.length + ' prev=' + (prevActiveTabId || 'none') + ' order=[' + hostProcs.map(function(p){return p.id+':'+p.name+(p.has_match?'*':'');}).join(', ') + ']');
     hostProcs.forEach(function(proc) {
         var tabId = 'dyntab-' + proc.id;
         var btn = document.createElement('button');
@@ -1335,22 +1327,15 @@ function renderDynamicToolTabs(hostIp) {
         if (gotoBtn) {
             gotoBtn.click();
             gotoBtn.scrollIntoView({behavior:'smooth', block:'nearest', inline:'nearest'});
-            _dtLog('[DynTab] goto tab=' + gotoBtn.dataset.tab);
         }
     } else if (prevActiveTabId) {
         var restoredBtn = bar.querySelector('[data-tab="' + prevActiveTabId + '"]');
         if (restoredBtn) {
             restoredBtn.click();
         } else {
-            _dtLog('[DynTab] RESTORE FAILED — prev=' + prevActiveTabId + ' not found in bar');
         }
     } else {
-        _dtLog('[DynTab] NO RESTORE — no prevActiveTabId (static tab was active?)');
     }
-    var _activeAfter = bar.querySelector('.dynamic-tab.active');
-    var _containerVis = container.offsetHeight > 0;
-    var _activePanels = container.querySelectorAll('.tab-content.active').length;
-    _dtLog('[DynTab] result: activeBtn=' + (_activeAfter ? _activeAfter.dataset.tab : 'NONE') + ' activePanels=' + _activePanels + ' containerVisible=' + _containerVis + ' elapsed=' + Math.round(performance.now() - _dtStart) + 'ms');
 
     /* Refresh scroll arrow opacity after tab list changes */
     if (bar) {
@@ -1437,9 +1422,6 @@ function loadProcessOutput(processId, targetEl) {
         if (L._projectSwitchTime !== _switchTs) return;
         var _isDyn = targetEl.id && targetEl.id.indexOf('dyn-output-') === 0;
         if (_isDyn) {
-            var _inDoc = document.contains(targetEl);
-            var _bytes = (data.output_chunk || data.output || '').length;
-            _dtLog('[DynTab] fetch done proc=' + processId + ' inDOM=' + _inDoc + ' bytes=' + _bytes + ' elId=' + targetEl.id);
         }
         /* For dynamic-tab output (dyn-output-*): honour the container-level lock.
            _dynSelLocked is set on mousedown in the container and maintained by
@@ -2060,14 +2042,7 @@ function initInteractions() {
         if (!tabId) return;
         var procId = tabId.replace('dyntab-', '');
         var outputEl = $('dyn-output-' + procId);
-        if (!outputEl) {
-            _dtLog('[DynTab] CLICK FAILED — dyn-output-' + procId + ' not found in DOM');
-            return;
-        }
-        var _inDoc = document.contains(outputEl);
-        var _panel = $(tabId);
-        var _panelActive = _panel ? _panel.classList.contains('active') : false;
-        _dtLog('[DynTab] click tab=' + tabId + ' proc=' + procId + ' inDOM=' + _inDoc + ' panelActive=' + _panelActive + ' containerVis=' + ($('dynamic-tabs-container').offsetHeight > 0));
+        if (!outputEl) return;
 
         /* Check if this is an Interactive process with a terminal session */
         var proc = L.processes.find(function(p) { return String(p.id) === String(procId); });
