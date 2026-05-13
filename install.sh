@@ -60,12 +60,12 @@ else
     CURRENT_BRANCH=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
     if [[ "${CURRENT_BRANCH}" == "unknown" ]]; then
         warn "Cannot determine git branch — skipping branch check"
-    elif [[ "${CURRENT_BRANCH}" != "flask-clean" ]]; then
+    elif [[ "${CURRENT_BRANCH}" != "flask-clean" && "${CURRENT_BRANCH}" != "flask-clean-prod" ]]; then
         echo -e "${RED}"
         echo "  ╔═══════════════════════════════════════════════════════════════════╗"
         echo "  ║  WRONG BRANCH: you are on '${CURRENT_BRANCH}'                          "
-        echo "  ║  The Flask web UI lives on the 'flask-clean' branch.             ║"
-        echo "  ║  Fix:  sudo git checkout flask-clean && sudo bash install.sh     ║"
+        echo "  ║  Use 'flask-clean' (dev) or 'flask-clean-prod' (production).     ║"
+        echo "  ║  Fix:  sudo git checkout flask-clean-prod && sudo bash install.sh║"
         echo "  ╚═══════════════════════════════════════════════════════════════════╝"
         echo -e "${NC}"
         exit 1
