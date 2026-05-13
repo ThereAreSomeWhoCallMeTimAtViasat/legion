@@ -45,8 +45,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.219-flask
-- **Static asset cache:** CSS `?v=91`, JS `?v=120` in `base.html`
+- **Current Flask version:** v10.223-flask
+- **Static asset cache:** CSS `?v=91`, JS `?v=123` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 
 ## CRITICAL ARCHITECTURE DECISION
@@ -289,6 +289,12 @@ Called automatically from `start()` on every project open/create:
 - **v10.217**: Save button highlight persists across Easy↔Advanced switches — `openEasy()` was calling `_clearDirty()` which killed the pulse. Removed that call. Also fixed `waybackurls` command: `> [OUTPUT].txt` → `| tee [OUTPUT].txt` (stdout was redirected to file, nothing for `_capture_output` to read).
 - **v10.218**: Match detection broken by ANSI color codes — tools like nuclei wrap severity in ANSI (`[\x1b[31mhigh\x1b[0m]`), breaking the plain substring match `'[high]' in text`. Fix: strip ANSI codes with `re.sub(r'\x1b\[[0-9;]*m', '', text)` before `detectMatches()`. Also fixed `sqlmap-scan` and `sqlmap-http` commands: removed embedded double-quotes from `-u` argument.
 - **v10.219**: Bundled `app/masterLegion.conf` for air-gapped recovery. Three paths: (1) automatic fallback when `AppSettings.__init__` can't find repo `legion.conf`; (2) `python3 legion.py --reset-conf` CLI; (3) direct file copy. Also restored 34 user-added match keywords (5 positive + 29 negative) that were lost by `sudo cp` repo→live conf syncs. Consolidated from 42 timestamped backups. Total: 104 positive, 45 negative keywords. Hydra VNC and oracle-listener fixes: both modules are password-only (`-P` not `-C`). Created `wordlists/oracle-passwords.txt` (532 passwords extracted from the colon file). Full Hydra audit confirmed all 12 entries correct.
+- **conf fix**: 8 match keywords dropped in commit `2a065bf` ("global-positive match keywords for all new tools") were never restored: `exists`, `Command shell session`, `Got answer`, `[high]`, `(Status: 200)`, `[*] Received`, `(Status: 302)`, `valid password found`, `Netbios`. Not a code bug — a data/conf overwrite. Both repo `legion.conf` and live conf updated.
+- **Test suite fixes** (commits 0b57e08→dced0ac): process table column shift from v10.136 checkbox — 12 test files updated from `cells[4]` (Status) to `cells[5]`, and `cells[1]` (Name) to `cells[2]`. User stories server startup fixed with `--no-prompt` flag. Conf drift root cause found: `test_ui_wiring.py` P6 activates the `default` profile, which copies `default.conf` → working conf; if `default.conf` is stale, it silently downgrades the live conf. Fix: `run_tests.sh` now syncs both `legion.conf` AND `profiles/default.conf` from the repo at startup AND before the selenium section. `B6 killProcess` race fixed: `storeProcessKillStatus` now committed BEFORE `os.kill()` so `_capture_output` threads see 'Killed' via `isKilledProcess()` before they run. `T1.2/REG3` window sizes increased (3000→5000, 200→1000 chars). `A1.x` tests updated for timestamped backup format. `ai_history.db` cleaned at test fixture start so accumulated entries don't break "no history" tests.
+- **v10.220**: AI tab toolbar — Analyze, Get Attack Advice, Re-analyze, Export HTML buttons moved to persistent toolbar at top. All start disabled, enable based on state. Status text and spinner in toolbar.
+- **v10.221**: Config manager find bar always visible in Advanced mode. Hidden in Easy Mode, shown on return. Close button removed (Escape clears instead of hides).
+- **v10.222**: AI toolbar visibility fix — inline `display:flex` on `#ai-right` overrode `.tab-content` `display:none`, making AI buttons visible on all tabs.
+- **v10.223**: Waiting/Running processes with no output show status message ("Waiting in queue..." / "Running... No output yet") instead of blank panel. LeakSearch `-d` → `-k` fix. gau `--o` → `| tee` fix. dnsrecon test regex fix for configparser spaces. nuclei-https expected output set to empty (10k templates timeout). `matches` profile synced as new master conf.
 
 ---
 
