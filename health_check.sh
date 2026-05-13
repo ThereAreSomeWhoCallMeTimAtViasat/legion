@@ -14,9 +14,9 @@ REAL_HOME=$(eval echo "~${REAL_USER}")
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 PASS=0; FAIL=0; WARN=0
 
-ok()   { ((PASS++)); echo -e "  ${GREEN}✓${NC}  $1"; }
-fail() { ((FAIL++)); echo -e "  ${RED}✗${NC}  $1"; }
-warn() { ((WARN++)); echo -e "  ${YELLOW}!${NC}  $1"; }
+ok()   { PASS=$((PASS + 1)); echo -e "  ${GREEN}✓${NC}  $1"; }
+fail() { FAIL=$((FAIL + 1)); echo -e "  ${RED}✗${NC}  $1"; }
+warn() { WARN=$((WARN + 1)); echo -e "  ${YELLOW}!${NC}  $1"; }
 
 echo ""
 echo "══════════════════════════════════════════════"
