@@ -125,6 +125,9 @@ class AppSettings():
     def getGUISettings(self):
         return self.getSettingsByGroup('GUISettings')
 
+    def getAISettings(self):
+        return self.getSettingsByGroup('AISettings')
+
     def getHostActions(self):
         self.actions.beginGroup('HostActions')
         hostactions = []

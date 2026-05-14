@@ -5877,7 +5877,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function _aiShowState(state) {
-        ['ai-blocking','ai-ready','ai-running','ai-results','ai-no-host'].forEach(function(id) {
+        ['ai-blocking','ai-ready','ai-running','ai-results','ai-no-host','ai-not-configured'].forEach(function(id) {
             var el = $(id); if (el) el.style.display = 'none';
         });
         var el = $(state); if (el) el.style.display = '';
@@ -5897,6 +5897,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (state === 'ai-blocking') statusText.textContent = 'Waiting for scans to finish…';
             else if (state === 'ai-running') statusText.textContent = 'Running analysis…';
             else if (state === 'ai-no-host') statusText.textContent = 'Select a host';
+            else if (state === 'ai-not-configured') statusText.textContent = 'Configuration required';
             else statusText.textContent = '';
         }
     }
@@ -5905,6 +5906,26 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!hostId) { _aiShowState('ai-no-host'); return; }
         _aiHostId = hostId;
         fetchJson('/api/ai/host/' + hostId + '/status').then(function(s) {
+            /* Show provider badge */
+            var provBadge = $('ai-provider-badge');
+            if (provBadge) {
+                if (s.ai_provider && s.ai_provider !== 'none') {
+                    provBadge.textContent = s.ai_provider + (s.ai_model ? ' / ' + s.ai_model : '');
+                    provBadge.style.display = '';
+                } else {
+                    provBadge.textContent = '';
+                    provBadge.style.display = 'none';
+                }
+            }
+
+            /* Not configured — show config error */
+            if (s.ai_configured === false) {
+                _aiShowState('ai-not-configured');
+                var errEl = $('ai-config-error');
+                if (errEl) errEl.textContent = s.ai_config_error || 'AI not configured';
+                return;
+            }
+
             if (s.blocking && s.blocking.length) {
                 _aiShowState('ai-blocking');
                 var ul = $('ai-blocking-list');

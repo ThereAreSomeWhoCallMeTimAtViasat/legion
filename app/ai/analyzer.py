@@ -1,6 +1,11 @@
 """
-AI Analyzer — assembles host data, runs two-phase Vertex AI pipeline,
+AI Analyzer — assembles host data, runs two-phase AI pipeline,
 saves results to both the persistent history DB and the project DB.
+
+Supports multiple AI providers:
+  - vertex:    Anthropic Claude via Google Cloud Vertex AI (GCP ADC auth)
+  - anthropic: Anthropic Claude direct API (API key auth)
+  - openai:    OpenAI-compatible API (OpenAI, Azure, ollama, vLLM, LM Studio)
 
 Phase 1 (Synthesizer): raw DB data → structured JSON findings array
 Phase 2 (Attack Planner): JSON findings → Markdown attack plan
@@ -19,14 +24,71 @@ from app.auxiliary import Filters
 
 log = logging.getLogger('legion')
 
-# Pricing for cost estimation (per million tokens, USD)
+# Pricing for cost estimation (per million tokens, USD) — Anthropic defaults
 _INPUT_COST_PER_MTOK  = 3.0
 _OUTPUT_COST_PER_MTOK = 15.0
 _CHARS_PER_TOKEN      = 4      # rough approximation
 
+_CONF_PATH = os.path.expanduser('~/.local/share/legion/legion.conf')
 
-def _read_vertex_config():
-    """Read project_id, region, and model from ~/.claude/settings.json."""
+
+def _read_ai_config():
+    """Read AI provider settings from legion.conf [AISettings] section.
+
+    Falls back to ~/.claude/settings.json for existing Vertex AI users who
+    haven't migrated yet.
+
+    Returns dict with keys: provider, api_key, model, api_url,
+                            vertex_project_id, vertex_region.
+    """
+    import configparser
+    cfg = configparser.RawConfigParser()
+    cfg.read(_CONF_PATH)
+
+    provider   = ''
+    api_key    = ''
+    model      = ''
+    api_url    = ''
+    vertex_pid = ''
+    vertex_reg = 'global'
+
+    if cfg.has_section('AISettings'):
+        provider   = cfg.get('AISettings', 'ai_provider', fallback='').strip()
+        api_key    = cfg.get('AISettings', 'ai_api_key', fallback='').strip()
+        model      = cfg.get('AISettings', 'ai_model', fallback='').strip()
+        api_url    = cfg.get('AISettings', 'ai_api_url', fallback='').strip()
+        vertex_pid = cfg.get('AISettings', 'ai_vertex_project_id', fallback='').strip()
+        vertex_reg = cfg.get('AISettings', 'ai_vertex_region', fallback='global').strip()
+
+    # Fallback: if provider is empty/none, check ~/.claude/settings.json
+    # for the legacy Vertex AI config
+    if not provider or provider == 'none':
+        legacy = _read_legacy_vertex_config()
+        if legacy:
+            provider   = 'vertex'
+            vertex_pid = legacy['project_id']
+            vertex_reg = legacy['region']
+            model      = legacy['model']
+
+    if not model:
+        if provider == 'openai':
+            model = 'gpt-4o'
+        else:
+            model = 'claude-sonnet-4-6'
+
+    return {
+        'provider':          provider,
+        'api_key':           api_key,
+        'model':             model,
+        'api_url':           api_url,
+        'vertex_project_id': vertex_pid,
+        'vertex_region':     vertex_reg,
+    }
+
+
+def _read_legacy_vertex_config():
+    """Read legacy Vertex AI config from ~/.claude/settings.json.
+    Returns dict or None if not configured."""
     sudo_user = os.environ.get('SUDO_USER')
     if sudo_user:
         settings_path = f'/home/{sudo_user}/.claude/settings.json'
@@ -35,31 +97,105 @@ def _read_vertex_config():
     try:
         with open(settings_path) as f:
             s = json.load(f)
-        env    = s.get('env', {})
-        proj   = env.get('ANTHROPIC_VERTEX_PROJECT_ID', '')
-        region = env.get('CLOUD_ML_REGION', 'global')
-        model  = s.get('model', 'claude-sonnet-4-6').replace('[1m]', '')
-        return proj, region, model
-    except Exception as e:
-        log.error(f"[AI] Could not read ~/.claude/settings.json: {e}")
-        raise
+        env  = s.get('env', {})
+        proj = env.get('ANTHROPIC_VERTEX_PROJECT_ID', '')
+        if not proj:
+            return None
+        return {
+            'project_id': proj,
+            'region': env.get('CLOUD_ML_REGION', 'global'),
+            'model': s.get('model', 'claude-sonnet-4-6').replace('[1m]', ''),
+        }
+    except Exception:
+        return None
 
 
-def _get_client():
-    from anthropic import AnthropicVertex
-    proj, region, _ = _read_vertex_config()
+class _OpenAIAdapter:
+    """Wraps the OpenAI chat completions API to match the Anthropic
+    messages.create() interface used by the rest of analyzer.py."""
 
-    # When running as root via sudo, ADC credentials live under the original
-    # user's home, not /root.  Point the Google auth library there explicitly.
-    if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-        sudo_user = os.environ.get('SUDO_USER')
-        if sudo_user:
-            adc_path = f'/home/{sudo_user}/.config/gcloud/application_default_credentials.json'
-            if os.path.exists(adc_path):
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = adc_path
-                log.debug(f"[AI] Using ADC from {adc_path}")
+    def __init__(self, api_key, base_url=None):
+        from openai import OpenAI
+        kwargs = {'api_key': api_key}
+        if base_url:
+            kwargs['base_url'] = base_url
+        self._client = OpenAI(**kwargs)
+        self.messages = self
 
-    return AnthropicVertex(project_id=proj, region=region)
+    def create(self, *, model, max_tokens, system, messages):
+        oai_messages = [{'role': 'system', 'content': system}]
+        for m in messages:
+            oai_messages.append({'role': m['role'], 'content': m['content']})
+
+        resp = self._client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=oai_messages,
+        )
+        return _OpenAIResponse(resp)
+
+
+class _OpenAIResponse:
+    """Adapts OpenAI ChatCompletion response to Anthropic response shape."""
+
+    def __init__(self, resp):
+        choice = resp.choices[0]
+        self.content = [_TextBlock(choice.message.content or '')]
+        u = resp.usage
+        self.usage = _Usage(
+            getattr(u, 'prompt_tokens', 0) or 0,
+            getattr(u, 'completion_tokens', 0) or 0,
+        )
+
+
+class _TextBlock:
+    def __init__(self, text):
+        self.text = text
+
+
+class _Usage:
+    def __init__(self, input_tokens, output_tokens):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+def _get_client(config=None):
+    """Factory: return an AI client based on the configured provider."""
+    if config is None:
+        config = _read_ai_config()
+
+    provider = config['provider']
+
+    if provider == 'vertex':
+        from anthropic import AnthropicVertex
+        # When running as root via sudo, ADC credentials live under the
+        # original user's home, not /root.
+        if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
+            sudo_user = os.environ.get('SUDO_USER')
+            if sudo_user:
+                adc_path = f'/home/{sudo_user}/.config/gcloud/application_default_credentials.json'
+                if os.path.exists(adc_path):
+                    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = adc_path
+                    log.debug(f"[AI] Using ADC from {adc_path}")
+        return AnthropicVertex(
+            project_id=config['vertex_project_id'],
+            region=config['vertex_region'],
+        )
+
+    if provider == 'anthropic':
+        from anthropic import Anthropic
+        return Anthropic(api_key=config['api_key'])
+
+    if provider == 'openai':
+        return _OpenAIAdapter(
+            api_key=config['api_key'],
+            base_url=config['api_url'] or None,
+        )
+
+    raise ValueError(
+        f"AI provider not configured. Set ai_provider in legion.conf "
+        f"[AISettings] to one of: vertex, anthropic, openai"
+    )
 
 
 def estimate_cost(text_length_chars):
@@ -268,8 +404,9 @@ def run_analysis(logic, host_id):
         host_obj, host_ip, os_family, ports, cves, scripts,
         note_text, enriched_procs)
 
-    _, model = _read_vertex_config()[1], _read_vertex_config()[2]
-    client   = _get_client()
+    config = _read_ai_config()
+    model  = config['model']
+    client = _get_client(config)
 
     total_tin = total_tout = 0
 
@@ -406,8 +543,9 @@ def run_phase1(logic, host_id):
         host_obj, host_ip, os_family, ports, cves, scripts,
         note_text, enriched_procs)
 
-    _, model = _read_vertex_config()[1], _read_vertex_config()[2]
-    client = _get_client()
+    config = _read_ai_config()
+    model  = config['model']
+    client = _get_client(config)
 
     log.info(f"[AI] Phase 1 starting for host {host_ip} (~{len(prompt_text)} chars)")
     p1_resp = client.messages.create(
@@ -520,8 +658,9 @@ def run_phase2(logic, host_id):
         raise ValueError(f"Host {host_id} not found in project DB")
     host_ip = result[1]
 
-    _, model = _read_vertex_config()[1], _read_vertex_config()[2]
-    client = _get_client()
+    config = _read_ai_config()
+    model  = config['model']
+    client = _get_client(config)
 
     log.info(f"[AI] Phase 2 starting for host {host_ip}")
     p2_resp = client.messages.create(

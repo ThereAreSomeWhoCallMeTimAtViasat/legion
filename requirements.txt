@@ -28,9 +28,10 @@ selenium>=4.9.0
 flask>=3.0.0
 werkzeug>=3.0.0           # Flask WSGI toolkit; also used directly for make_server
 
-# ── Flask web mode: AI tab (Vertex AI / Anthropic) ────────────────────────
-anthropic>=0.20.0         # AnthropicVertex client in app/ai/analyzer.py
+# ── Flask web mode: AI tab (multi-provider) ──────────────────────────────
+anthropic>=0.20.0         # Vertex AI + direct Anthropic API in app/ai/analyzer.py
 google-auth>=2.0.0        # ADC credentials required by anthropic[vertex]
+openai>=1.0.0             # OpenAI-compatible provider (OpenAI, Azure, ollama, vLLM)
 
 # ── Qt6 GUI mode ──────────────────────────────────────────────────────────
 PyQt6>=6.4.0              # Qt6 Python bindings — main GUI framework

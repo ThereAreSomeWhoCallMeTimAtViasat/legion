@@ -41,7 +41,7 @@ I've always liked Legion. The classic layout with hosts on the left, tabbed deta
 
 Since the main branch was moving to Flask, I rewrote the classic interface as a Flask web app. The layout is very close to the original. The keyboard shortcuts, tab structure, and process model are the same. The underlying Python scanning engine (`controller.py`, `logic.py`, the SQLAlchemy ORM, the staged nmap pipeline) is unchanged — I just replaced every Qt widget with its HTML equivalent, polled with a 1.5-second snapshot API instead of Qt signals, and ran the whole thing in a browser.
 
-While I was in there I added the things I'd always wanted: Interactive terminals, AI host analysis via Claude (Vertex AI), tool keyword match highlighting with navigation arrows, better note taking, parallel nmap stages, a config GUI so you don't have to hand-edit `legion.conf`, and several other UI features. There is a full selenium test suite for developers.  The name **LegionnAIre** reflects the AI addition and its Legion roots.
+While I was in there I added the things I'd always wanted: Interactive terminals, AI host analysis (Anthropic Claude, Google Gemini, OpenAI, or local models), tool keyword match highlighting with navigation arrows, better note taking, parallel nmap stages, a config GUI so you don't have to hand-edit `legion.conf`, and several other UI features. There is a full selenium test suite for developers.  The name **LegionnAIre** reflects the AI addition and its Legion roots.
 
 ---
 
@@ -64,11 +64,14 @@ While I was in there I added the things I'd always wanted: Interactive terminals
 
 ![Process output with ANSI colour](gifs/shots/output_annotated.png)
 
-### AI host analysis (Claude via Vertex AI)
+### AI host analysis (multi-provider)
 - **Phase 1 — Synthesizer**: reads all tool output, NSE scripts, CVEs, and analyst notes for a host; extracts a structured findings table (severity-coded Critical/High/Medium/Low/Info)
 - **Phase 2 — Attack Planner**: on-demand; takes Phase 1 findings as input and produces a specific, actionable attack plan with exact commands
 - **Persistent history DB** at `~/.local/share/legion/ai_history.db` — analyses survive project switches; Jaccard similarity matching shows historical hosts that look like the current target (≥95% match on port/service/version fingerprint)
-- Auth via Google ADC (`gcloud auth application-default login`) — no API key stored anywhere
+- **Three provider backends** — configure in `legion.conf` `[AISettings]`:
+  - **Anthropic** — direct API key auth (`api.anthropic.com`)
+  - **Google Vertex AI** — Claude on GCP via Application Default Credentials
+  - **OpenAI-compatible** — works with OpenAI, Google Gemini, Azure OpenAI, ollama, vLLM, LM Studio, or any provider that speaks the OpenAI chat completions API
 
 ![AI tab — Phase 1 findings table and Phase 2 attack plan](gifs/shots/ai_annotated.png)
 
@@ -169,7 +172,7 @@ sudo bash install.sh
 
 | Flag | Effect |
 |---|---|
-| `--no-ai` | Skip the Vertex AI / gcloud setup prompt at the end |
+| `--no-ai` | Skip the AI provider setup prompt at the end |
 
 ---
 
@@ -210,7 +213,7 @@ Expected output: a list of packages being installed, ending with `Successfully i
 
 **Verify:**
 ```bash
-python3 -c "import flask, PyQt6.QtCore, sqlalchemy, anthropic; print('OK')"
+python3 -c "import flask, PyQt6.QtCore, sqlalchemy, anthropic, openai; print('OK')"
 # Expected: OK
 ```
 
@@ -272,36 +275,117 @@ sudo chmod +x /usr/local/bin/geckodriver
 geckodriver --version   # verify
 ```
 
-### Step 5 — (Optional) AI tab — Vertex AI credentials
+### Step 5 — (Optional) AI tab — choose a provider
 
-The AI tab uses Anthropic Claude via Google Cloud Vertex AI. Authentication uses
-[Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) — no API key file is stored anywhere.
-
-**Prerequisites:** a Google Cloud project with the Vertex AI API enabled.
+The AI tab supports multiple backends. Pick **one** of the options below and
+configure it in `legion.conf` under `[AISettings]`. You can edit this section
+via Config Manager (F2 → Easy Edit or Advanced mode) or directly:
 
 ```bash
-# 1. Authenticate (one-time; already done if you use Claude Code daily)
+sudoedit /root/.local/share/legion/legion.conf
+```
+
+Scroll to the `[AISettings]` section at the bottom of the file.
+
+#### Option A — Anthropic direct API (simplest)
+
+Get an API key from [console.anthropic.com](https://console.anthropic.com/).
+
+```ini
+[AISettings]
+ai_provider=anthropic
+ai_api_key=sk-ant-api03-YOUR-KEY-HERE
+ai_model=claude-sonnet-4-6
+ai_api_url=
+ai_vertex_project_id=
+ai_vertex_region=global
+```
+
+#### Option B — Google Gemini
+
+Get an API key from [Google AI Studio](https://aistudio.google.com/apikey).
+This uses Google's OpenAI-compatible endpoint — no GCP project required.
+
+```ini
+[AISettings]
+ai_provider=openai
+ai_api_key=YOUR-GEMINI-API-KEY
+ai_model=gemini-2.5-flash
+ai_api_url=https://generativelanguage.googleapis.com/v1beta/openai/
+ai_vertex_project_id=
+ai_vertex_region=global
+```
+
+Available Gemini models: `gemini-2.5-flash` (fast/cheap), `gemini-2.5-pro` (most capable), `gemini-2.0-flash`.
+
+#### Option C — OpenAI
+
+```ini
+[AISettings]
+ai_provider=openai
+ai_api_key=sk-YOUR-OPENAI-KEY
+ai_model=gpt-4o
+ai_api_url=
+ai_vertex_project_id=
+ai_vertex_region=global
+```
+
+#### Option D — Local models (ollama, vLLM, LM Studio)
+
+Any server that speaks the OpenAI chat completions API works. No API key needed for local servers.
+
+```ini
+[AISettings]
+ai_provider=openai
+ai_api_key=not-needed
+ai_model=llama3
+ai_api_url=http://localhost:11434/v1/
+ai_vertex_project_id=
+ai_vertex_region=global
+```
+
+For **ollama**: `ai_api_url=http://localhost:11434/v1/`
+For **vLLM**: `ai_api_url=http://localhost:8000/v1/`
+For **LM Studio**: `ai_api_url=http://localhost:1234/v1/`
+
+#### Option E — Google Vertex AI (GCP)
+
+For users who access Claude through a Google Cloud project. Uses Application
+Default Credentials — no API key stored.
+
+**Prerequisites:** a GCP project with the Vertex AI API enabled.
+
+```bash
 gcloud auth application-default login
-
-# 2. Tell Legion which project and region to use
-#    Edit ~/.claude/settings.json (create it if it doesn't exist):
-cat >> ~/.claude/settings.json << 'EOF'
-{
-  "ANTHROPIC_VERTEX_PROJECT_ID": "your-gcp-project-id",
-  "CLOUD_ML_REGION": "global"
-}
-EOF
 ```
 
-**Verify:**
-```bash
-python3 -c "
-import json, pathlib
-cfg = json.loads(pathlib.Path('~/.claude/settings.json').expanduser().read_text())
-print('project:', cfg.get('ANTHROPIC_VERTEX_PROJECT_ID'))
-print('region: ', cfg.get('CLOUD_ML_REGION'))
-"
+```ini
+[AISettings]
+ai_provider=vertex
+ai_api_key=
+ai_model=claude-sonnet-4-6
+ai_api_url=
+ai_vertex_project_id=your-gcp-project-id
+ai_vertex_region=global
 ```
+
+#### Legacy Vertex AI users
+
+If you previously configured Vertex AI via `~/.claude/settings.json` (the old
+method), it still works automatically — Legion falls back to that file when
+`ai_provider` is empty or `none`. No migration required, but moving to
+`legion.conf` is recommended.
+
+#### Settings reference
+
+| Setting | Required for | Description |
+|---|---|---|
+| `ai_provider` | all | `anthropic`, `openai`, or `vertex` |
+| `ai_api_key` | anthropic, openai | Your API key (not needed for vertex or local models) |
+| `ai_model` | all | Model name (e.g. `claude-sonnet-4-6`, `gpt-4o`, `gemini-2.5-flash`) |
+| `ai_api_url` | openai (non-default) | Base URL for the API — leave blank for OpenAI's default; set for Gemini, ollama, etc. |
+| `ai_vertex_project_id` | vertex | GCP project ID |
+| `ai_vertex_region` | vertex | GCP region (default: `global`) |
 
 ### Step 6 — Verify the complete install
 
@@ -481,6 +565,7 @@ Key sections:
 | `[BruteSettings]` | Hydra defaults, wordlist paths |
 | `[ToolSettings]` | Binary paths (nmap, hydra, etc.) |
 | `[MatchSettings]` | Keywords highlighted in tool output |
+| `[AISettings]` | AI provider, API key, model, endpoint URL |
 
 ---
 

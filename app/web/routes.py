@@ -1374,7 +1374,7 @@ def _validate_legion_conf(config_text):
         'ToolSettings': {'nmap-path','hydra-path','cutycapt-path','texteditor-path','pyshodan-api-key'},
         'StagedNmapSettings': {'stage1-ports','stage2-ports','stage3-ports','stage4-ports','stage5-ports','stage6-ports'},
     }
-    dynamic_sections = {'HostActions','PortActions','PortTerminalActions','SchedulerSettings','MatchSettings','GUISettings'}
+    dynamic_sections = {'HostActions','PortActions','PortTerminalActions','SchedulerSettings','MatchSettings','GUISettings','AISettings'}
     all_valid_sections = set(fixed_section_keys.keys()) | dynamic_sections
 
     def parse_csv(value):
@@ -1884,13 +1884,42 @@ def ai_host_status(host_id):
             pass
 
     est_tokens, est_cost = estimate_cost(est_chars)
+
+    # Provider configuration status
+    from app.ai.analyzer import _read_ai_config
+    try:
+        ai_cfg = _read_ai_config()
+        ai_provider = ai_cfg['provider']
+        ai_model    = ai_cfg['model']
+        if not ai_provider or ai_provider == 'none':
+            ai_configured = False
+            ai_config_error = 'AI provider not configured. Set ai_provider in Config Manager → [AISettings].'
+        elif ai_provider in ('anthropic', 'openai') and not ai_cfg['api_key']:
+            ai_configured = False
+            ai_config_error = f'API key required for {ai_provider} provider. Set ai_api_key in Config Manager → [AISettings].'
+        elif ai_provider == 'vertex' and not ai_cfg['vertex_project_id']:
+            ai_configured = False
+            ai_config_error = 'Vertex project ID required. Set ai_vertex_project_id in Config Manager → [AISettings].'
+        else:
+            ai_configured = True
+            ai_config_error = ''
+    except Exception as e:
+        ai_provider = 'none'
+        ai_model = ''
+        ai_configured = False
+        ai_config_error = str(e)
+
     return jsonify({
-        'host_id':    host_id,
-        'host_ip':    host_ip,
-        'blocking':   blocking,
-        'ready':      len(blocking) == 0,
-        'est_tokens': est_tokens,
-        'est_cost':   est_cost,
+        'host_id':         host_id,
+        'host_ip':         host_ip,
+        'blocking':        blocking,
+        'ready':           len(blocking) == 0 and ai_configured,
+        'est_tokens':      est_tokens,
+        'est_cost':        est_cost,
+        'ai_provider':     ai_provider,
+        'ai_model':        ai_model,
+        'ai_configured':   ai_configured,
+        'ai_config_error': ai_config_error,
     })
 
 

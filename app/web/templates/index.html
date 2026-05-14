@@ -74,7 +74,7 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.223-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.224-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
@@ -274,10 +274,21 @@
         <button id="ai-reanalyze-btn" type="button" style="font-size:8pt;padding:2px 10px" disabled>Re-analyze</button>
         <button id="ai-export-html-btn" type="button" style="font-size:8pt;padding:2px 10px" disabled title="Export full report as HTML file">Export HTML</button>
         <span id="ai-cost-hint" style="font-size:9pt;color:var(--disabled);margin-left:4px"></span>
+        <span id="ai-provider-badge" style="font-size:8pt;color:#888;background:#252525;border:1px solid #444;border-radius:3px;padding:1px 6px;display:none"></span>
         <span id="ai-status-text" style="font-size:9pt;color:var(--disabled);margin-left:auto"></span>
         <span id="ai-spinner" class="spinner" style="display:none"></span>
     </div>
     <!-- State: blocking | ready | running | done -->
+    <div id="ai-not-configured" style="padding:12px;display:none">
+        <p style="color:#e8a838;font-size:11pt;margin-bottom:8px">AI Provider Not Configured</p>
+        <p id="ai-config-error" style="color:var(--disabled);font-size:10pt;margin-bottom:12px"></p>
+        <p style="color:var(--disabled);font-size:9pt">
+            Open <b>Config Manager</b> (gear icon) and set <code>[AISettings]</code>:<br>
+            <code>ai_provider</code> = <b>anthropic</b> | <b>openai</b> | <b>vertex</b><br>
+            <code>ai_api_key</code> = your API key (not needed for vertex)<br>
+            <code>ai_model</code> = model name (e.g. claude-sonnet-4-6, gpt-4o)
+        </p>
+    </div>
     <div id="ai-blocking" style="padding:12px;display:none">
         <p style="color:var(--disabled);font-size:11pt;margin-bottom:8px">
             Waiting for processes to finish before AI analysis:
