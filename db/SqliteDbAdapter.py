@@ -112,6 +112,16 @@ class Database:
                     ")"
                 ))
                 _conn.commit()
+
+                for _col_stmt in [
+                    "ALTER TABLE ai_analysis ADD COLUMN gap_analysis_json TEXT",
+                    "ALTER TABLE ai_analysis ADD COLUMN enum_actions_json TEXT",
+                ]:
+                    try:
+                        _conn.execute(_text(_col_stmt))
+                        _conn.commit()
+                    except Exception:
+                        pass
         except Exception as _exc:
             self.log.warning(f"Could not create process_matches table: {_exc}")
 

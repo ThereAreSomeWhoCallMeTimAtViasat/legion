@@ -1843,7 +1843,7 @@ def ai_host_status(host_id):
     wc    = _wc()
     logic = _logic()
     from app.auxiliary import Filters
-    from app.ai.analyzer import estimate_cost, _assemble_host_data, _build_phase1_prompt
+    from app.ai.analyzer import estimate_cost, estimate_cost_enhanced, _assemble_host_data, _build_phase1_prompt
 
     filters = Filters()
     rc      = logic.activeProject.repositoryContainer
@@ -1884,6 +1884,7 @@ def ai_host_status(host_id):
             pass
 
     est_tokens, est_cost = estimate_cost(est_chars)
+    _, est_cost_enhanced = estimate_cost_enhanced(est_chars)
 
     # Provider configuration status
     from app.ai.analyzer import _read_ai_config
@@ -1916,6 +1917,7 @@ def ai_host_status(host_id):
         'ready':           len(blocking) == 0 and ai_configured,
         'est_tokens':      est_tokens,
         'est_cost':        est_cost,
+        'est_cost_enhanced': est_cost_enhanced,
         'ai_provider':     ai_provider,
         'ai_model':        ai_model,
         'ai_configured':   ai_configured,
@@ -1956,16 +1958,54 @@ def ai_analyze_host(host_id):
 
 @web_bp.post("/api/ai/analyze-host/<int:host_id>/phase1")
 def ai_analyze_phase1(host_id):
-    """Run Phase 1 (synthesizer) only. Phase 2 saved as null until requested."""
+    """Enhanced Phase 1: synthesis → gap analysis → batch approval → tool execution → re-synthesis.
+    Returns job_id for async polling. Pass {sync: true} for legacy synchronous mode."""
     logic = _logic()
-    from app.ai.analyzer import run_phase1
+    payload = request.get_json(silent=True) or {}
+
+    if payload.get('sync'):
+        from app.ai.analyzer import run_phase1
+        try:
+            result = run_phase1(logic, host_id)
+            return jsonify({'status': 'ok', **result})
+        except Exception as e:
+            import logging
+            logging.getLogger('legion').error(f"[AI] phase1 sync error: {e}")
+            return _err(f"Phase 1 failed: {e}", 500)
+
+    from app.ai.analyzer import start_phase1_job
     try:
-        result = run_phase1(logic, host_id)
-        return jsonify({'status': 'ok', **result})
+        wc = _wc()
+        job_id = start_phase1_job(logic, host_id, wc)
+        return jsonify({'status': 'ok', 'job_id': job_id, 'async': True})
     except Exception as e:
         import logging
-        logging.getLogger('legion').error(f"[AI] phase1 error: {e}")
-        return _err(f"Phase 1 failed: {e}", 500)
+        logging.getLogger('legion').error(f"[AI] phase1 start error: {e}")
+        return _err(f"Phase 1 failed to start: {e}", 500)
+
+
+@web_bp.get("/api/ai/host/<int:host_id>/phase1/progress/<job_id>")
+def ai_phase1_progress(host_id, job_id):
+    """Poll for enhanced Phase 1 progress."""
+    from app.ai.analyzer import get_job_status
+    since = request.args.get('since', 0, type=int)
+    status = get_job_status(job_id, since_index=since)
+    if not status:
+        return _err("Job not found", 404)
+    return jsonify(status)
+
+
+@web_bp.post("/api/ai/phase1/approve/<job_id>")
+def ai_phase1_approve(job_id):
+    """Batch approval: user selects which commands to run."""
+    from app.ai.analyzer import submit_approval
+    payload = request.get_json(silent=True) or {}
+    approved = payload.get('approved', [])
+    install_first = payload.get('install_first', [])
+    ok = submit_approval(job_id, approved, install_first)
+    if not ok:
+        return _err("Job not found", 404)
+    return jsonify({'status': 'ok'})
 
 
 @web_bp.post("/api/ai/analyze-host/<int:host_id>/phase2")
@@ -2006,6 +2046,8 @@ def ai_host_latest(host_id):
             'tokens_output':  row.tokens_output,
             'cost_usd':       row.cost_usd,
             'history_session_id': row.history_session_id,
+            'gap_analysis_json': getattr(row, 'gap_analysis_json', None),
+            'enum_actions_json': getattr(row, 'enum_actions_json', None),
         })
     finally:
         session.close()

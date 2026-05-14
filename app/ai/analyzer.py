@@ -16,7 +16,12 @@ Called from routes: POST /api/ai/analyze-host/<host_id>
 import json
 import logging
 import os
+import re
+import shlex
+import shutil
+import threading
 import time
+import uuid
 from datetime import datetime
 
 from app.ai import history_db
@@ -359,7 +364,852 @@ _PHASE2_SYSTEM = (
 
 
 # ---------------------------------------------------------------------------
-# Main analysis entry point
+# Enhanced Phase 1 — gap analysis + tool execution + re-synthesis
+# ---------------------------------------------------------------------------
+
+_SAFE_COMMAND_BINARIES = frozenset({
+    'curl', 'searchsploit', 'smbclient', 'redis-cli', 'dig', 'host',
+    'whois', 'openssl', 'rpcclient', 'ldapsearch', 'gpp-decrypt', 'net', 'nmap',
+})
+
+_INJECTION_PATTERNS = (';', '`', '$(', '&&', '||')
+
+_TOOL_PACKAGE_MAP = {
+    'enum4linux-ng': 'enum4linux-ng', 'feroxbuster': 'feroxbuster',
+    'searchsploit': 'exploitdb', 'redis-cli': 'redis-tools',
+    'smbclient': 'smbclient', 'ssh-audit': 'ssh-audit',
+    'gobuster': 'gobuster', 'nikto': 'nikto', 'whatweb': 'whatweb',
+    'wpscan': 'wpscan', 'nuclei': 'nuclei',
+    'rpcclient': 'smbclient', 'ldapsearch': 'ldap-utils',
+    'impacket-GetNPUsers': 'python3-impacket',
+    'impacket-lookupsid': 'python3-impacket',
+    'impacket-GetUserSPNs': 'python3-impacket',
+    'gpp-decrypt': 'gpp-decrypt', 'nmap': 'nmap',
+    'certipy-ad': 'certipy-ad', 'adidnsdump': 'adidnsdump',
+    'ldeep': 'ldeep', 'windapsearch': 'windapsearch',
+    'subfinder': 'subfinder', 'hashcat': 'hashcat', 'john': 'john',
+}
+
+_GAP_ANALYSIS_SYSTEM = (
+    "You are a penetration testing enumeration planner. Given the current findings "
+    "and available tools, identify coverage gaps and recommend additional enumeration.\n\n"
+    "Rules:\n"
+    "- Recommend tools from the AVAILABLE TOOLS list by their exact tool_id\n"
+    "- You may provide a command_override to customize the command for this specific target\n"
+    "  - command_override MUST use the SAME binary as the tool's default command\n"
+    "  - command_override MUST include [IP] and [OUTPUT] placeholders ([PORT] if port-specific)\n"
+    "  - command_override MUST NOT contain: backticks, $(), ;, &&, ||\n"
+    "  - Use command_override when: a subdirectory was found (scan deeper), a CMS was\n"
+    "    identified (use CMS-specific wordlist), a domain name was discovered (pass to\n"
+    "    AD tools), or a specific vulnerability indicator needs confirmation\n"
+    "- Do NOT recommend tools that appear in the ALREADY RUN list\n"
+    "- Do NOT recommend full nmap port scans — only targeted --script invocations\n"
+    "- Limit to at most 8 tool recommendations + 4 safe_commands\n"
+    "- For safe_commands, ONLY use: curl, searchsploit, smbclient, redis-cli, dig, "
+    "host, whois, openssl, rpcclient, ldapsearch, gpp-decrypt, nmap\n"
+    "- safe_commands must be read-only enumeration — no exploitation, no reverse shells\n"
+    "- Flag obvious_attacks that don't need more data (include next_command with the "
+    "exact command the user should run, including hashcat mode numbers for hashes)\n"
+    "- When Active Directory indicators are detected (port 88 Kerberos, port 389 LDAP, "
+    "port 445 with domain controller services), prioritize AD-specific tools: "
+    "ldapsearch-anon, ldapsearch-users, ldapsearch-all-attrs, rpcclient-null-enum, "
+    "impacket-lookupsid-null, impacket-getnpusers-nopass, gpp-extract, gpp-sysvol-check, "
+    "nmap-smb-vuln, certipy-find, ldeep-enum, windapsearch-users, responder-finger\n"
+    "- When recommending AD tools with YOURDOMAIN/ placeholder, use command_override to "
+    "substitute the actual domain name if discovered from LDAP/SMB enumeration\n"
+    "- When LDAP is detected, always recommend ldapsearch-all-attrs (query '*') — custom "
+    "attributes like cascadeLegacyPwd, ms-MCS-AdmPwd, unixUserPassword often contain creds\n"
+    "- Return ONLY valid JSON — no markdown fences, no explanation\n\n"
+    "Output JSON:\n"
+    '{\n'
+    '  "recommended_tools": [\n'
+    '    {"tool_id": "...", "port": "...", "protocol": "tcp", '
+    '"rationale": "...", "command_override": "..."}\n'
+    '  ],\n'
+    '  "obvious_attacks": [\n'
+    '    {"severity": "critical|high|medium", "attack": "...", '
+    '"evidence": "...", "next_command": "..."}\n'
+    '  ],\n'
+    '  "safe_commands": [\n'
+    '    {"command": "curl -sk https://[IP]:[PORT]/robots.txt", "rationale": "..."}\n'
+    '  ]\n'
+    '}'
+)
+
+_PHASE1_RESYNTHESIS_EXTRA = (
+    "\n\nAdditionally:\n"
+    "- Flag any plaintext passwords, password hashes (NTLM, NetNTLMv2, AS-REP, "
+    "Kerberoastable, GPP cpassword), base64-encoded credentials, or API keys found "
+    "in tool output as CRITICAL findings. Include the exact credential value in the "
+    "evidence field.\n"
+    "- Identify the hash type and include the hashcat mode number when a hash is found "
+    "(e.g., AS-REP = -m 18200, NetNTLMv2 = -m 5600, NTLM = -m 1000)\n"
+    "- Flag service accounts, administrator accounts, or accounts with 'Do not require "
+    "Kerberos pre-authentication' as HIGH findings"
+)
+
+_MAX_TOOLS = 8
+_MAX_SAFE_COMMANDS = 4
+_TOOL_EXEC_TIMEOUT = 300  # 5 minutes
+
+# In-memory job store
+_jobs = {}
+_jobs_lock = threading.Lock()
+_job_approval_events = {}
+
+
+def _build_known_binaries(settings):
+    """Extract all binary names from portActions and hostActions command templates."""
+    binaries = set(_SAFE_COMMAND_BINARIES)
+    for action in (settings.portActions or []):
+        cmd = str(action[2]) if len(action) > 2 else ''
+        if cmd:
+            tok = cmd.split()[0] if cmd.split() else ''
+            binaries.add(os.path.basename(tok))
+    for action in (settings.hostActions or []):
+        cmd = str(action[2]) if len(action) > 2 else ''
+        if cmd:
+            tok = cmd.split()[0] if cmd.split() else ''
+            binaries.add(os.path.basename(tok))
+    binaries.discard('')
+    return frozenset(binaries)
+
+
+def _validate_command_override(override, tool_id, settings):
+    """Validate a command override from the LLM.
+    Returns (is_valid, reason)."""
+    if not override or not override.strip():
+        return False, 'empty override'
+
+    for pat in _INJECTION_PATTERNS:
+        if pat in override:
+            return False, f'injection pattern {pat!r} detected'
+
+    tokens = override.split()
+    if not tokens:
+        return False, 'no tokens in override'
+    override_binary = os.path.basename(tokens[0])
+
+    conf_binary = None
+    for action in (settings.portActions or []):
+        if str(action[1]).strip() == tool_id:
+            conf_cmd = str(action[2]) if len(action) > 2 else ''
+            if conf_cmd:
+                conf_binary = os.path.basename(conf_cmd.split()[0])
+            break
+    if not conf_binary:
+        for action in (settings.hostActions or []):
+            if str(action[1]).strip() == tool_id:
+                conf_cmd = str(action[2]) if len(action) > 2 else ''
+                if conf_cmd:
+                    conf_binary = os.path.basename(conf_cmd.split()[0])
+                break
+
+    if conf_binary and override_binary != conf_binary:
+        return False, f'binary mismatch: override={override_binary}, conf={conf_binary}'
+
+    known = _build_known_binaries(settings)
+    if override_binary not in known:
+        return False, f'unknown binary: {override_binary}'
+
+    if '[IP]' not in override:
+        return False, 'missing [IP] placeholder'
+
+    return True, 'ok'
+
+
+def _validate_safe_command(command):
+    """Validate a safe_command from the LLM. Returns (is_valid, reason)."""
+    if not command or not command.strip():
+        return False, 'empty command'
+
+    for pat in _INJECTION_PATTERNS:
+        if pat in command:
+            return False, f'injection pattern {pat!r} detected'
+
+    tokens = command.split()
+    if not tokens:
+        return False, 'no tokens'
+    binary = os.path.basename(tokens[0])
+    if binary not in _SAFE_COMMAND_BINARIES:
+        return False, f'binary {binary!r} not in safe allowlist'
+
+    return True, 'ok'
+
+
+def _check_tool_installed(command):
+    """Check if the binary in a command is installed.
+    Returns (binary_name, is_installed, package_name)."""
+    tokens = command.split()
+    if not tokens:
+        return ('', False, '')
+    binary = os.path.basename(tokens[0])
+    # python3 scripts are always available
+    if binary == 'python3':
+        return (binary, True, '')
+    installed = shutil.which(binary) is not None
+    package = _TOOL_PACKAGE_MAP.get(binary, binary)
+    return (binary, installed, package)
+
+
+def _build_tool_catalog(settings):
+    """Build a text catalog of available tools for the gap analysis prompt."""
+    lines = []
+    lines.append("AVAILABLE TOOLS (PortActions):")
+    for action in (settings.portActions or []):
+        label = str(action[0])
+        tool_id = str(action[1]).strip()
+        cmd = str(action[2]) if len(action) > 2 else ''
+        svc_filter = str(action[3]) if len(action) > 3 else ''
+        binary = os.path.basename(cmd.split()[0]) if cmd.split() else ''
+        installed = 'yes' if shutil.which(binary) else 'no' if binary else '?'
+        lines.append(f"  tool_id={tool_id} | services={svc_filter} | "
+                     f"cmd={cmd[:120]} | installed={installed}")
+
+    lines.append("")
+    lines.append("AVAILABLE TOOLS (HostActions):")
+    for action in (settings.hostActions or []):
+        label = str(action[0])
+        tool_id = str(action[1]).strip()
+        cmd = str(action[2]) if len(action) > 2 else ''
+        binary = os.path.basename(cmd.split()[0]) if cmd.split() else ''
+        installed = 'yes' if shutil.which(binary) else 'no' if binary else '?'
+        lines.append(f"  tool_id={tool_id} | cmd={cmd[:120]} | installed={installed}")
+
+    return '\n'.join(lines)
+
+
+def _build_already_ran(processes):
+    """Build a text list of tools already executed for this host."""
+    lines = ["ALREADY RUN (do not re-recommend):"]
+    seen = set()
+    for proc in processes:
+        name = proc.get('name', '')
+        status = proc.get('status', '')
+        port = proc.get('port', '')
+        key = f"{name}:{port}"
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"  {name} (port {port}, status={status})")
+    return '\n'.join(lines)
+
+
+def _build_gap_analysis_prompt(phase1_findings, host_ip, ports, processes, tool_catalog):
+    """Assemble the full prompt for the gap analysis LLM call."""
+    parts = [
+        f"HOST: {host_ip}",
+        "",
+        "OPEN PORTS AND SERVICES:",
+    ]
+    for p in ports:
+        port = p.get('portId') or p.get('port_number') or p.get('port', '')
+        proto = p.get('protocol', 'tcp')
+        svc = p.get('name') or p.get('service_name') or ''
+        ver = p.get('version') or p.get('service_version') or ''
+        parts.append(f"  {port}/{proto} {svc} {ver}")
+
+    parts.append("")
+    parts.append("PHASE 1 FINDINGS:")
+    if isinstance(phase1_findings, str):
+        parts.append(phase1_findings[:4000])
+    else:
+        parts.append(json.dumps(phase1_findings, indent=2)[:4000])
+
+    parts.append("")
+    parts.append(_build_already_ran(processes))
+    parts.append("")
+    parts.append(tool_catalog)
+
+    return '\n'.join(parts)
+
+
+def _map_recommendation_to_command(rec, host_ip, port, protocol, settings, output_folder):
+    """Map a recommendation dict to a runnable (command, name, outputfile).
+    Uses command_override if valid, otherwise falls back to conf template.
+    Returns (command, name, outputfile) or None."""
+    from app.timing import getTimestamp
+    tool_id = rec.get('tool_id', '')
+    override = rec.get('command_override', '')
+
+    if override:
+        valid, reason = _validate_command_override(override, tool_id, settings)
+        if valid:
+            outputfile = os.path.join(output_folder,
+                                      f"{getTimestamp()}-ai-{tool_id}-{host_ip}-{port}")
+            command = (override
+                       .replace('[IP]', host_ip)
+                       .replace('[PORT]', str(port))
+                       .replace('[OUTPUT]', outputfile))
+            return command, tool_id, outputfile
+        else:
+            log.warning(f"[AI] Override rejected for {tool_id}: {reason}")
+
+    for action in (settings.portActions or []):
+        if str(action[1]).strip() == tool_id:
+            cmd_template = str(action[2]) if len(action) > 2 else ''
+            if cmd_template:
+                outputfile = os.path.join(output_folder,
+                                          f"{getTimestamp()}-ai-{tool_id}-{host_ip}-{port}")
+                command = (cmd_template
+                           .replace('[IP]', host_ip)
+                           .replace('[PORT]', str(port))
+                           .replace('[OUTPUT]', outputfile))
+                return command, tool_id, outputfile
+            break
+
+    for action in (settings.hostActions or []):
+        if str(action[1]).strip() == tool_id:
+            cmd_template = str(action[2]) if len(action) > 2 else ''
+            if cmd_template:
+                outputfile = os.path.join(output_folder,
+                                          f"{getTimestamp()}-ai-{tool_id}-{host_ip}-{port}")
+                command = (cmd_template
+                           .replace('[IP]', host_ip)
+                           .replace('[PORT]', str(port))
+                           .replace('[OUTPUT]', outputfile))
+                return command, tool_id, outputfile
+            break
+
+    return None
+
+
+def _parse_llm_json(text):
+    """Parse JSON from LLM response, tolerant of markdown fences."""
+    cleaned = text.strip()
+    if '```' in cleaned:
+        m = re.search(r'```(?:json)?\s*([\s\S]*?)```', cleaned)
+        if m:
+            cleaned = m.group(1).strip()
+    return json.loads(cleaned)
+
+
+def _job_progress(job, msg):
+    """Append a progress message to the job log."""
+    job['progress'].append({'ts': time.time(), 'msg': msg})
+    log.info(f"[AI-Job {job['job_id']}] {msg}")
+
+
+def _cleanup_old_jobs():
+    """Purge jobs older than 30 minutes."""
+    cutoff = time.monotonic() - 1800
+    with _jobs_lock:
+        stale = [jid for jid, j in _jobs.items() if j['started_at'] < cutoff]
+        for jid in stale:
+            del _jobs[jid]
+            _job_approval_events.pop(jid, None)
+
+
+def start_phase1_job(logic, host_id, wc):
+    """Start an enhanced Phase 1 job in a background thread. Returns job_id."""
+    _cleanup_old_jobs()
+    job_id = str(uuid.uuid4())[:8]
+    job = {
+        'job_id': job_id,
+        'host_id': host_id,
+        'status': 'running',
+        'step': 'synthesis',
+        'progress': [],
+        'proposed_commands': [],
+        'approved_commands': [],
+        'cost_breakdown': {},
+        'result': None,
+        'error': None,
+        'started_at': time.monotonic(),
+    }
+    with _jobs_lock:
+        _jobs[job_id] = job
+    _job_approval_events[job_id] = threading.Event()
+
+    t = threading.Thread(
+        target=run_phase1_enhanced,
+        args=(logic, host_id, wc, job_id),
+        daemon=True,
+        name=f'ai-phase1-{job_id}',
+    )
+    t.start()
+    return job_id
+
+
+def get_job_status(job_id, since_index=0):
+    """Return current job state for polling."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return None
+    return {
+        'job_id': job['job_id'],
+        'status': job['status'],
+        'step': job['step'],
+        'progress': job['progress'][since_index:],
+        'progress_total': len(job['progress']),
+        'proposed_commands': job['proposed_commands'],
+        'approved_commands': job['approved_commands'],
+        'cost_breakdown': job['cost_breakdown'],
+        'result': job['result'],
+        'error': job['error'],
+    }
+
+
+def submit_approval(job_id, approved_indices, install_tools=None):
+    """Submit batch approval from the UI. Unblocks the waiting background thread."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return False
+    job['approved_commands'] = approved_indices or []
+    job['install_tools'] = install_tools or []
+    evt = _job_approval_events.get(job_id)
+    if evt:
+        evt.set()
+    return True
+
+
+def _enrich_processes(processes):
+    """Add .live_output fallback for processes without DB output."""
+    enriched = []
+    for proc in processes:
+        output = proc.get('output', '') or ''
+        if not output.strip():
+            outputfile = proc.get('outputfile', '')
+            if outputfile:
+                for suffix in ('.live_output', ''):
+                    try_path = outputfile + suffix if suffix else outputfile
+                    try:
+                        with open(try_path, 'r', errors='replace') as _f:
+                            output = _f.read()
+                        if output.strip():
+                            break
+                    except Exception:
+                        pass
+        enriched.append({**proc, 'output': output})
+    return enriched
+
+
+def run_phase1_enhanced(logic, host_id, wc, job_id):
+    """Enhanced Phase 1 pipeline: synthesis → gap analysis → approval → execution → re-synthesis."""
+    with _jobs_lock:
+        job = _jobs[job_id]
+
+    try:
+        # ── Step 1: Initial synthesis ────────────────────────────────
+        job['step'] = 'synthesis'
+        _job_progress(job, 'Phase 1 synthesis starting...')
+
+        result = _assemble_host_data(logic, host_id)
+        if result is None:
+            raise ValueError(f"Host {host_id} not found in project DB")
+
+        (host_obj, host_ip, os_family, ports, cves, scripts,
+         note_text, processes, fingerprint) = result
+
+        enriched_procs = _enrich_processes(processes)
+
+        prompt_text = _build_phase1_prompt(
+            host_obj, host_ip, os_family, ports, cves, scripts,
+            note_text, enriched_procs)
+
+        config = _read_ai_config()
+        model = config['model']
+        client = _get_client(config)
+
+        _job_progress(job, f'Calling AI ({model}) for initial synthesis...')
+        p1_resp = client.messages.create(
+            model=model, max_tokens=8192,
+            system=_PHASE1_SYSTEM,
+            messages=[{'role': 'user', 'content': prompt_text}],
+        )
+        p1_text = p1_resp.content[0].text.strip()
+        tin1, tout1, cost1 = _actual_cost(p1_resp.usage)
+        job['cost_breakdown']['synthesis'] = {
+            'tokens_in': tin1, 'tokens_out': tout1, 'cost': cost1,
+        }
+
+        try:
+            phase1_findings = _parse_llm_json(p1_text)
+        except json.JSONDecodeError:
+            phase1_findings = [{'source': 'raw', 'port': None, 'severity': 'info',
+                                'finding': p1_text[:500], 'evidence': ''}]
+
+        _job_progress(job, f'Synthesis complete: {len(phase1_findings)} findings')
+
+        # ── Step 2: Gap analysis ─────────────────────────────────────
+        job['step'] = 'gap_analysis'
+        _job_progress(job, 'Analyzing coverage gaps...')
+
+        tool_catalog = _build_tool_catalog(wc.settings)
+        gap_prompt = _build_gap_analysis_prompt(
+            phase1_findings, host_ip, ports, enriched_procs, tool_catalog)
+
+        _job_progress(job, f'Calling AI ({model}) for gap analysis...')
+        gap_resp = client.messages.create(
+            model=model, max_tokens=4096,
+            system=_GAP_ANALYSIS_SYSTEM,
+            messages=[{'role': 'user', 'content': gap_prompt}],
+        )
+        gap_text = gap_resp.content[0].text.strip()
+        tin2, tout2, cost2 = _actual_cost(gap_resp.usage)
+        job['cost_breakdown']['gap_analysis'] = {
+            'tokens_in': tin2, 'tokens_out': tout2, 'cost': cost2,
+        }
+
+        try:
+            gap_result = _parse_llm_json(gap_text)
+        except json.JSONDecodeError:
+            log.warning(f"[AI] Gap analysis returned non-JSON: {gap_text[:200]}")
+            gap_result = {'recommended_tools': [], 'obvious_attacks': [], 'safe_commands': []}
+
+        recommended = gap_result.get('recommended_tools', [])[:_MAX_TOOLS]
+        safe_commands = gap_result.get('safe_commands', [])[:_MAX_SAFE_COMMANDS]
+        obvious_attacks = gap_result.get('obvious_attacks', [])
+
+        _job_progress(job, f'Gap analysis: {len(recommended)} tools, '
+                      f'{len(safe_commands)} safe commands, '
+                      f'{len(obvious_attacks)} obvious attacks')
+
+        # Build proposed_commands for batch approval
+        running_folder = logic.activeProject.properties.runningFolder
+        proposed = []
+        idx = 0
+
+        for rec in recommended:
+            tool_id = rec.get('tool_id', '')
+            port = rec.get('port', '')
+            protocol = rec.get('protocol', 'tcp')
+            override = rec.get('command_override', '')
+
+            mapped = _map_recommendation_to_command(
+                rec, host_ip, port, protocol, wc.settings, running_folder)
+
+            skipped_reason = None
+            if not mapped:
+                skipped_reason = 'tool_not_found'
+            else:
+                command, name, outputfile = mapped
+                dup = wc.checkDuplicate(tool_id, host_ip, str(port), protocol)
+                if dup == 'skip':
+                    skipped_reason = 'duplicate'
+
+            if skipped_reason:
+                proposed.append({
+                    'index': idx, 'tool_id': tool_id,
+                    'command': override or f'(conf template for {tool_id})',
+                    'rationale': rec.get('rationale', ''),
+                    'source': 'recommended_tool',
+                    'is_override': bool(override),
+                    'installed': True, 'package': '',
+                    'port': port,
+                    'skipped_reason': skipped_reason,
+                })
+            else:
+                binary, installed, package = _check_tool_installed(command)
+                proposed.append({
+                    'index': idx, 'tool_id': tool_id,
+                    'command': command,
+                    'rationale': rec.get('rationale', ''),
+                    'source': 'recommended_tool',
+                    'is_override': bool(override) and (not mapped or override != ''),
+                    'installed': installed, 'package': package,
+                    'port': port,
+                    'skipped_reason': None,
+                    '_run_args': {'command': command, 'name': tool_id,
+                                  'tabTitle': f'AI: {tool_id} ({port}/{protocol})',
+                                  'hostIp': host_ip, 'port': str(port),
+                                  'protocol': protocol, 'outputfile': outputfile,
+                                  'run_actions': False},
+                })
+            idx += 1
+
+        for sc in safe_commands:
+            cmd_raw = sc.get('command', '')
+            valid, reason = _validate_safe_command(cmd_raw)
+            if not valid:
+                proposed.append({
+                    'index': idx, 'tool_id': 'safe_command',
+                    'command': cmd_raw,
+                    'rationale': sc.get('rationale', ''),
+                    'source': 'safe_command',
+                    'is_override': False,
+                    'installed': True, 'package': '',
+                    'port': '',
+                    'skipped_reason': f'rejected: {reason}',
+                })
+            else:
+                from app.timing import getTimestamp
+                sc_name = os.path.basename(cmd_raw.split()[0])
+                outputfile = os.path.join(running_folder,
+                                          f"{getTimestamp()}-ai-safe-{sc_name}-{host_ip}")
+                command = (cmd_raw
+                           .replace('[IP]', host_ip)
+                           .replace('[PORT]', '')
+                           .replace('[OUTPUT]', outputfile))
+                binary, installed, package = _check_tool_installed(command)
+                proposed.append({
+                    'index': idx, 'tool_id': sc_name,
+                    'command': command,
+                    'rationale': sc.get('rationale', ''),
+                    'source': 'safe_command',
+                    'is_override': False,
+                    'installed': installed, 'package': package,
+                    'port': '',
+                    'skipped_reason': None,
+                    '_run_args': {'command': command, 'name': f'ai-{sc_name}',
+                                  'tabTitle': f'AI: {sc_name}',
+                                  'hostIp': host_ip, 'port': '',
+                                  'protocol': 'tcp', 'outputfile': outputfile,
+                                  'run_actions': False},
+                })
+            idx += 1
+
+        job['proposed_commands'] = proposed
+
+        # ── Step 2.5: Batch approval ─────────────────────────────────
+        if proposed and any(p['skipped_reason'] is None for p in proposed):
+            job['step'] = 'awaiting_approval'
+            job['status'] = 'awaiting_approval'
+            _job_progress(job, f'Waiting for user approval of {len(proposed)} commands...')
+
+            evt = _job_approval_events.get(job_id)
+            if evt:
+                evt.wait()
+
+            approved_indices = set(job.get('approved_commands', []))
+            install_list = job.get('install_tools', [])
+
+            # Install requested tools
+            for pkg in install_list:
+                _job_progress(job, f'Installing {pkg}...')
+                try:
+                    install_result = wc.runCommand(
+                        command=f'apt-get install -y {pkg}',
+                        name=f'install-{pkg}',
+                        tabTitle=f'Installing {pkg}',
+                        hostIp='', port='', run_actions=False,
+                    )
+                    install_pid = install_result.get('process_id')
+                    if install_pid:
+                        rc = logic.activeProject.repositoryContainer
+                        for _ in range(120):
+                            time.sleep(2)
+                            try:
+                                p = rc.processRepository.getProcessById(install_pid)
+                                if p and p.get('status') not in ('Running', 'Waiting'):
+                                    break
+                            except Exception:
+                                break
+                    _job_progress(job, f'{pkg} installation complete')
+                except Exception as e:
+                    _job_progress(job, f'{pkg} installation failed: {e}')
+
+            if not approved_indices:
+                _job_progress(job, 'User skipped all commands')
+        else:
+            approved_indices = set()
+            _job_progress(job, 'No valid commands to approve — skipping to re-synthesis')
+
+        # ── Step 3: Tool execution ───────────────────────────────────
+        job['step'] = 'tool_execution'
+        job['status'] = 'running'
+
+        process_ids = []
+        for p in proposed:
+            if p['index'] not in approved_indices:
+                continue
+            if p.get('skipped_reason'):
+                continue
+            run_args = p.get('_run_args')
+            if not run_args:
+                continue
+
+            _job_progress(job, f"Running {p['tool_id']}...")
+            try:
+                result = wc.runCommand(**run_args)
+                pid = result.get('process_id')
+                if pid:
+                    process_ids.append(pid)
+                    p['process_id'] = pid
+                    p['execution_status'] = 'Running'
+            except Exception as e:
+                _job_progress(job, f"Failed to start {p['tool_id']}: {e}")
+                p['execution_status'] = 'Failed'
+
+        if process_ids:
+            _job_progress(job, f'Waiting for {len(process_ids)} tools to complete...')
+            rc = logic.activeProject.repositoryContainer
+            deadline = time.monotonic() + _TOOL_EXEC_TIMEOUT
+            while time.monotonic() < deadline:
+                all_done = True
+                for pid in process_ids:
+                    try:
+                        proc_data = rc.processRepository.getProcessById(pid)
+                        if proc_data and proc_data.get('status') in ('Running', 'Waiting'):
+                            all_done = False
+                            break
+                    except Exception:
+                        pass
+                if all_done:
+                    break
+                time.sleep(2)
+
+            finished = 0
+            for p in proposed:
+                pid = p.get('process_id')
+                if pid:
+                    try:
+                        proc_data = rc.processRepository.getProcessById(pid)
+                        p['execution_status'] = proc_data.get('status', 'Unknown')
+                        if proc_data.get('status') == 'Finished':
+                            finished += 1
+                    except Exception:
+                        p['execution_status'] = 'Unknown'
+
+            _job_progress(job, f'Tool execution complete: {finished}/{len(process_ids)} finished')
+        else:
+            _job_progress(job, 'No tools to execute')
+
+        # ── Step 4: Re-synthesis ─────────────────────────────────────
+        job['step'] = 'resynthesis'
+        _job_progress(job, 'Re-synthesizing with enriched data...')
+
+        result2 = _assemble_host_data(logic, host_id)
+        if result2:
+            (host_obj2, host_ip2, os_family2, ports2, cves2, scripts2,
+             note_text2, processes2, fingerprint2) = result2
+            enriched_procs2 = _enrich_processes(processes2)
+            prompt_text2 = _build_phase1_prompt(
+                host_obj2, host_ip2, os_family2, ports2, cves2, scripts2,
+                note_text2, enriched_procs2)
+
+            resyn_system = _PHASE1_SYSTEM + _PHASE1_RESYNTHESIS_EXTRA
+
+            _job_progress(job, f'Calling AI ({model}) for re-synthesis...')
+            p1r_resp = client.messages.create(
+                model=model, max_tokens=8192,
+                system=resyn_system,
+                messages=[{'role': 'user', 'content': prompt_text2}],
+            )
+            p1r_text = p1r_resp.content[0].text.strip()
+            tin3, tout3, cost3 = _actual_cost(p1r_resp.usage)
+            job['cost_breakdown']['resynthesis'] = {
+                'tokens_in': tin3, 'tokens_out': tout3, 'cost': cost3,
+            }
+
+            try:
+                final_findings = _parse_llm_json(p1r_text)
+            except json.JSONDecodeError:
+                final_findings = phase1_findings
+
+            final_fingerprint = fingerprint2
+        else:
+            final_findings = phase1_findings
+            final_fingerprint = fingerprint
+            tin3 = tout3 = 0
+            cost3 = 0.0
+
+        phase1_json = json.dumps(final_findings, indent=2)
+        gap_json = json.dumps(gap_result, indent=2)
+
+        enum_actions = {
+            'proposed': [{k: v for k, v in p.items() if k != '_run_args'}
+                         for p in proposed],
+            'approved_indices': list(approved_indices),
+            'obvious_attacks': obvious_attacks,
+        }
+        enum_json = json.dumps(enum_actions, indent=2)
+
+        total_tin = tin1 + tin2 + tin3
+        total_tout = tout1 + tout2 + tout3
+        total_cost = round(
+            total_tin / 1_000_000 * _INPUT_COST_PER_MTOK +
+            total_tout / 1_000_000 * _OUTPUT_COST_PER_MTOK, 4)
+
+        _job_progress(job, f'Re-synthesis complete: {len(final_findings)} findings')
+
+        # ── Persist ──────────────────────────────────────────────────
+        project_name = getattr(
+            logic.activeProject, 'name',
+            getattr(logic.activeProject, 'projectName', '')) or ''
+
+        try:
+            history_id = history_db.save_session(
+                host_ip=host_ip,
+                project_name=str(project_name),
+                fingerprint=final_fingerprint,
+                phase1_json=phase1_json,
+                phase2_markdown='',
+                tokens_input=total_tin,
+                tokens_output=total_tout,
+                cost_usd=total_cost,
+                gap_analysis_json=gap_json,
+                enum_actions_json=enum_json,
+            )
+        except Exception as e:
+            log.error(f"[AI] Enhanced phase1 history-DB save failed: {e}")
+            history_id = None
+
+        ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        rc = logic.activeProject.repositoryContainer
+        session = rc.hostRepository.dbAdapter.session()
+        project_analysis_id = None
+        try:
+            from db.entities.ai_analysis import AiAnalysis
+            entry = AiAnalysis(
+                host_id=int(host_id), timestamp=ts,
+                phase1_json=phase1_json, phase2_markdown=None,
+                tokens_input=total_tin, tokens_output=total_tout,
+                cost_usd=total_cost, history_session_id=history_id,
+                gap_analysis_json=gap_json, enum_actions_json=enum_json,
+            )
+            session.add(entry)
+            session.commit()
+            project_analysis_id = entry.id
+        except Exception as e:
+            session.rollback()
+            log.error(f"[AI] Enhanced phase1 project-DB save failed: {e}")
+        finally:
+            session.close()
+
+        log.info(f"[AI] Enhanced Phase 1 complete — host={host_ip} cost=${total_cost:.4f}")
+
+        final_result = {
+            'host_ip': host_ip,
+            'fingerprint': final_fingerprint,
+            'phase1_json': phase1_json,
+            'phase2_markdown': None,
+            'tokens_input': total_tin,
+            'tokens_output': total_tout,
+            'cost_usd': total_cost,
+            'history_id': history_id,
+            'project_analysis_id': project_analysis_id,
+            'timestamp': ts,
+            'gap_analysis_json': gap_json,
+            'enum_actions_json': enum_json,
+        }
+
+        job['result'] = final_result
+        job['status'] = 'completed'
+        job['step'] = 'done'
+        _job_progress(job, 'Phase 1 enhanced analysis complete')
+
+    except Exception as e:
+        log.error(f"[AI] Enhanced Phase 1 job {job_id} failed: {e}", exc_info=True)
+        job['status'] = 'failed'
+        job['error'] = str(e)
+        _job_progress(job, f'Failed: {e}')
+
+
+def estimate_cost_enhanced(text_length_chars):
+    """Pre-flight cost estimate for the enhanced pipeline (3 LLM calls)."""
+    est_tokens_input = text_length_chars // _CHARS_PER_TOKEN
+    est_tokens_output = 1000
+    single_cost = (est_tokens_input / 1_000_000 * _INPUT_COST_PER_MTOK +
+                   est_tokens_output / 1_000_000 * _OUTPUT_COST_PER_MTOK)
+    multiplier = 2.5  # synthesis + gap_analysis(0.5x) + re-synthesis(1x)
+    return est_tokens_input, round(single_cost * multiplier, 4)
+
+
+# ---------------------------------------------------------------------------
+# Main analysis entry point (original — kept for legacy/sync fallback)
 # ---------------------------------------------------------------------------
 
 def run_analysis(logic, host_id):

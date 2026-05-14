@@ -244,9 +244,46 @@ sudo apt-get install -y --ignore-missing \
     swaks smtp-user-enum \
     finger \
     net-tools nbtscan \
+    gpp-decrypt python3-impacket responder hashcat john \
     2>/dev/null || true
 
+# Victim test infrastructure — servers that test_victim_tool_execution.py scans
+# against locally.  These are NOT Legion runtime deps; they are the target services
+# that let the test verify every scheduler tool actually runs and produces output.
+info "  Installing victim test server dependencies (nginx, mariadb, redis, samba, snmpd, xrdp)…"
+if sudo apt-get install -y nginx mariadb-server redis-server samba snmpd xrdp; then
+    ok "  Victim test server packages installed"
+else
+    warn "  Some victim test server packages failed — victim tool execution test may skip"
+fi
+
 ok "Security tool packages done (some may be skipped on non-Kali)"
+
+# AD enumeration tools (pip)
+info "  Installing AD enumeration pip packages (certipy-ad, adidnsdump, ldeep, pywerview)…"
+for _ad_pip in certipy-ad adidnsdump ldeep pywerview; do
+    if pip3 show "$_ad_pip" &>/dev/null 2>&1; then
+        ok "  $_ad_pip already installed"
+    else
+        pip3 install --break-system-packages "$_ad_pip" 2>/dev/null \
+            && ok "  $_ad_pip installed" \
+            || warn "  $_ad_pip pip install failed — run: sudo pip3 install --break-system-packages $_ad_pip"
+    fi
+done
+
+# windapsearch (Go binary)
+if command -v windapsearch &>/dev/null; then
+    ok "windapsearch already installed at $(command -v windapsearch)"
+else
+    _install_go_binary "github.com/ropnop/go-windapsearch@latest" "go-windapsearch" "windapsearch"
+fi
+
+# subfinder (Go binary)
+if command -v subfinder &>/dev/null; then
+    ok "subfinder already installed at $(command -v subfinder)"
+else
+    _install_go_binary "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest" "subfinder" "subfinder"
+fi
 
 # testssl.sh — dedicated install step so it is never silently dropped by --ignore-missing
 if command -v testssl &>/dev/null; then
@@ -614,21 +651,112 @@ else
 fi
 
 # =============================================================================
-# 8. Health check
+# 8. Verification + auto-remediation
 # =============================================================================
-step "8/10  Health check"
+step "8/10  Verification + auto-remediation"
+
+# pytest is needed for the verification tests but is not in requirements.txt
+# (it is a test-only tool, not a Legion runtime dependency).
+if ! "${VENV_PY}" -m pytest --version &>/dev/null 2>&1; then
+    info "Installing pytest for verification tests…"
+    sudo "${VENV_PIP}" install --root-user-action=ignore pytest -q 2>/dev/null \
+        && ok "pytest installed" \
+        || warn "pytest install failed — skipping verification (non-fatal)"
+fi
 
 cd "${SCRIPT_DIR}"
-if [[ -f "health_check.sh" ]]; then
-    bash health_check.sh
-    if [[ $? -eq 0 ]]; then
-        ok "All health checks passed"
-    else
-        warn "Some health checks failed — review output above"
-        warn "Legion may still work. Run: sudo bash health_check.sh"
+
+# ── Disable errexit for the whole step — failures here must be handled, not abort ──
+set +e
+
+VERIFY_LOG=$(mktemp)
+MAX_ROUNDS=3
+ROUND=0
+ALL_PASS=false
+
+while [[ $ROUND -lt $MAX_ROUNDS ]]; do
+    ROUND=$(( ROUND + 1 ))
+    info "Verification round ${ROUND}/${MAX_ROUNDS}…"
+
+    # Run tests — capture output without letting a non-zero exit kill the script
+    # test_requirements.py: Python packages + Qt/Flask init + tool binaries
+    # test_tool_installation.py: conf integrity, SchedulerSettings consistency,
+    #   Perl Encoding::BER, nuclei templates + config dir, wordlist paths
+    sudo SUDO_USER="${REAL_USER}" "${VENV_PY}" -m pytest \
+        tests/test_requirements.py \
+        tests/test_tool_installation.py \
+        --noconftest -q --tb=line \
+        > "$VERIFY_LOG" 2>&1
+    pytest_exit=$?
+
+    cat "$VERIFY_LOG"   # always show the output
+
+    if [[ $pytest_exit -eq 0 ]]; then
+        ALL_PASS=true
+        break
     fi
+
+    [[ $ROUND -ge $MAX_ROUNDS ]] && break
+    info "Failures detected — remediating before round $(( ROUND + 1 ))…"
+    echo ""
+
+    # ── Fix: missing Python import — format: "Cannot import 'X' (package 'Y')" ──
+    while IFS= read -r line; do
+        import_name=$(echo "$line" | grep -oP "import '\K[^']+")
+        pkg_name=$(echo "$line"    | grep -oP "package '\K[^']+")
+        [[ -z "$import_name" ]] && continue
+        [[ -z "$pkg_name"    ]] && pkg_name="$import_name"
+        fail "  Python import '${import_name}' (package '${pkg_name}') missing — installing…"
+        _install_pkg "$import_name" "$pkg_name"
+    done < <(grep "Cannot import" "$VERIFY_LOG")
+
+    # ── Fix: missing tool binary — format: "'tool' not found in PATH" ──
+    # Deduplicate: the same binary may fail in multiple test files; install once.
+    declare -A _seen_tools
+    while IFS= read -r line; do
+        tool=$(echo "$line" | grep -oP "'\K[^']+(?=' not found in PATH)")
+        [[ -z "$tool" ]] && continue
+        [[ -n "${_seen_tools[$tool]+x}" ]] && continue
+        _seen_tools[$tool]=1
+        fail "  Binary '${tool}' not found in PATH — installing…"
+        _install_tool "$tool"
+    done < <(grep "not found in PATH" "$VERIFY_LOG")
+    unset _seen_tools
+
+    # ── Fix: missing /opt script — format: assertion about /opt/X/Y.py ──
+    while IFS= read -r line; do
+        script=$(echo "$line" | grep -oP "/opt/[^ '\"]+\.py")
+        [[ -z "$script" || -f "$script" ]] && continue
+        repo=$(basename "$(dirname "$script")")
+        fail "  ${script} missing — cloning ${repo}…"
+        case "$repo" in
+            LeakSearch)
+                sudo git clone --depth 1 \
+                    https://github.com/JoelGMSec/LeakSearch.git /opt/LeakSearch 2>/dev/null
+                sudo python3 -m pip install --break-system-packages neotermcolor -q 2>/dev/null || true
+                ;;
+            jexboss)
+                sudo git clone --depth 1 \
+                    https://github.com/joaomatosf/jexboss.git /opt/jexboss 2>/dev/null
+                ;;
+        esac
+    done < <(grep -i "AssertionError\|assert.*jexboss\|assert.*LeakSearch\|/opt/" "$VERIFY_LOG")
+
+    echo ""
+done
+
+rm -f "$VERIFY_LOG"
+
+# Re-enable errexit
+set -e
+
+if $ALL_PASS; then
+    ok "All verification tests passed"
 else
-    warn "health_check.sh not found — skipping verification"
+    warn "Some tests still failing after ${MAX_ROUNDS} remediation rounds."
+    warn "Run this to see what remains:"
+    warn "  sudo "${VENV_PY}" -m pytest tests/test_requirements.py --noconftest -v"
+    warn "The installer will continue — Legion --web may still work."
 fi
 
 # =============================================================================
@@ -967,7 +1095,13 @@ elif _on_kali; then
         nginx redis-server
     )
     _missing_tools=()
-    # (Victim test server packages removed — not needed for production)
+    # Check victim server packages via dpkg (binaries in /usr/sbin, not on PATH)
+    for _pkg in mariadb-server samba snmpd xrdp; do
+        if ! dpkg -l "$_pkg" 2>/dev/null | grep -q "^ii"; then
+            warn "  Victim test server package not installed: $_pkg"
+            warn "  Run: sudo apt-get install -y $_pkg"
+        fi
+    done
 
     for _t in "${_CRITICAL_TOOLS[@]}"; do
         command -v "${_t}" &>/dev/null || _missing_tools+=("${_t}")
@@ -1128,6 +1262,11 @@ _log_check \
     "pip uninstall-no-record-file (Debian-managed package)" \
     "uninstall-no-record-file|no-record-file" \
     "Use venv (already done) — this error only appears on system-python installs"
+
+_log_check \
+    "No module named pytest — pytest missing from venv during step 8" \
+    "No module named pytest" \
+    "sudo /opt/legion-venv/bin/pip install pytest"
 
 _log_check \
     "rsh-client install conflict" \

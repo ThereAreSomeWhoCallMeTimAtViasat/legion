@@ -6147,6 +6147,9 @@ document.addEventListener('DOMContentLoaded', function() {
             try { p1json.textContent = JSON.stringify(JSON.parse(result.phase1_json), null, 2); }
             catch(e) { p1json.textContent = result.phase1_json || ''; }
         }
+        /* Enumeration report */
+        _aiRenderEnumReport(result.enum_actions_json, result.gap_analysis_json);
+
         /* Phase 2 — show button or results depending on whether it's been run */
         _aiUpdatePhase2UI(result.phase2_markdown);
 
@@ -6174,30 +6177,315 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function _aiRenderEnumReport(enumJson, gapJson) {
+        var enumDiv = $('ai-enum-actions');
+        var attackDiv = $('ai-obvious-attacks');
+        if (!enumDiv && !attackDiv) return;
+
+        var enumData = null, gapData = null;
+        try { if (enumJson) enumData = JSON.parse(enumJson); } catch(e) {}
+        try { if (gapJson) gapData = JSON.parse(gapJson); } catch(e) {}
+
+        if (enumDiv) {
+            if (!enumData || !enumData.proposed || !enumData.proposed.length) {
+                enumDiv.style.display = 'none';
+            } else {
+                enumDiv.style.display = '';
+                var html = '<strong style="font-size:9pt;color:var(--highlight)">Automated Enumeration</strong>';
+                html += '<div style="font-size:8pt;margin-top:4px">';
+                enumData.proposed.forEach(function(p) {
+                    var statusColor = p.execution_status === 'Finished' ? '#4a4' :
+                                      p.execution_status === 'Crashed' ? '#e44' :
+                                      p.skipped_reason ? 'var(--disabled)' : '#48f';
+                    var statusLabel = p.execution_status || p.skipped_reason || 'not run';
+                    var approved = (enumData.approved_indices || []).indexOf(p.index) >= 0;
+                    html += '<div style="margin-bottom:3px">';
+                    html += '<span style="color:' + statusColor + '">[' + esc(statusLabel) + ']</span> ';
+                    html += '<code>' + esc(p.tool_id) + '</code>';
+                    if (p.port) html += ' (port ' + esc(p.port) + ')';
+                    if (!approved && !p.skipped_reason) html += ' <em style="color:var(--disabled)">(not approved)</em>';
+                    html += ' — <span style="color:var(--disabled)">' + esc(p.rationale) + '</span>';
+                    html += '</div>';
+                });
+                html += '</div>';
+                enumDiv.innerHTML = html;
+            }
+        }
+
+        if (attackDiv) {
+            var attacks = (enumData && enumData.obvious_attacks) || (gapData && gapData.obvious_attacks) || [];
+            if (!attacks.length) {
+                attackDiv.style.display = 'none';
+            } else {
+                attackDiv.style.display = '';
+                var aHtml = '<strong style="font-size:9pt;color:#e44">Obvious Attacks (no further enum needed)</strong>';
+                aHtml += '<div style="font-size:8pt;margin-top:4px">';
+                attacks.forEach(function(a) {
+                    var sevColor = a.severity === 'critical' ? '#e44' :
+                                   a.severity === 'high' ? '#f80' : '#fa0';
+                    aHtml += '<div style="margin-bottom:4px;padding:4px;border-left:3px solid ' + sevColor + ';padding-left:8px">';
+                    aHtml += '<span style="color:' + sevColor + ';font-weight:bold">[' +
+                             esc(a.severity || 'high').toUpperCase() + ']</span> ';
+                    aHtml += esc(a.attack || '');
+                    if (a.evidence) aHtml += '<br><span style="color:var(--disabled)">Evidence: ' + esc(a.evidence) + '</span>';
+                    if (a.next_command) aHtml += '<br><code style="color:var(--highlight)">' + esc(a.next_command) + '</code>';
+                    aHtml += '</div>';
+                });
+                aHtml += '</div>';
+                attackDiv.innerHTML = aHtml;
+            }
+        }
+    }
+
     /* Start Phase 1 analysis */
+
     function _aiRunPhase1() {
         _aiRunning       = true;
         _aiRunningHostId = _aiHostId;
+        _aiProgressIndex = 0;
+        _aiJobId         = null;
         var rt = $('ai-status-text');
-        if (rt) rt.textContent = 'Running Phase 1 — synthesising findings…';
+        if (rt) rt.textContent = 'Starting enhanced Phase 1 analysis…';
         _aiShowState('ai-running');
+
+        var runDiv = $('ai-running');
+        if (runDiv) {
+            runDiv.innerHTML =
+                '<div id="ai-step-label" style="font-size:11pt;color:var(--highlight);margin-bottom:8px">' +
+                'Step 1/4 — Synthesizing findings...</div>' +
+                '<div id="ai-progress-log" style="font-size:9pt;color:var(--disabled);' +
+                'max-height:180px;overflow-y:auto;margin-bottom:8px;font-family:monospace"></div>' +
+                '<div id="ai-approval-panel" style="display:none"></div>' +
+                '<div id="ai-tool-exec-status" style="display:none;margin-top:8px"></div>';
+        }
+
         postJson('/api/ai/analyze-host/' + _aiHostId + '/phase1', {})
             .then(function(r) {
-                _aiRunning = false;
                 if (r.error) {
+                    _aiRunning = false;
                     _aiShowState('ai-ready');
                     alert('Phase 1 failed: ' + r.error);
                     return;
                 }
-                _aiResults = r;
-                _aiShowResults(r, null);
-                _aiLoadSimilar(_aiHostId);
+                if (r.async && r.job_id) {
+                    _aiJobId = r.job_id;
+                    _aiPollProgress();
+                } else {
+                    _aiRunning = false;
+                    _aiResults = r;
+                    _aiShowResults(r, null);
+                    _aiLoadSimilar(_aiHostId);
+                }
             })
             .catch(function(e) {
                 _aiRunning = false;
                 _aiShowState('ai-ready');
                 alert('Phase 1 failed: ' + (e.message || e));
             });
+    }
+
+    function _aiPollProgress() {
+        if (!_aiJobId || !_aiHostId) return;
+        fetchJson('/api/ai/host/' + _aiHostId + '/phase1/progress/' + _aiJobId +
+                  '?since=' + _aiProgressIndex)
+            .then(function(s) {
+                var stepLabels = {
+                    'synthesis':         'Step 1/4 — Synthesizing findings...',
+                    'gap_analysis':      'Step 2/4 — Analyzing coverage gaps...',
+                    'awaiting_approval': 'Step 2.5 — Review recommended tools',
+                    'tool_execution':    'Step 3/4 — Running enumeration tools...',
+                    'resynthesis':       'Step 4/4 — Re-synthesizing with enriched data...',
+                    'done':              'Analysis complete'
+                };
+                var label = $('ai-step-label');
+                if (label) label.textContent = stepLabels[s.step] || s.step;
+
+                var logDiv = $('ai-progress-log');
+                if (logDiv && s.progress) {
+                    s.progress.forEach(function(p) {
+                        var line = document.createElement('div');
+                        line.textContent = p.msg;
+                        logDiv.appendChild(line);
+                        logDiv.scrollTop = logDiv.scrollHeight;
+                    });
+                }
+                _aiProgressIndex = s.progress_total;
+
+                if (s.status === 'awaiting_approval') {
+                    _aiRenderApprovalPanel(s.proposed_commands);
+                    return; // stop polling — user must act
+                }
+
+                if (s.step === 'tool_execution' && s.proposed_commands) {
+                    _aiUpdateToolExecStatus(s.proposed_commands);
+                }
+
+                if (s.status === 'completed') {
+                    _aiRunning = false;
+                    _aiJobId = null;
+                    _aiResults = s.result;
+                    _aiShowResults(s.result, null);
+                    _aiLoadSimilar(_aiHostId);
+                    return;
+                }
+                if (s.status === 'failed') {
+                    _aiRunning = false;
+                    _aiJobId = null;
+                    _aiShowState('ai-ready');
+                    alert('Phase 1 failed: ' + (s.error || 'unknown error'));
+                    return;
+                }
+
+                _aiPollTimer = setTimeout(_aiPollProgress, 2000);
+            })
+            .catch(function() {
+                _aiPollTimer = setTimeout(_aiPollProgress, 5000);
+            });
+    }
+
+    function _aiRenderApprovalPanel(commands) {
+        var panel = $('ai-approval-panel');
+        if (!panel) return;
+
+        var valid = commands.filter(function(c) { return !c.skipped_reason; });
+        var skipped = commands.filter(function(c) { return !!c.skipped_reason; });
+
+        var html = '<div style="border:1px solid var(--highlight);padding:10px;border-radius:4px;margin-top:8px">';
+        html += '<div style="font-size:10pt;color:var(--highlight);margin-bottom:8px">' +
+                'AI recommends ' + valid.length + ' additional enumeration tool' +
+                (valid.length !== 1 ? 's' : '') + ':</div>';
+
+        valid.forEach(function(c) {
+            var chk = c.installed ? 'checked' : '';
+            var warn = c.installed ? '' :
+                '<span style="color:#e8a838;font-size:8pt;margin-left:8px">' +
+                '⚠ NOT INSTALLED ' +
+                '<button onclick="_aiInstallForApproval(\'' + esc(c.package) + '\',' + c.index + ')" ' +
+                'style="font-size:7pt;padding:1px 4px" id="ai-install-btn-' + c.index + '">Install</button>' +
+                '</span>';
+            html += '<div style="margin-bottom:6px;padding:4px;border-bottom:1px solid var(--border)">';
+            html += '<label style="cursor:pointer;display:block">';
+            html += '<input type="checkbox" class="ai-approve-cb" data-idx="' + c.index + '" ' + chk +
+                    (c.installed ? '' : ' disabled') + '> ';
+            html += '<code style="font-size:9pt;color:var(--text)">' + esc(c.command) + '</code>';
+            html += warn;
+            html += '</label>';
+            html += '<div style="font-size:8pt;color:var(--disabled);margin-left:20px;margin-top:2px">' +
+                    '→ ' + esc(c.rationale) + '</div>';
+            html += '</div>';
+        });
+
+        if (skipped.length) {
+            html += '<div style="font-size:8pt;color:var(--disabled);margin-top:8px">';
+            html += '<em>Skipped (' + skipped.length + '):</em><br>';
+            skipped.forEach(function(c) {
+                html += '<span style="text-decoration:line-through">' + esc(c.tool_id) + '</span>' +
+                        ' — ' + esc(c.skipped_reason) + '<br>';
+            });
+            html += '</div>';
+        }
+
+        html += '<div style="margin-top:10px;text-align:right">';
+        html += '<button id="ai-approve-run-btn" onclick="_aiSubmitApproval()" ' +
+                'style="padding:4px 12px;margin-right:8px;background:var(--highlight);color:#000;' +
+                'border:none;border-radius:3px;cursor:pointer">Run Approved (' +
+                valid.filter(function(c) { return c.installed; }).length + ')</button>';
+        html += '<button onclick="_aiSubmitApproval(true)" ' +
+                'style="padding:4px 12px;border:1px solid var(--border);background:transparent;' +
+                'color:var(--text);border-radius:3px;cursor:pointer">Skip All</button>';
+        html += '</div></div>';
+
+        panel.innerHTML = html;
+        panel.style.display = '';
+
+        // Wire checkbox change to update Run Approved count
+        panel.querySelectorAll('.ai-approve-cb').forEach(function(cb) {
+            cb.addEventListener('change', function() {
+                var count = panel.querySelectorAll('.ai-approve-cb:checked').length;
+                var btn = $('ai-approve-run-btn');
+                if (btn) btn.textContent = 'Run Approved (' + count + ')';
+            });
+        });
+    }
+
+    // Exposed globally so onclick attributes work
+    window._aiSubmitApproval = function(skipAll) {
+        var panel = $('ai-approval-panel');
+        var approved = [];
+        var installTools = [];
+
+        if (!skipAll && panel) {
+            panel.querySelectorAll('.ai-approve-cb:checked').forEach(function(cb) {
+                approved.push(parseInt(cb.dataset.idx, 10));
+            });
+        }
+
+        panel.innerHTML = '<div style="color:var(--disabled);font-size:9pt">' +
+                          (skipAll ? 'Skipping all — proceeding to re-synthesis...'
+                                   : 'Approved ' + approved.length + ' tool(s) — running...') +
+                          '</div>';
+
+        postJson('/api/ai/phase1/approve/' + _aiJobId, {
+            approved: approved,
+            install_first: installTools,
+        }).then(function() {
+            _aiPollTimer = setTimeout(_aiPollProgress, 1000);
+        }).catch(function(e) {
+            alert('Approval failed: ' + (e.message || e));
+        });
+    };
+
+    window._aiInstallForApproval = function(pkg, idx) {
+        var btn = $('ai-install-btn-' + idx);
+        if (btn) { btn.textContent = 'Installing...'; btn.disabled = true; }
+
+        postJson('/api/processes/custom', {
+            command: 'apt-get install -y ' + pkg,
+            host_ip: '', port: '', protocol: 'tcp',
+        }).then(function(r) {
+            if (r.error) {
+                if (btn) btn.textContent = 'Failed';
+                return;
+            }
+            // Poll until install finishes
+            var pid = r.process_id;
+            var pollInstall = function() {
+                fetchJson('/api/snapshot').then(function(snap) {
+                    var proc = (snap.processes || []).find(function(p) {
+                        return p.id == pid;
+                    });
+                    if (!proc || proc.status === 'Finished') {
+                        if (btn) btn.textContent = 'Installed';
+                        // Enable the checkbox
+                        var cb = document.querySelector('.ai-approve-cb[data-idx="' + idx + '"]');
+                        if (cb) { cb.disabled = false; cb.checked = true; cb.dispatchEvent(new Event('change')); }
+                    } else if (proc.status === 'Crashed' || proc.status === 'Killed') {
+                        if (btn) btn.textContent = 'Failed';
+                    } else {
+                        setTimeout(pollInstall, 2000);
+                    }
+                });
+            };
+            setTimeout(pollInstall, 2000);
+        });
+    };
+
+    function _aiUpdateToolExecStatus(commands) {
+        var wrap = $('ai-tool-exec-status');
+        if (!wrap) return;
+        var running = commands.filter(function(c) { return c.execution_status; });
+        if (!running.length) { wrap.style.display = 'none'; return; }
+        wrap.style.display = '';
+        var html = '<div style="font-size:9pt;margin-bottom:4px"><strong>Tool Execution:</strong></div>';
+        running.forEach(function(c) {
+            var color = c.execution_status === 'Finished' ? '#4a4' :
+                        c.execution_status === 'Running' ? '#48f' :
+                        c.execution_status === 'Crashed' ? '#e44' : 'var(--disabled)';
+            html += '<div><span style="color:' + color + '">[' + esc(c.execution_status || 'Queued') +
+                    ']</span> ' + esc(c.tool_id) +
+                    (c.port ? ' (port ' + esc(c.port) + ')' : '') + '</div>';
+        });
+        wrap.innerHTML = html;
     }
 
     /* Populate comparison dropdown from history matches */

@@ -37,11 +37,22 @@ CREATE INDEX IF NOT EXISTS idx_ai_timestamp ON ai_sessions(timestamp);
 """
 
 
+_MIGRATIONS = [
+    "ALTER TABLE ai_sessions ADD COLUMN gap_analysis_json TEXT",
+    "ALTER TABLE ai_sessions ADD COLUMN enum_actions_json TEXT",
+]
+
+
 def _get_conn():
     os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
     conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    for stmt in _MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     return conn
 
@@ -86,18 +97,21 @@ def jaccard(fp_a, fp_b):
 
 
 def save_session(host_ip, project_name, fingerprint, phase1_json,
-                 phase2_markdown, tokens_input, tokens_output, cost_usd):
+                 phase2_markdown, tokens_input, tokens_output, cost_usd,
+                 gap_analysis_json=None, enum_actions_json=None):
     """Insert one AI session. Returns the new row id."""
     conn = _get_conn()
     ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     cur = conn.execute(
         """INSERT INTO ai_sessions
            (timestamp, host_ip, project_name, fingerprint_json,
-            phase1_json, phase2_markdown, tokens_input, tokens_output, cost_usd)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+            phase1_json, phase2_markdown, tokens_input, tokens_output, cost_usd,
+            gap_analysis_json, enum_actions_json)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         (ts, host_ip, project_name,
          json.dumps(fingerprint), phase1_json, phase2_markdown,
-         tokens_input, tokens_output, cost_usd))
+         tokens_input, tokens_output, cost_usd,
+         gap_analysis_json, enum_actions_json))
     conn.commit()
     session_id = cur.lastrowid
     conn.close()

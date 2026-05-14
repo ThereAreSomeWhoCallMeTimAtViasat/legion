@@ -15,3 +15,5 @@ class AiAnalysis(Base):
     tokens_output     = Column(Integer, nullable=False, default=0)
     cost_usd          = Column(Float,   nullable=False, default=0.0)
     history_session_id = Column(Integer, nullable=True)   # FK → ai_history.db
+    gap_analysis_json  = Column(Text,    nullable=True)
+    enum_actions_json  = Column(Text,    nullable=True)
