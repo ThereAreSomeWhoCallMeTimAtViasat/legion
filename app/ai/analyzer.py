@@ -384,7 +384,17 @@ _PHASE2_SYSTEM = (
     "host, identify: 1) exploitable vulnerabilities with specific CVEs or techniques, "
     "2) recommended next tools and exact commands to run, 3) likely attack paths ranked "
     "by probability of success, 4) misconfigurations to investigate. "
-    "Be specific and actionable. Format your response in clear Markdown."
+    "Be specific and actionable. Format your response in clear Markdown.\n\n"
+    "PRIORITY RULES:\n"
+    "- Findings in the CONFIRMED BY TARGETED ENUMERATION section were produced by "
+    "tools that an AI gap analysis specifically selected to confirm suspected "
+    "vulnerabilities. These are the highest-confidence findings — rank attack paths "
+    "that use them above paths based on generic scan data alone.\n"
+    "- Obvious attacks listed in the GAP ANALYSIS section have already been validated "
+    "by the enumeration phase. Include them as confirmed attack paths with exact "
+    "exploitation commands, not as suggestions to investigate.\n"
+    "- For any credentials, hashes, or passwords found, include the exact cracking "
+    "command (hashcat -m MODE) and the next post-authentication step."
 )
 
 
@@ -892,6 +902,66 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
                       f'{len(safe_commands)} safe commands, '
                       f'{len(obvious_attacks)} obvious attacks')
 
+        # ── Save partial record (Steps 1+2) so results survive if user leaves ──
+        initial_phase1_json = json.dumps(phase1_findings, indent=2)
+        gap_json = json.dumps(gap_result, indent=2)
+        partial_tin = tin1 + tin2
+        partial_tout = tout1 + tout2
+        partial_cost = round(
+            partial_tin / 1_000_000 * _INPUT_COST_PER_MTOK +
+            partial_tout / 1_000_000 * _OUTPUT_COST_PER_MTOK, 4)
+
+        project_name = getattr(
+            logic.activeProject, 'name',
+            getattr(logic.activeProject, 'projectName', '')) or ''
+        ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        try:
+            history_id = history_db.save_session(
+                host_ip=host_ip,
+                project_name=str(project_name),
+                fingerprint=fingerprint,
+                phase1_json=initial_phase1_json,
+                phase2_markdown='',
+                tokens_input=partial_tin,
+                tokens_output=partial_tout,
+                cost_usd=partial_cost,
+                gap_analysis_json=gap_json,
+                enum_actions_json='{"proposed":[],"approved_indices":[],"obvious_attacks":[]}',
+            )
+        except Exception as e:
+            log.error(f"[AI] Partial history-DB save failed: {e}")
+            history_id = None
+
+        project_analysis_id = None
+        rc = logic.activeProject.repositoryContainer
+        try:
+            session_db = rc.hostRepository.dbAdapter.session()
+            from db.entities.ai_analysis import AiAnalysis
+            entry = AiAnalysis(
+                host_id=int(host_id), timestamp=ts,
+                phase1_json=initial_phase1_json, phase2_markdown=None,
+                tokens_input=partial_tin, tokens_output=partial_tout,
+                cost_usd=partial_cost, history_session_id=history_id,
+                gap_analysis_json=gap_json,
+                enum_actions_json='{"proposed":[],"approved_indices":[],"obvious_attacks":[]}',
+            )
+            session_db.add(entry)
+            session_db.commit()
+            project_analysis_id = entry.id
+            _job_progress(job, 'Partial results saved to database')
+        except Exception as e:
+            try:
+                session_db.rollback()
+            except Exception:
+                pass
+            log.error(f"[AI] Partial project-DB save failed: {e}")
+        finally:
+            try:
+                session_db.close()
+            except Exception:
+                pass
+
         # Build proposed_commands for batch approval
         running_folder = logic.activeProject.properties.runningFolder
         proposed = []
@@ -937,7 +1007,8 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
                     'installed': installed, 'package': package,
                     'port': port,
                     'skipped_reason': None,
-                    '_run_args': {'command': command, 'name': tool_id,
+                    '_run_args': {'command': command,
+                                  'name': f'ai-{tool_id}',
                                   'tabTitle': f'AI: {tool_id} ({port}/{protocol})',
                                   'hostIp': host_ip, 'port': str(port),
                                   'protocol': protocol, 'outputfile': outputfile,
@@ -962,13 +1033,31 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
             else:
                 from app.timing import getTimestamp
                 sc_name = os.path.basename(cmd_raw.split()[0])
+                # Extract port from the command if present (e.g., http://IP:8080/...)
+                sc_port = ''
+                import re as _re
+                _port_m = _re.search(r':(\d{2,5})[/\s]', cmd_raw)
+                if _port_m:
+                    sc_port = _port_m.group(1)
                 outputfile = os.path.join(running_folder,
-                                          f"{getTimestamp()}-ai-safe-{sc_name}-{host_ip}")
+                                          f"{getTimestamp()}-ai-safe-{sc_name}-{host_ip}-{sc_port or '0'}")
                 command = (cmd_raw
                            .replace('[IP]', host_ip)
-                           .replace('[PORT]', '')
+                           .replace('[PORT]', sc_port)
                            .replace('[OUTPUT]', outputfile))
                 binary, installed, package = _check_tool_installed(command)
+                if sc_port:
+                    # Extract a path or differentiator from the URL (e.g., /robots.txt)
+                    _path_m = _re.search(r'https?://[^/\s]+(/[^\s"\']{1,30})', command)
+                    _path_hint = _path_m.group(1) if _path_m else ''
+                    sc_tab = f'AI: {sc_name} ({sc_port}/tcp{_path_hint})'
+                else:
+                    # Build a short descriptor from the command args (skip binary, IPs, flags)
+                    _args = [a for a in cmd_raw.split()[1:]
+                             if not a.startswith('-') and a not in ('[IP]', '[PORT]', '[OUTPUT]', host_ip)
+                             and not a.startswith('/')]
+                    sc_hint = ' '.join(_args)[:30].strip() if _args else host_ip
+                    sc_tab = f'AI: {sc_name} ({sc_hint})'
                 proposed.append({
                     'index': idx, 'tool_id': sc_name,
                     'command': command,
@@ -976,11 +1065,11 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
                     'source': 'safe_command',
                     'is_override': False,
                     'installed': installed, 'package': package,
-                    'port': '',
+                    'port': sc_port,
                     'skipped_reason': None,
                     '_run_args': {'command': command, 'name': f'ai-{sc_name}',
-                                  'tabTitle': f'AI: {sc_name}',
-                                  'hostIp': host_ip, 'port': '',
+                                  'tabTitle': sc_tab,
+                                  'hostIp': host_ip, 'port': sc_port,
                                   'protocol': 'tcp', 'outputfile': outputfile,
                                   'run_actions': False},
                 })
@@ -1061,33 +1150,31 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
         if process_ids:
             _job_progress(job, f'Waiting for {len(process_ids)} tools to complete...')
             rc = logic.activeProject.repositoryContainer
+            pid_to_proposed = {}
+            for p in proposed:
+                pid = p.get('process_id')
+                if pid:
+                    pid_to_proposed[pid] = p
+
             deadline = time.monotonic() + _TOOL_EXEC_TIMEOUT
             while time.monotonic() < deadline:
                 all_done = True
                 for pid in process_ids:
                     try:
                         proc_data = rc.processRepository.getProcessById(pid)
-                        if proc_data and proc_data.get('status') in ('Running', 'Waiting'):
+                        status = proc_data.get('status', '') if proc_data else ''
+                        if pid in pid_to_proposed:
+                            pid_to_proposed[pid]['execution_status'] = status or 'Waiting'
+                        if status in ('Running', 'Waiting'):
                             all_done = False
-                            break
                     except Exception:
                         pass
                 if all_done:
                     break
                 time.sleep(2)
 
-            finished = 0
-            for p in proposed:
-                pid = p.get('process_id')
-                if pid:
-                    try:
-                        proc_data = rc.processRepository.getProcessById(pid)
-                        p['execution_status'] = proc_data.get('status', 'Unknown')
-                        if proc_data.get('status') == 'Finished':
-                            finished += 1
-                    except Exception:
-                        p['execution_status'] = 'Unknown'
-
+            finished = sum(1 for p in proposed
+                           if p.get('execution_status') == 'Finished')
             _job_progress(job, f'Tool execution complete: {finished}/{len(process_ids)} finished')
         else:
             _job_progress(job, 'No tools to execute')
@@ -1132,7 +1219,6 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
             cost3 = 0.0
 
         phase1_json = json.dumps(final_findings, indent=2)
-        gap_json = json.dumps(gap_result, indent=2)
 
         enum_actions = {
             'proposed': [{k: v for k, v in p.items() if k != '_run_args'}
@@ -1150,55 +1236,51 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
 
         _job_progress(job, f'Re-synthesis complete: {len(final_findings)} findings')
 
-        # ── Persist ──────────────────────────────────────────────────
-        project_name = getattr(
-            logic.activeProject, 'name',
-            getattr(logic.activeProject, 'projectName', '')) or ''
+        # ── Update the partial records saved after Step 2 ────────────
+        if history_id:
+            try:
+                conn = history_db._get_conn()
+                conn.execute(
+                    "UPDATE ai_sessions SET phase1_json=?, tokens_input=?, "
+                    "tokens_output=?, cost_usd=?, enum_actions_json=?, "
+                    "fingerprint_json=? WHERE id=?",
+                    (phase1_json, total_tin, total_tout, total_cost,
+                     enum_json, json.dumps(final_fingerprint), history_id))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                log.error(f"[AI] Final history-DB update failed: {e}")
 
-        try:
-            history_id = history_db.save_session(
-                host_ip=host_ip,
-                project_name=str(project_name),
-                fingerprint=final_fingerprint,
-                phase1_json=phase1_json,
-                phase2_markdown='',
-                tokens_input=total_tin,
-                tokens_output=total_tout,
-                cost_usd=total_cost,
-                gap_analysis_json=gap_json,
-                enum_actions_json=enum_json,
-            )
-        except Exception as e:
-            log.error(f"[AI] Enhanced phase1 history-DB save failed: {e}")
-            history_id = None
-
-        ts = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-        rc = logic.activeProject.repositoryContainer
-        session = rc.hostRepository.dbAdapter.session()
-        project_analysis_id = None
-        try:
-            from db.entities.ai_analysis import AiAnalysis
-            entry = AiAnalysis(
-                host_id=int(host_id), timestamp=ts,
-                phase1_json=phase1_json, phase2_markdown=None,
-                tokens_input=total_tin, tokens_output=total_tout,
-                cost_usd=total_cost, history_session_id=history_id,
-                gap_analysis_json=gap_json, enum_actions_json=enum_json,
-            )
-            session.add(entry)
-            session.commit()
-            project_analysis_id = entry.id
-        except Exception as e:
-            session.rollback()
-            log.error(f"[AI] Enhanced phase1 project-DB save failed: {e}")
-        finally:
-            session.close()
+        if project_analysis_id:
+            try:
+                rc2 = logic.activeProject.repositoryContainer
+                session_up = rc2.hostRepository.dbAdapter.session()
+                from db.entities.ai_analysis import AiAnalysis
+                row = session_up.query(AiAnalysis).filter_by(id=project_analysis_id).first()
+                if row:
+                    row.phase1_json = phase1_json
+                    row.tokens_input = total_tin
+                    row.tokens_output = total_tout
+                    row.cost_usd = total_cost
+                    row.enum_actions_json = enum_json
+                    session_up.commit()
+            except Exception as e:
+                try:
+                    session_up.rollback()
+                except Exception:
+                    pass
+                log.error(f"[AI] Final project-DB update failed: {e}")
+            finally:
+                try:
+                    session_up.close()
+                except Exception:
+                    pass
 
         log.info(f"[AI] Enhanced Phase 1 complete — host={host_ip} cost=${total_cost:.4f}")
 
         final_result = {
             'host_ip': host_ip,
-            'fingerprint': final_fingerprint,
+            'fingerprint': final_fingerprint if result2 else fingerprint,
             'phase1_json': phase1_json,
             'phase2_markdown': None,
             'tokens_input': total_tin,
@@ -1519,7 +1601,9 @@ def run_phase2(logic, host_id):
                  .first())
         if not entry or not entry.phase1_json:
             raise ValueError("No Phase 1 result found — run Phase 1 first")
-        phase1_json = entry.phase1_json
+        phase1_json      = entry.phase1_json
+        gap_analysis_json = getattr(entry, 'gap_analysis_json', None) or ''
+        enum_actions_json = getattr(entry, 'enum_actions_json', None) or ''
         entry_id    = entry.id
         prev_tin    = entry.tokens_input  or 0
         prev_tout   = entry.tokens_output or 0
@@ -1537,12 +1621,41 @@ def run_phase2(logic, host_id):
     model  = config['model']
     client = _get_client(config)
 
+    # Build Phase 2 prompt with gap analysis context for priority ranking
+    p2_parts = [f"Host: {host_ip}", "", "=== FINDINGS ===", phase1_json]
+
+    if gap_analysis_json:
+        try:
+            gap = json.loads(gap_analysis_json)
+            obvious = gap.get('obvious_attacks', [])
+            recommended = gap.get('recommended_tools', [])
+            if obvious:
+                p2_parts.append("")
+                p2_parts.append("=== GAP ANALYSIS — OBVIOUS ATTACKS (confirmed, highest priority) ===")
+                for a in obvious:
+                    p2_parts.append(f"  [{a.get('severity', 'high')}] {a.get('attack', '')}")
+                    if a.get('evidence'):
+                        p2_parts.append(f"    Evidence: {a['evidence']}")
+                    if a.get('next_command'):
+                        p2_parts.append(f"    Command: {a['next_command']}")
+            if recommended:
+                p2_parts.append("")
+                p2_parts.append("=== CONFIRMED BY TARGETED ENUMERATION ===")
+                p2_parts.append("The following tools were specifically selected by AI gap analysis")
+                p2_parts.append("to confirm suspected vulnerabilities. Their findings in the FINDINGS")
+                p2_parts.append("section above should be treated as high-confidence:")
+                for t in recommended:
+                    p2_parts.append(f"  - {t.get('tool_id', '')} (port {t.get('port', 'N/A')}): {t.get('rationale', '')}")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    p2_content = '\n'.join(p2_parts)
+
     log.info(f"[AI] Phase 2 starting for host {host_ip}")
     p2_resp = client.messages.create(
         model=model, max_tokens=8192,
         system=_PHASE2_SYSTEM,
-        messages=[{'role': 'user',
-                   'content': f"Host: {host_ip}\n\nFindings:\n{phase1_json}"}]
+        messages=[{'role': 'user', 'content': p2_content}]
     )
     phase2_markdown = p2_resp.content[0].text.strip()
     tin, tout, _ = _actual_cost(p2_resp.usage)

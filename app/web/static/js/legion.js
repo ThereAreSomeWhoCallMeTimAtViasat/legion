@@ -115,6 +115,18 @@ var _VERSION = (function() {
     return dash > 0 ? txt.slice(0, dash).trim() : txt.split('–')[0].trim() || 'LEGION';
 })();
 
+/* Show JS cache-bust version in the title bar */
+(function() {
+    var scripts = document.querySelectorAll('script[src*="legion.js"]');
+    if (scripts.length) {
+        var m = scripts[0].src.match(/[?&]v=(\d+)/);
+        if (m) {
+            var el = document.getElementById('js-version');
+            if (el) el.textContent = 'js:' + m[1];
+        }
+    }
+})();
+
 /* ── State (mirrors ui/ViewState.py) ── */
 var L = {
     hosts: [],
@@ -1599,6 +1611,14 @@ function initInteractions() {
            Tabs that were unread for the new host get orange back; tabs for
            the previous host had their state already saved in L._hostUnreadTabs. */
         if (L.selectedHostId !== hostId) {
+            /* Save current host's active right-panel tab */
+            if (L.selectedHostId) {
+                var curActive = $('right-tab-bar').querySelector('.tab-btn.active');
+                if (curActive && curActive.dataset.tab) {
+                    if (!L._hostActiveTab) L._hostActiveTab = {};
+                    L._hostActiveTab[L.selectedHostId] = curActive.dataset.tab;
+                }
+            }
             var unreadForNewHost = L._hostUnreadTabs[hostId] || {};
             $('right-tab-bar').querySelectorAll('.tab-btn').forEach(function(btn) {
                 btn.classList.remove('tab-unread');
@@ -1617,9 +1637,13 @@ function initInteractions() {
         /* Show right panel tabs (not tools display) */
         $('right-tabs').style.display = '';
         $('tools-display').style.display = 'none';
-        /* Activate Services tab */
-        var svcTab = $('right-tab-bar').querySelector('[data-tab="services-right"]');
-        if (svcTab) svcTab.click();
+        /* Restore last active tab for this host, or default to Services */
+        var savedTab = (L._hostActiveTab || {})[hostId];
+        var tabToClick = savedTab
+            ? $('right-tab-bar').querySelector('[data-tab="' + savedTab + '"]')
+            : null;
+        if (!tabToClick) tabToClick = $('right-tab-bar').querySelector('[data-tab="services-right"]');
+        if (tabToClick) tabToClick.click();
         /* Load detail */
         loadHostDetail(hostId);
     });
@@ -4605,6 +4629,7 @@ document.addEventListener('DOMContentLoaded', function() {
         _aiShowState('ai-no-host');
         _aiResults = null; _aiHostId = null;
         _aiRunning = false; _aiRunningHostId = null;
+        _aiJobs = {};
 
         /* ── Tools display panel ── */
         $('right-tabs').style.display = '';
@@ -5776,8 +5801,9 @@ document.addEventListener('DOMContentLoaded', function() {
     ══════════════════════════════════════════════════════════════════════════ */
     var _aiHostId        = null;   // host_id currently shown in AI tab
     var _aiResults       = null;   // most recent Phase 1 result
-    var _aiRunning       = false;  // true while a Phase 1 call is in flight
-    var _aiRunningHostId = null;   // host_id the in-flight call is for
+    var _aiRunning       = false;  // true while ANY Phase 1 call is in flight
+    var _aiRunningHostId = null;   // host_id the in-flight call is for (legacy compat)
+    var _aiJobs          = {};     // {hostId: {jobId, progressIndex, pollTimer, lastStep, running, runDiv}}
 
     /* Severity colour for Phase 1 findings table */
     var _aiSevColour = {
@@ -5893,6 +5919,11 @@ document.addEventListener('DOMContentLoaded', function() {
             var el = $(id); if (el) el.style.display = 'none';
         });
         var el = $(state); if (el) el.style.display = '';
+        /* Remove pinned approval buttons when leaving the running state */
+        if (state !== 'ai-running') {
+            var btnBar = document.getElementById('ai-approve-btn-bar');
+            if (btnBar) btnBar.remove();
+        }
         /* Update toolbar button states */
         var analyzeBtn  = $('ai-analyze-btn');
         var phase2Btn   = $('ai-phase2-btn');
@@ -6102,6 +6133,36 @@ document.addEventListener('DOMContentLoaded', function() {
             '<th>Finding</th>' +
             '<th style="width:180px">Evidence</th>' +
             '</tr></thead>\n<tbody id="rpt-tbody"></tbody>\n</table>\n</div>\n' +
+            (function() {
+                var enumSection = '';
+                try {
+                    var ed = r.enum_actions_json ? JSON.parse(r.enum_actions_json) : null;
+                    if (ed && ed.proposed && ed.proposed.length) {
+                        enumSection += '<div class="section">\n<h2>Automated Enumeration</h2>\n';
+                        ed.proposed.forEach(function(p) {
+                            var st = p.execution_status || p.skipped_reason || 'not run';
+                            var approved = (ed.approved_indices || []).indexOf(p.index) >= 0;
+                            var dim = (!approved || p.skipped_reason) ? ' style="opacity:0.4"' : '';
+                            enumSection += '<div' + dim + '><strong>[' + esc(st) + ']</strong> ' +
+                                esc(p.tool_id) + (p.port ? ' (port ' + esc(p.port) + ')' : '') +
+                                (p.command ? '<br><code>' + esc(p.command) + '</code>' : '') +
+                                '<br><em>' + esc(p.rationale) + '</em></div>\n';
+                        });
+                        var attacks = ed.obvious_attacks || [];
+                        if (attacks.length) {
+                            enumSection += '<h3>Obvious Attacks</h3>\n';
+                            attacks.forEach(function(a) {
+                                enumSection += '<div><strong style="color:#e74c3c">[' +
+                                    esc(a.severity || 'high') + ']</strong> ' + esc(a.attack) +
+                                    (a.next_command ? '<br><code>' + esc(a.next_command) + '</code>' : '') +
+                                    '</div>\n';
+                            });
+                        }
+                        enumSection += '</div>\n';
+                    }
+                } catch(e) {}
+                return enumSection;
+            })() +
             '<div class="section">\n<h2>Phase 2 — Attack Plan</h2>\n' +
             p2html + '\n</div>\n' +
             '<div class="footer">Generated by Legion v' + (_VERSION || '10.x') + ' &mdash; ' + tsDisplay + '</div>\n' +
@@ -6211,12 +6272,14 @@ document.addEventListener('DOMContentLoaded', function() {
                                       p.skipped_reason ? 'var(--disabled)' : '#48f';
                     var statusLabel = p.execution_status || p.skipped_reason || 'not run';
                     var approved = (enumData.approved_indices || []).indexOf(p.index) >= 0;
-                    html += '<div style="margin-bottom:3px">';
+                    var dimStyle = (!approved && !p.skipped_reason) || p.skipped_reason ? 'opacity:0.4;' : '';
+                    html += '<div style="margin-bottom:6px;padding:4px;border-bottom:1px solid var(--border);' + dimStyle + '">';
                     html += '<span style="color:' + statusColor + '">[' + esc(statusLabel) + ']</span> ';
                     html += '<code>' + esc(p.tool_id) + '</code>';
                     if (p.port) html += ' (port ' + esc(p.port) + ')';
                     if (!approved && !p.skipped_reason) html += ' <em style="color:var(--disabled)">(not approved)</em>';
-                    html += ' — <span style="color:var(--disabled)">' + esc(p.rationale) + '</span>';
+                    if (p.command) html += '<br><code style="font-size:8pt;color:var(--disabled)">' + esc(p.command) + '</code>';
+                    html += '<br><span style="font-size:8pt;color:var(--disabled)">→ ' + esc(p.rationale) + '</span>';
                     html += '</div>';
                 });
                 html += '</div>';
@@ -6250,26 +6313,110 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     /* Start Phase 1 analysis */
+    /* Per-host job state is stored in _aiJobs[hostId].
+       These module-level vars track the CURRENTLY DISPLAYED host's job for convenience. */
+    var _aiJobId = null;
+    var _aiProgressIndex = 0;
+    var _aiPollTimer = null;
+    var _aiLastStep = null;
+
+    function _aiSaveJobState() {
+        if (!_aiHostId) return;
+        _aiJobs[_aiHostId] = {
+            jobId: _aiJobId,
+            progressIndex: _aiProgressIndex,
+            lastStep: _aiLastStep,
+            running: _aiRunning && _aiRunningHostId === _aiHostId,
+            runDivHtml: ($('ai-running') || {}).innerHTML || '',
+        };
+    }
+
+    function _aiRestoreJobState(hostId) {
+        var j = _aiJobs[hostId];
+        if (j && j.running) {
+            _aiJobId = j.jobId;
+            _aiProgressIndex = j.progressIndex;
+            _aiLastStep = j.lastStep;
+            _aiRunning = true;
+            _aiRunningHostId = hostId;
+            var runDiv = $('ai-running');
+            if (runDiv && j.runDivHtml) runDiv.innerHTML = j.runDivHtml;
+            return true;
+        }
+        return false;
+    }
+
+    var _aiStepDefs = [
+        {key: 'synthesis',         label: 'Step 1 — Synthesizing findings'},
+        {key: 'gap_analysis',      label: 'Step 2 — Analyzing coverage gaps'},
+        {key: 'awaiting_approval', label: 'Step 3 — Review recommended tools'},
+        {key: 'tool_execution',    label: 'Step 3 — Running enumeration tools'},
+        {key: 'resynthesis',       label: 'Step 4 — Re-synthesizing with enriched data'},
+        {key: 'done',              label: 'Analysis complete'},
+    ];
+
+    function _aiUpdateStepTimeline(currentStep) {
+        var timeline = $('ai-steps-timeline');
+        if (!timeline) return;
+        if (currentStep === _aiLastStep) return;
+        _aiLastStep = currentStep;
+
+        var html = '';
+        var reached = false;
+        for (var i = 0; i < _aiStepDefs.length; i++) {
+            var s = _aiStepDefs[i];
+            if (s.key === 'awaiting_approval' && currentStep !== 'awaiting_approval') continue;
+            if (s.key === 'tool_execution' && currentStep === 'awaiting_approval') continue;
+            var isCurrent = (s.key === currentStep);
+            var isPast = !reached && !isCurrent;
+            if (isCurrent) reached = true;
+
+            var icon, color;
+            if (isPast) {
+                icon = '✓'; color = '#4a4';
+            } else if (isCurrent && s.key !== 'done') {
+                icon = '<span style="display:inline-block;width:10px;height:10px;' +
+                       'border:2px solid var(--highlight);border-top-color:transparent;border-radius:50%;' +
+                       'animation:spin 1s linear infinite;vertical-align:middle"></span>';
+                color = 'var(--highlight)';
+            } else if (s.key === 'done' && isCurrent) {
+                icon = '✓'; color = '#4a4';
+            } else {
+                icon = '○'; color = 'var(--disabled)';
+            }
+            html += '<div style="margin-bottom:4px;font-size:10pt;color:' + color + '">' +
+                    '<span style="display:inline-block;width:18px;text-align:center">' + icon + '</span> ' +
+                    esc(s.label) + '</div>';
+        }
+        timeline.innerHTML = html;
+    }
 
     function _aiRunPhase1() {
         _aiRunning       = true;
         _aiRunningHostId = _aiHostId;
         _aiProgressIndex = 0;
         _aiJobId         = null;
+        _aiLastStep      = null;
+
+        /* Show running state IMMEDIATELY — before any async calls */
+        _aiShowState('ai-running');
         var rt = $('ai-status-text');
         if (rt) rt.textContent = 'Starting enhanced Phase 1 analysis…';
-        _aiShowState('ai-running');
 
         var runDiv = $('ai-running');
         if (runDiv) {
             runDiv.innerHTML =
-                '<div id="ai-step-label" style="font-size:11pt;color:var(--highlight);margin-bottom:8px">' +
-                'Step 1/4 — Synthesizing findings...</div>' +
+                '<div style="padding:12px;overflow-y:auto;max-height:100%">' +
+                '<div id="ai-steps-timeline" style="margin-bottom:12px"></div>' +
                 '<div id="ai-progress-log" style="font-size:9pt;color:var(--disabled);' +
-                'max-height:180px;overflow-y:auto;margin-bottom:8px;font-family:monospace"></div>' +
+                'max-height:160px;overflow-y:auto;margin-bottom:8px;font-family:monospace;' +
+                'border:1px solid var(--border);padding:6px;min-height:30px"></div>' +
                 '<div id="ai-approval-panel" style="display:none"></div>' +
-                '<div id="ai-tool-exec-status" style="display:none;margin-top:8px"></div>';
+                '<div id="ai-tool-exec-status" style="display:none;margin-top:8px"></div>' +
+                '</div>';
         }
+        _aiLastStep = null;
+        _aiUpdateStepTimeline('synthesis');
 
         postJson('/api/ai/analyze-host/' + _aiHostId + '/phase1', {})
             .then(function(r) {
@@ -6301,16 +6448,7 @@ document.addEventListener('DOMContentLoaded', function() {
         fetchJson('/api/ai/host/' + _aiHostId + '/phase1/progress/' + _aiJobId +
                   '?since=' + _aiProgressIndex)
             .then(function(s) {
-                var stepLabels = {
-                    'synthesis':         'Step 1/4 — Synthesizing findings...',
-                    'gap_analysis':      'Step 2/4 — Analyzing coverage gaps...',
-                    'awaiting_approval': 'Step 2.5 — Review recommended tools',
-                    'tool_execution':    'Step 3/4 — Running enumeration tools...',
-                    'resynthesis':       'Step 4/4 — Re-synthesizing with enriched data...',
-                    'done':              'Analysis complete'
-                };
-                var label = $('ai-step-label');
-                if (label) label.textContent = stepLabels[s.step] || s.step;
+                _aiUpdateStepTimeline(s.step);
 
                 var logDiv = $('ai-progress-log');
                 if (logDiv && s.progress) {
@@ -6325,7 +6463,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 if (s.status === 'awaiting_approval') {
                     _aiRenderApprovalPanel(s.proposed_commands);
-                    return; // stop polling — user must act
+                    return;
                 }
 
                 if (s.step === 'tool_execution' && s.proposed_commands) {
@@ -6335,23 +6473,38 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (s.status === 'completed') {
                     _aiRunning = false;
                     _aiJobId = null;
-                    _aiResults = s.result;
-                    _aiShowResults(s.result, null);
-                    _aiLoadSimilar(_aiHostId);
+                    if (_aiHostId) { _aiJobs[_aiHostId] = null; }
+                    if (s.result) {
+                        _aiResults = s.result;
+                        _aiShowResults(s.result, null);
+                        _aiLoadSimilar(_aiHostId);
+                    } else {
+                        _aiShowState('ai-ready');
+                        alert('Phase 1 completed but returned no results.');
+                    }
                     return;
                 }
                 if (s.status === 'failed') {
                     _aiRunning = false;
                     _aiJobId = null;
+                    if (_aiHostId) { _aiJobs[_aiHostId] = null; }
                     _aiShowState('ai-ready');
                     alert('Phase 1 failed: ' + (s.error || 'unknown error'));
                     return;
                 }
 
+                _aiSaveJobState();
                 _aiPollTimer = setTimeout(_aiPollProgress, 2000);
             })
-            .catch(function() {
-                _aiPollTimer = setTimeout(_aiPollProgress, 5000);
+            .catch(function(e) {
+                var logDiv = $('ai-progress-log');
+                if (logDiv) {
+                    var line = document.createElement('div');
+                    line.style.color = '#e44';
+                    line.textContent = 'Poll error: ' + (e.message || 'network issue') + ' — retrying...';
+                    logDiv.appendChild(line);
+                }
+                _aiPollTimer = setTimeout(_aiPollProgress, 3000);
             });
     }
 
@@ -6396,19 +6549,29 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             html += '</div>';
         }
-
-        html += '<div style="margin-top:10px;text-align:right">';
-        html += '<button id="ai-approve-run-btn" onclick="_aiSubmitApproval()" ' +
-                'style="padding:4px 12px;margin-right:8px;background:var(--highlight);color:#000;' +
-                'border:none;border-radius:3px;cursor:pointer">Run Approved (' +
-                valid.filter(function(c) { return c.installed; }).length + ')</button>';
-        html += '<button onclick="_aiSubmitApproval(true)" ' +
-                'style="padding:4px 12px;border:1px solid var(--border);background:transparent;' +
-                'color:var(--text);border-radius:3px;cursor:pointer">Skip All</button>';
-        html += '</div></div>';
+        html += '</div>';
 
         panel.innerHTML = html;
         panel.style.display = '';
+
+        // Render buttons pinned to the bottom of #ai-right, outside scrollable content
+        var btnBar = document.getElementById('ai-approve-btn-bar');
+        if (!btnBar) {
+            btnBar = document.createElement('div');
+            btnBar.id = 'ai-approve-btn-bar';
+            $('ai-right').appendChild(btnBar);
+        }
+        var initCount = valid.filter(function(c) { return c.installed; }).length;
+        btnBar.style.cssText = 'padding:8px 12px;border-top:2px solid var(--highlight);' +
+            'background:var(--window);text-align:right;flex-shrink:0';
+        btnBar.innerHTML =
+            '<button id="ai-approve-run-btn" onclick="_aiSubmitApproval()" ' +
+            'style="padding:6px 16px;margin-right:8px;background:var(--highlight);color:#000;' +
+            'border:none;border-radius:3px;cursor:pointer;font-size:10pt;font-weight:bold">' +
+            'Run Approved (' + initCount + ')</button>' +
+            '<button onclick="_aiSubmitApproval(true)" ' +
+            'style="padding:6px 16px;border:1px solid var(--border);background:transparent;' +
+            'color:var(--text);border-radius:3px;cursor:pointer;font-size:10pt">Skip All</button>';
 
         // Wire checkbox change to update Run Approved count
         panel.querySelectorAll('.ai-approve-cb').forEach(function(cb) {
@@ -6432,10 +6595,33 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
-        panel.innerHTML = '<div style="color:var(--disabled);font-size:9pt">' +
-                          (skipAll ? 'Skipping all — proceeding to re-synthesis...'
-                                   : 'Approved ' + approved.length + ' tool(s) — running...') +
-                          '</div>';
+        /* Keep the command list visible — just disable controls and mark status */
+        if (panel) {
+            panel.querySelectorAll('.ai-approve-cb').forEach(function(cb) {
+                cb.disabled = true;
+                var idx = parseInt(cb.dataset.idx, 10);
+                var row = cb.closest('div[style]');
+                if (!row) return;
+                if (skipAll || approved.indexOf(idx) < 0) {
+                    row.style.opacity = '0.4';
+                } else {
+                    var statusSpan = document.createElement('span');
+                    statusSpan.className = 'ai-cmd-status';
+                    statusSpan.dataset.idx = idx;
+                    statusSpan.style.cssText = 'margin-left:8px;font-size:8pt;color:var(--highlight)';
+                    statusSpan.textContent = '⟳ queued';
+                    cb.parentElement.appendChild(statusSpan);
+                }
+            });
+            if (skipAll) {
+                var skipMsg = document.createElement('div');
+                skipMsg.style.cssText = 'color:var(--disabled);font-size:9pt;margin-top:8px';
+                skipMsg.textContent = 'Skipped all — proceeding to re-synthesis...';
+                panel.appendChild(skipMsg);
+            }
+        }
+        var btnBar = document.getElementById('ai-approve-btn-bar');
+        if (btnBar) btnBar.remove();
 
         postJson('/api/ai/phase1/approve/' + _aiJobId, {
             approved: approved,
@@ -6483,21 +6669,21 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     function _aiUpdateToolExecStatus(commands) {
-        var wrap = $('ai-tool-exec-status');
-        if (!wrap) return;
-        var running = commands.filter(function(c) { return c.execution_status; });
-        if (!running.length) { wrap.style.display = 'none'; return; }
-        wrap.style.display = '';
-        var html = '<div style="font-size:9pt;margin-bottom:4px"><strong>Tool Execution:</strong></div>';
-        running.forEach(function(c) {
-            var color = c.execution_status === 'Finished' ? '#4a4' :
-                        c.execution_status === 'Running' ? '#48f' :
-                        c.execution_status === 'Crashed' ? '#e44' : 'var(--disabled)';
-            html += '<div><span style="color:' + color + '">[' + esc(c.execution_status || 'Queued') +
-                    ']</span> ' + esc(c.tool_id) +
-                    (c.port ? ' (port ' + esc(c.port) + ')' : '') + '</div>';
+        /* Update the inline status spans in the approval panel command list */
+        commands.forEach(function(c) {
+            if (!c.execution_status) return;
+            var spans = document.querySelectorAll('.ai-cmd-status[data-idx="' + c.index + '"]');
+            spans.forEach(function(span) {
+                var color = c.execution_status === 'Finished' ? '#4a4' :
+                            c.execution_status === 'Running' ? '#48f' :
+                            c.execution_status === 'Crashed' ? '#e44' : 'var(--disabled)';
+                var icon = c.execution_status === 'Finished' ? '✓' :
+                           c.execution_status === 'Running' ? '⟳' :
+                           c.execution_status === 'Crashed' ? '✗' : '○';
+                span.style.color = color;
+                span.textContent = icon + ' ' + c.execution_status;
+            });
         });
-        wrap.innerHTML = html;
     }
 
     /* Populate comparison dropdown from history matches */
@@ -6520,7 +6706,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         opt.value = m.id;
                         opt.textContent = m.host_ip + ' — ' + (m.timestamp || '').substring(0, 10) +
                             ' — ' + m.similarity + '% — ' + (m.os_family || 'Unknown') +
-                            ', ' + m.port_count + ' ports';
+                            ', ' + m.port_count + ' ports' +
+                            (m.cost_usd ? ' — $' + (m.cost_usd || 0).toFixed(4) : '');
                         sel.appendChild(opt);
                     });
                 }
@@ -6570,17 +6757,33 @@ document.addEventListener('DOMContentLoaded', function() {
     if (_aiTabBtn) {
         _aiTabBtn.addEventListener('click', function() {
             if (!L.selectedHostId) { _aiShowState('ai-no-host'); return; }
-            /* If Phase 1 is currently running for this host, stay in running state */
-            if (_aiRunning && _aiRunningHostId === L.selectedHostId) {
-                _aiHostId = L.selectedHostId;
+            /* Save current host's job state before switching */
+            _aiSaveJobState();
+            /* Check if this host has a running job */
+            var switchingTo = L.selectedHostId;
+            var hostJob = _aiJobs[switchingTo];
+            if (hostJob && hostJob.running) {
+                _aiHostId = switchingTo;
+                _aiRestoreJobState(switchingTo);
                 var rt = $('ai-status-text');
-                if (rt) rt.textContent = 'Running Phase 1 — synthesising findings…';
+                if (rt) rt.textContent = 'Running Phase 1 analysis…';
                 _aiShowState('ai-running');
+                if (_aiJobId && !_aiPollTimer) {
+                    _aiPollProgress();
+                }
                 return;
             }
-            _aiHostId = L.selectedHostId;
-            _aiLoadLatest(L.selectedHostId);
-            _aiLoadSimilar(L.selectedHostId);
+            _aiHostId = switchingTo;
+            _aiLoadLatest(switchingTo);
+            _aiLoadSimilar(switchingTo);
+            /* Always refresh the provider badge */
+            fetchJson('/api/ai/host/' + switchingTo + '/status').then(function(st) {
+                var badge = $('ai-provider-badge');
+                if (badge && st.ai_provider && st.ai_provider !== 'none') {
+                    badge.textContent = st.ai_provider + (st.ai_model ? ' / ' + st.ai_model : '');
+                    badge.style.display = '';
+                }
+            }).catch(function() {});
         });
     }
 
@@ -6635,12 +6838,18 @@ document.addEventListener('DOMContentLoaded', function() {
                         return;
                     }
                     _aiUpdatePhase2UI(r.phase2_markdown);
+                    if (_aiResults) {
+                        _aiResults.phase2_markdown = r.phase2_markdown;
+                        _aiResults.tokens_input  = (_aiResults.tokens_input || 0) + (r.tokens_input || 0);
+                        _aiResults.tokens_output = (_aiResults.tokens_output || 0) + (r.tokens_output || 0);
+                        _aiResults.cost_usd      = (_aiResults.cost_usd || 0) + (r.cost_usd || 0);
+                    }
                     var costText = $('ai-cost-text');
                     if (costText && _aiResults) {
-                        var total = ((_aiResults.cost_usd || 0) + (r.cost_usd || 0)).toFixed(4);
-                        costText.textContent = 'Cost: $' + total + ' (Phase 1+2) | ' +
-                            ((_aiResults.tokens_input||0) + (_aiResults.tokens_output||0) +
-                             (r.tokens_input||0) + (r.tokens_output||0)).toLocaleString() + ' tokens';
+                        costText.textContent = 'Cost: $' + (_aiResults.cost_usd || 0).toFixed(4) +
+                            ' (Phase 1+2) | ' +
+                            ((_aiResults.tokens_input||0) + (_aiResults.tokens_output||0)).toLocaleString() +
+                            ' tokens';
                     }
                 })
                 .catch(function(e) {

@@ -369,6 +369,19 @@ body.black-output-bg .tool-output-area{background:#000}
 ::-webkit-scrollbar-thumb:hover{background:#999}
 ::-webkit-scrollbar-corner{background:var(--dark)}
 
+/* === AI panel scrolling === */
+#ai-right{overflow:hidden;scrollbar-width:auto;scrollbar-color:#999 #2a2a2a}
+#ai-running,#ai-results{overflow-y:auto;flex:1;min-height:0;scrollbar-width:auto;scrollbar-color:#999 #2a2a2a}
+#ai-running::-webkit-scrollbar,#ai-results::-webkit-scrollbar{width:16px}
+#ai-running::-webkit-scrollbar-track,#ai-results::-webkit-scrollbar-track{background:#2a2a2a;border-left:2px solid var(--border)}
+#ai-running::-webkit-scrollbar-thumb,#ai-results::-webkit-scrollbar-thumb{background:#999;border:3px solid #2a2a2a;border-radius:6px;min-height:40px}
+#ai-running::-webkit-scrollbar-thumb:hover,#ai-results::-webkit-scrollbar-thumb:hover{background:#bbb}
+#ai-p1-table-wrap{max-height:40vh;overflow-y:auto;scrollbar-width:auto;scrollbar-color:#888 #232323}
+#ai-p1-table-wrap::-webkit-scrollbar{width:14px}
+#ai-p1-table-wrap::-webkit-scrollbar-track{background:#232323;border-left:1px solid var(--border)}
+#ai-p1-table-wrap::-webkit-scrollbar-thumb{background:#888;border:2px solid #232323;border-radius:5px;min-height:30px}
+#ai-p1-table-wrap::-webkit-scrollbar-thumb:hover{background:#aaa}
+
 /* === ANSI OUTPUT === */
 .ansi{font:inherit;white-space:pre-wrap;word-break:break-word;tab-size:4}
 .ansi-bold{font-weight:700}

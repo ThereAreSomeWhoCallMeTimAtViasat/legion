@@ -107,6 +107,8 @@ if __name__ == "__main__":
                         help="Skip auto-opening Firefox (headless / CI use)")
     parser.add_argument("--reset-conf", action="store_true",
                         help="Restore legion.conf from bundled master (recovery for air-gapped systems)")
+    parser.add_argument("--open", type=str, metavar="FILE",
+                        help="Open an existing .legion project file on startup")
     args = parser.parse_args()
 
     if args.reset_conf:
@@ -498,6 +500,17 @@ if __name__ == "__main__":
         settings = Settings(AppSettings())
         wc = WebController(logic, settings)
         wc.start()
+
+        if args.open:
+            _open_path = os.path.abspath(args.open)
+            if not os.path.isfile(_open_path):
+                print(f"Error: file not found: {_open_path}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Opening project: {_open_path}")
+            if wc.openExistingProject(_open_path) is False:
+                print(f"Error: failed to open {_open_path}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Project opened: {os.path.basename(_open_path)}")
 
         # Create Flask app
         app = Flask(__name__,

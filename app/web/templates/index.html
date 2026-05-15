@@ -90,8 +90,9 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.225-flask – *untitled</span>
+    <span class="title" id="window-title">LEGION v10.239-flask – *untitled</span>
     <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
+    <span class="title" id="js-version" style="color:var(--disabled);font-size:8pt"></span>
     <span class="title" id="live-status">●</span>
 </div>
 
@@ -282,7 +283,7 @@
 </div>
 
 <!-- AI Analysis tab -->
-<div class="tab-content" id="ai-right" style="overflow:hidden;padding:0">
+<div class="tab-content" id="ai-right" style="padding:0">
     <!-- Persistent toolbar — always visible at top -->
     <div id="ai-toolbar" style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0">
         <button id="ai-analyze-btn" type="button" style="font-size:10pt;padding:4px 14px" disabled>Analyze</button>
@@ -347,7 +348,7 @@
                     <strong style="font-size:9pt">Findings</strong>
                     <button id="ai-p1-toggle" type="button" style="font-size:8pt;padding:1px 6px">View as JSON</button>
                 </div>
-                <div id="ai-p1-table-wrap" style="overflow:auto;max-height:280px;margin-bottom:8px">
+                <div id="ai-p1-table-wrap" style="margin-bottom:8px">
                     <table id="ai-p1-table" style="width:100%;font-size:9pt">
                         <thead><tr>
                             <th data-ai-sort="sev" data-ai-label="Severity" style="width:70px;cursor:pointer;user-select:none">Severity ▲</th>
