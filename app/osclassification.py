@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 
 """
 LEGION (https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion)
@@ -24,13 +25,6 @@ IMPLIED WARRANTIES ARE DISCLAIMED. IN NO EVENT SHALL VIASAT, INC. BE
 LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
 CONSEQUENTIAL DAMAGES ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE.
 """
-
-"""
-Utilities for normalizing operating system detection strings and providing
-centralized icon mappings across the Legion UI.
-"""
-
-from __future__ import annotations
 
 from typing import Dict
 
