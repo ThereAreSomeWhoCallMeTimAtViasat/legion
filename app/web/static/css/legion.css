@@ -1,9 +1,18 @@
-/* ================================================================
-   LEGION – Qt6 Fusion Dark palette replica
-   Font: monospace 10pt (matches legion.py setStyleSheet)
-   Colors: Qt6 QPalette::Dark fusion scheme
-   Layout: 1:1 match of ui/gui.py widget hierarchy
-   ================================================================ */
+/*
+ * LEGION (https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion)
+ * Author: Tim McLean (Viasat, Inc.)
+ * Copyright (c) 2025-2026 Viasat, Inc.
+ * Copyright (c) 2025 Shane William Scott (original Legion)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * THIS SOFTWARE IS PROVIDED BY VIASAT, INC. "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES ARE DISCLAIMED. See the GNU General Public License
+ * for more details.
+ */
 
 :root{
   /* QPalette::Window */        --window:#353535;

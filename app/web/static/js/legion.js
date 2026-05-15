@@ -1,7 +1,19 @@
-/* ================================================================
-   LEGION – Flask frontend JS
-   1:1 replica of Qt6 ui/view.py + controller/controller.py logic
-   ================================================================ */
+/*
+ * LEGION (https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion)
+ * Author: Tim McLean (Viasat, Inc.)
+ * Copyright (c) 2025-2026 Viasat, Inc.
+ * Copyright (c) 2025 Shane William Scott (original Legion)
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * THIS SOFTWARE IS PROVIDED BY VIASAT, INC. "AS IS" AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES ARE DISCLAIMED. See the GNU General Public License
+ * for more details.
+ */
+
 'use strict';
 
 /* ── Notes rendering: headers + ANSI colour ── */
