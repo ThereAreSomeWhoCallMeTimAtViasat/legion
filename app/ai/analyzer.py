@@ -1220,6 +1220,24 @@ def run_phase1_enhanced(logic, host_id, wc, job_id):
 
         phase1_json = json.dumps(final_findings, indent=2)
 
+        # Enrich proposed items with tool output before final save
+        rc = logic.activeProject.repositoryContainer
+        for p in proposed:
+            pid = p.get('process_id')
+            if not pid:
+                continue
+            try:
+                from sqlalchemy import text as _sqlt
+                _s = rc.processRepository.dbAdapter.session()
+                row = _s.execute(_sqlt(
+                    'SELECT output FROM process_output WHERE processId = :pid'
+                ), {'pid': int(pid)}).fetchone()
+                _s.close()
+                if row and row[0]:
+                    p['output'] = str(row[0]).strip()[:4000]
+            except Exception:
+                pass
+
         enum_actions = {
             'proposed': [{k: v for k, v in p.items() if k != '_run_args'}
                          for p in proposed],

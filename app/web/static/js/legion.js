@@ -6146,7 +6146,14 @@ document.addEventListener('DOMContentLoaded', function() {
                             enumSection += '<div' + dim + '><strong>[' + esc(st) + ']</strong> ' +
                                 esc(p.tool_id) + (p.port ? ' (port ' + esc(p.port) + ')' : '') +
                                 (p.command ? '<br><code>' + esc(p.command) + '</code>' : '') +
-                                '<br><em>' + esc(p.rationale) + '</em></div>\n';
+                                '<br><em>' + esc(p.rationale) + '</em>';
+                            if (p.output && approved && (st === 'Finished' || st === 'Crashed')) {
+                                enumSection += '<details style="margin:4px 0"><summary style="cursor:pointer;color:#aaa;font-size:0.85em">Output (' + p.output.length + ' chars)</summary>' +
+                                    '<pre style="background:#111;padding:10px;overflow:auto;font-size:0.82em;border:1px solid #333;max-height:300px;white-space:pre-wrap">' + esc(p.output) + '</pre></details>';
+                            } else if (approved && st === 'Finished' && !p.output) {
+                                enumSection += '<div style="color:#666;font-size:0.85em">No output (target not vulnerable or tool produced no results)</div>';
+                            }
+                            enumSection += '</div>\n';
                         });
                         var attacks = ed.obvious_attacks || [];
                         if (attacks.length) {
@@ -6280,6 +6287,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (!approved && !p.skipped_reason) html += ' <em style="color:var(--disabled)">(not approved)</em>';
                     if (p.command) html += '<br><code style="font-size:8pt;color:var(--disabled)">' + esc(p.command) + '</code>';
                     html += '<br><span style="font-size:8pt;color:var(--disabled)">→ ' + esc(p.rationale) + '</span>';
+                    if (p.output && approved && (p.execution_status === 'Finished' || p.execution_status === 'Crashed')) {
+                        var outPreview = p.output.length > 80 ? p.output.substring(0, 80) + '…' : p.output;
+                        html += '<details style="margin:4px 0 2px 0"><summary style="cursor:pointer;color:#aaa;font-size:8pt">Output (' + p.output.length + ' chars): ' + esc(outPreview) + '</summary>';
+                        html += '<pre style="background:#111;padding:8px;font-size:8pt;max-height:200px;overflow:auto;white-space:pre-wrap;border:1px solid #333;margin:4px 0">' + esc(p.output) + '</pre></details>';
+                    } else if (approved && p.execution_status === 'Finished' && !p.output) {
+                        html += '<div style="font-size:8pt;color:#666;margin:2px 0 0 0">No output (target not vulnerable or tool produced no results)</div>';
+                    }
                     html += '</div>';
                 });
                 html += '</div>';
