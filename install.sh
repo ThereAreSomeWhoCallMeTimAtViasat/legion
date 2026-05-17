@@ -46,6 +46,11 @@ done
 
 [[ $EUID -eq 0 ]] || die "Run with sudo:  sudo bash $0"
 
+# Prevent dpkg debconf dialogs (keyboard-configuration, etc.) from blocking
+# the install — especially in WSL where whiptail cannot read stdin through
+# the tee pipe on line 45.
+export DEBIAN_FRONTEND=noninteractive
+
 # In Docker / root-only environments, sudo is not installed — define a shim
 # so every 'sudo cmd' in this script just runs 'cmd' directly.
 if ! command -v sudo &>/dev/null; then
