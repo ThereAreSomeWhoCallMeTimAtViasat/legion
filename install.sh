@@ -454,24 +454,15 @@ else
     fi
 fi
 
-# rsh-client — own call with 3-stage fallback (has dep conflicts on some systems)
-if dpkg -l rsh-client &>/dev/null 2>&1; then
+# rsh-client — provides netkit-rsh, netkit-rlogin, netkit-rcp
+# Note: 'rlogin' is NOT a separate package — it's inside rsh-client.
+if dpkg -l rsh-client 2>/dev/null | grep -q '^ii'; then
     ok "rsh-client already installed"
 else
-    info "Installing rsh-client + rlogin (Legion terminal actions for rsh)…"
-    if sudo apt-get install -y rsh-client rlogin 2>/dev/null; then
-        ok "rsh-client + rlogin installed"
-    else
-        info "Standard install failed — trying apt -f (fix-broken) first…"
-        sudo apt-get install -f -y 2>/dev/null || true
-        if sudo apt-get install -y rsh-client 2>/dev/null; then
-            ok "rsh-client installed after fix-broken"
-        elif sudo apt-get install -y rsh-redone-client 2>/dev/null; then
-            ok "rsh-redone-client installed as rsh-client alternative"
-        else
-            warn "rsh-client unavailable — fix manually: sudo apt-get install -f && sudo apt-get install rsh-client"
-        fi
-    fi
+    info "Installing rsh-client (provides rsh + rlogin)…"
+    sudo apt-get install -y rsh-client 2>/dev/null \
+        && ok "rsh-client installed" \
+        || warn "rsh-client install failed — run: sudo apt-get install rsh-client"
 fi
 
 # =============================================================================
@@ -1357,15 +1348,14 @@ elif _on_kali; then
         _chk_ok "All critical tool binaries present in PATH"
     fi
 
-    # rsh / rlogin
-    if command -v rsh &>/dev/null && command -v rlogin &>/dev/null; then
-        _chk_ok "rsh and rlogin present"
+    # rsh-client — provides netkit-rsh, netkit-rlogin (not 'rsh'/'rlogin')
+    if dpkg -l rsh-client 2>/dev/null | grep -q '^ii'; then
+        _chk_ok "rsh-client installed (netkit-rsh, netkit-rlogin)"
     else
-        _chk_fail "rsh / rlogin missing — installing rsh-redone-client…"
-        sudo apt-get install -y rsh-redone-client 2>/dev/null \
-            && _healed "rsh-redone-client installed" \
-            || { sudo apt-get install -y rsh-client 2>/dev/null && _healed "rsh-client installed"; } \
-            || _chk_fail "Could not install rsh — try: sudo apt-get install rsh-redone-client"
+        _chk_fail "rsh-client missing — installing…"
+        sudo apt-get install -y rsh-client 2>/dev/null \
+            && _healed "rsh-client installed" \
+            || _chk_fail "rsh-client install failed — run: sudo apt-get install rsh-client"
     fi
 
     # fierce — DNS brute-force tool required by fierce-dns SchedulerSettings entry
@@ -1501,7 +1491,7 @@ _log_check \
 _log_check \
     "rsh-client install conflict" \
     "rsh-client.*referred by|referred by.*rsh-client" \
-    "sudo apt-get install rsh-redone-client"
+    "sudo apt-get install rsh-client"
 
 _log_check \
     "testssl package not found (correct name is testssl.sh)" \
