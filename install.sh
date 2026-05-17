@@ -53,10 +53,17 @@ export DEBIAN_FRONTEND=noninteractive
 
 # In Docker / root-only environments, sudo is not installed — define a shim
 # so every 'sudo cmd' in this script just runs 'cmd' directly.
+# On real systems, wrap sudo to pass DEBIAN_FRONTEND through — sudo's
+# env_reset strips exported vars, and minimal Kali installs (WSL) may not
+# have env_keep configured for DEBIAN_FRONTEND in sudoers.
 if ! command -v sudo &>/dev/null; then
     sudo() { "$@"; }
     export -f sudo
     info "sudo not found — running as root, shim active"
+else
+    _REAL_SUDO="$(command -v sudo)"
+    sudo() { $_REAL_SUDO DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}" "$@"; }
+    export -f sudo
 fi
 
 REAL_USER="${SUDO_USER:-root}"
