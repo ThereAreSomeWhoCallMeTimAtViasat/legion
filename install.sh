@@ -406,14 +406,14 @@ done
 if command -v windapsearch &>/dev/null; then
     ok "windapsearch already installed at $(command -v windapsearch)"
 else
-    _install_go_binary "github.com/ropnop/go-windapsearch@latest" "go-windapsearch" "windapsearch"
+    _go_install_bin "github.com/ropnop/go-windapsearch@latest" "windapsearch"
 fi
 
 # subfinder (Go binary)
 if command -v subfinder &>/dev/null; then
     ok "subfinder already installed at $(command -v subfinder)"
 else
-    _install_go_binary "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest" "subfinder" "subfinder"
+    _go_install_bin "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest" "subfinder"
 fi
 
 # testssl.sh — dedicated install step so it is never silently dropped by --ignore-missing
