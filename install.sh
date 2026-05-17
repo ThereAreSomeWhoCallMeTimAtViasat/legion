@@ -200,6 +200,8 @@ _install_tool() {
         testssl)             sudo apt-get install -y testssl.sh 2>/dev/null || true ;;
         ldapsearch)          sudo apt-get install -y ldap-utils 2>/dev/null || true ;;
         rpcclient)           sudo apt-get install -y smbclient 2>/dev/null || true ;;
+        bloodhound-python)   sudo apt-get install -y bloodhound.py 2>/dev/null || true ;;
+        ldeep)               sudo pip3 install --break-system-packages ldeep 2>/dev/null || true ;;
         *)  sudo apt-get install -y --ignore-missing "$tool" 2>/dev/null || true ;;
     esac
     if command -v "$tool" &>/dev/null; then
@@ -374,7 +376,7 @@ info "Installing optional tools…"
 
 _OPTIONAL_TOOLS=(
     ike-scan joomscan davtest sqlmap dnsenum
-    theharvester bloodhound-python
+    theharvester bloodhound.py
     net-tools
     gpp-decrypt python3-impacket responder hashcat john
 )
