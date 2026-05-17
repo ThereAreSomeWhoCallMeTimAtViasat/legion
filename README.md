@@ -10,7 +10,7 @@ LegionnAIre is an open source, semi-automated network penetration testing framew
 
 The core workflow is the same as it has always been:
 
-1. **Add targets** — IPs, CIDRs, hostnames, or ranges. Legion adds them to scope.
+1. **Add targets** — IPs, CIDRs, hostnames, or ranges. LegionnAIre adds them to scope.
 2. **Scan** — nmap runs staged port scans across your targets. Services are identified and versioned.
 3. **Auto-attack** — the scheduler fires the right tool for each discovered service automatically. HTTP gets feroxbuster, nuclei, gobuster. SSH gets ssh-audit. SMB gets netexec and enum4linux-ng. And so on.
 4. **Investigate** — browse results by host: open ports, service versions, CVEs, NSE script output, screenshots, and tool output all in one place.
@@ -57,7 +57,7 @@ While I was in there I added the things I'd always wanted: Interactive terminals
 
 ### Web interface
 - Runs in any browser at `http://127.0.0.1:PORT` — works locally or over SSH port forwarding with no X11 needed
-- Layout identical to the original Legion desktop app: host list left, tabbed panels right, process list bottom
+- Layout identical to the original Legion/LegionnAIre desktop app: host list left, tabbed panels right, process list bottom
 - **All splitters draggable** with saved position; **font size controls** for upper and lower panels independently
 - **Sticky process table header**, scrollable tab bar, context menus that stay in viewport
 - Opens Firefox automatically on start with a dedicated isolated profile
@@ -153,18 +153,29 @@ Easy Edit covers every section of the config in typed, labeled forms:
 
 The automated installer handles everything in one step: Python packages, system tools, geckodriver, Firefox profile, and optional AI tab setup.
 
-> **Important:** The Flask web UI lives on the `flask-clean` branch.
+> **Important:** The Flask web UI lives on **two branches**:
+> - **`flask-clean-prod`** — stable release branch. Use this for normal installs.
+> - **`flask-clean`** — development branch. Use this if you want the latest changes or plan to contribute.
+>
 > The default `master` branch is the original upstream Qt5 desktop app.
-> The `--branch flask-clean` flag below is **required** — without it you
-> will clone the wrong codebase and `python3 legion.py --web` will not exist.
+> The `--branch` flag below is **required** — without it you will clone
+> the wrong codebase and `python3 legion.py --web` will not exist.
 
 ```bash
-sudo git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+# Production install (recommended)
+sudo git clone --branch flask-clean-prod https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 
 # Confirm you are on the right branch before continuing
-sudo git branch        # should show: * flask-clean
+sudo git branch        # should show: * flask-clean-prod
 
+sudo bash install.sh
+```
+
+To install the **development branch** instead:
+```bash
+sudo git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+cd legion
 sudo bash install.sh
 ```
 
@@ -182,23 +193,28 @@ Use this if you need to understand what each step does, skip certain parts, or t
 
 ### Step 1 — Clone the repository onto the correct branch
 
-The repository has multiple branches. The Flask web UI is on **`flask-clean`**.
-The default `master` branch is the original upstream Qt5 desktop app — it does
-not have `--web` mode, `install.sh`, or `requirements.txt` in the correct state.
+The repository has multiple branches:
+- **`flask-clean-prod`** — stable release branch (recommended for most users)
+- **`flask-clean`** — development branch (latest changes, may be less stable)
+- `master` — original upstream Qt5 desktop app (does not have `--web` mode)
 
 ```bash
-# --branch flask-clean is mandatory
-sudo git clone --branch flask-clean \
+# Production (recommended)
+sudo git clone --branch flask-clean-prod \
     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 
+# Or development branch:
+# sudo git clone --branch flask-clean \
+#     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+
 # Verify you are on the right branch before doing anything else
 sudo git branch
-# Output must show:   * flask-clean
-# If it shows master or anything else, run:  sudo git checkout flask-clean
+# Output must show:   * flask-clean-prod   (or * flask-clean for dev)
+# If it shows master or anything else, run:  sudo git checkout flask-clean-prod
 
 sudo git log --oneline -3
-# Should show recent commits starting with "v10.1xx" version tags
+# Should show recent commits starting with "v10.xxx" version tags
 ```
 
 ### Step 2 — Install Python packages
@@ -372,7 +388,7 @@ ai_vertex_region=global
 #### Legacy Vertex AI users
 
 If you previously configured Vertex AI via `~/.claude/settings.json` (the old
-method), it still works automatically — Legion falls back to that file when
+method), it still works automatically — LegionnAIre falls back to that file when
 `ai_provider` is empty or `none`. No migration required, but moving to
 `legion.conf` is recommended.
 
@@ -389,7 +405,7 @@ method), it still works automatically — Legion falls back to that file when
 
 ### Step 6 — Verify the complete install
 
-Runs 93 tests that check every Python import, verify Legion starts in web mode, confirm Qt6 works, and check that every tool binary is in PATH:
+Runs 93 tests that check every Python import, verify LegionnAIre starts in web mode, confirm Qt6 works, and check that every tool binary is in PATH:
 
 ```bash
 sudo python3 -m pytest tests/test_requirements.py --noconftest -v
@@ -413,20 +429,26 @@ and retries up to three times.
 
 ## Installation — Docker
 
-Docker gives you Legion plus all tools in a self-contained image. Scanning still works — the container gets the same raw socket capabilities as the host via `--cap-add`.
+Docker gives you LegionnAIre plus all tools in a self-contained image. Scanning still works — the container gets the same raw socket capabilities as the host via `--cap-add`.
+
+> **WSL users:** If you are running Kali in WSL2, skip Docker and install
+> directly with `sudo bash install.sh` — it is simpler and avoids the
+> networking limitations described in [Docker on WSL](#docker-on-wsl) below.
+> Docker is most useful on non-Kali systems (Ubuntu desktop, macOS, CI)
+> where you don't want to install 50 security tools on the host.
 
 ### Option A — Docker Compose (easiest)
 
 ```bash
-# --branch flask-clean is required (master is the Qt5 desktop app, not web)
-sudo git clone --branch flask-clean \
+# Use flask-clean-prod for stable, or flask-clean for development
+sudo git clone --branch flask-clean-prod \
     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 
 # Build the image (takes 5–15 minutes; downloads all tools)
 sudo docker compose build
 
-# Start Legion in the background
+# Start LegionnAIre in the background
 sudo docker compose up -d
 
 # Follow the logs
@@ -512,6 +534,73 @@ sudo docker run --rm legion-test
 # Expected: 22 passed, 71 skipped
 # (tool binary tests skip inside Docker — they run on the host)
 ```
+
+### Docker on WSL
+
+There are two ways to run Docker on WSL2, and they behave differently for
+LegionnAIre's network scanning:
+
+#### Docker Engine inside the WSL distro (works)
+
+Install Docker Engine natively inside your Kali WSL2 distro. `--network host`
+works correctly — the container shares the WSL2 VM's network namespace, so
+nmap and masscan can scan your LAN.
+
+**Prerequisites** — WSL2 Kali does not ship with systemd or the right iptables
+backend, so two things must be fixed first:
+
+```bash
+# 1. Enable systemd (required for dockerd to start as a service)
+#    Add to /etc/wsl.conf:
+echo -e '[boot]\nsystemd=true' | sudo tee -a /etc/wsl.conf
+
+# 2. Restart WSL from PowerShell:
+#    wsl --shutdown
+#    (then relaunch Kali)
+
+# 3. Switch to iptables-legacy (Docker does not work with nftables)
+sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
+
+# 4. Install Docker
+sudo apt update && sudo apt install -y docker.io docker-compose-v2
+
+# 5. Clone and run LegionnAIre
+sudo git clone --branch flask-clean-prod \
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+cd legion
+sudo docker compose up -d
+
+# Open http://127.0.0.1:5000 in your Windows browser
+```
+
+#### Docker Desktop for Windows with WSL integration (limited)
+
+Docker Desktop uses WSL2 as its backend, but `--network host` does **not**
+give true host networking on Windows — this is a known Docker Desktop
+limitation. The container gets its own network namespace. Port 5000 will be
+accessible (the web UI works), but **scanning LAN targets from inside the
+container will fail** because the container cannot send raw packets to your
+physical network.
+
+If you already have Docker Desktop, LegionnAIre's web UI will work for importing
+existing nmap XML files and reviewing saved projects — but live scanning
+requires either the native install or Docker Engine inside WSL (above).
+
+#### Recommendation for WSL users
+
+For a clean Kali WSL2 install, **skip Docker entirely** and install directly:
+
+```bash
+sudo git clone --branch flask-clean-prod \
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+cd legion
+sudo bash install.sh
+sudo python3 legion.py --web --no-browser
+# Open http://127.0.0.1:5000 in your Windows browser
+```
+
+Use `--no-browser` because WSL2 without WSLg has no GUI. If you have WSLg
+(Windows 11 22H2+), Firefox will open automatically without the flag.
 
 ---
 
