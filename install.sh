@@ -189,6 +189,17 @@ _install_tool() {
                 sudo "${VENV}/bin/pip" install ssh-audit 2>/dev/null \
                     && sudo ln -sf "${VENV}/bin/ssh-audit" /usr/local/bin/ssh-audit
             } ;;
+        # Binary name differs from apt package name
+        snmpwalk|snmpcheck)  sudo apt-get install -y snmp 2>/dev/null || true ;;
+        rpcinfo)             sudo apt-get install -y rpcbind 2>/dev/null || true ;;
+        ldapdomaindump)      sudo apt-get install -y python3-ldapdomaindump 2>/dev/null || true ;;
+        mysql)               sudo apt-get install -y default-mysql-client 2>/dev/null || true ;;
+        psql)                sudo apt-get install -y postgresql-client 2>/dev/null || true ;;
+        redis-cli)           sudo apt-get install -y redis-tools 2>/dev/null || true ;;
+        searchsploit)        sudo apt-get install -y exploitdb 2>/dev/null || true ;;
+        testssl)             sudo apt-get install -y testssl.sh 2>/dev/null || true ;;
+        ldapsearch)          sudo apt-get install -y ldap-utils 2>/dev/null || true ;;
+        rpcclient)           sudo apt-get install -y smbclient 2>/dev/null || true ;;
         *)  sudo apt-get install -y --ignore-missing "$tool" 2>/dev/null || true ;;
     esac
     if command -v "$tool" &>/dev/null; then
@@ -328,10 +339,10 @@ _REQUIRED_TOOLS=(
     exploitdb
     # Database clients (scheduler output parsing)
     redis-tools default-mysql-client postgresql-client
-    # SNMP / RPC / NFS
-    snmpwalk snmpcheck onesixtyone rpcinfo nfs-common
-    # LDAP
-    ldap-utils ldapdomaindump
+    # SNMP / RPC / NFS (snmp provides snmpwalk+snmpcheck; rpcbind provides rpcinfo)
+    snmp onesixtyone rpcbind nfs-common
+    # LDAP (python3-ldapdomaindump is the apt package name)
+    ldap-utils python3-ldapdomaindump
     # Protocol tools
     swaks smtp-user-enum finger nbtscan
     # Wordlists
