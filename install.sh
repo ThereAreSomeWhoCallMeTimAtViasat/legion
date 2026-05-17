@@ -297,29 +297,79 @@ else
     ok "nmap already at $(command -v nmap)"
 fi
 
-info "Installing security tools (--ignore-missing — individual gaps are OK)…"
+# Block B — required security tools: used by legion.conf scheduler, port
+# actions, or core workflows.  Each is installed individually so a failure
+# is reported clearly instead of being swallowed by --ignore-missing.
+info "Installing required security tools…"
 
-# Block B — security tools: individual failures are tolerated
-sudo apt-get install -y --ignore-missing \
-    masscan hping3 ike-scan \
-    feroxbuster gobuster ffuf nikto whatweb wafw00f \
-    wpscan joomscan davtest sqlmap sslyze sslscan testssl.sh \
-    fierce seclists \
-    dnsrecon dnsenum nbtscan onesixtyone \
-    snmpwalk snmpcheck rpcinfo nfs-common ldap-utils \
-    netexec smbmap enum4linux-ng ldapdomaindump smbclient \
-    impacket-scripts \
-    hydra medusa \
-    eyewitness \
-    exploitdb theharvester bloodhound-python \
-    nuclei \
-    ssh-audit \
-    redis-tools default-mysql-client postgresql-client \
-    swaks smtp-user-enum \
-    finger \
-    net-tools nbtscan \
-    gpp-decrypt python3-impacket responder hashcat john \
-    2>/dev/null || true
+_REQUIRED_TOOLS=(
+    # Web scanning (SchedulerSettings + PortActions)
+    feroxbuster gobuster ffuf nikto whatweb wafw00f wpscan nuclei
+    # Brute force
+    hydra medusa
+    # SMB / Windows
+    netexec smbmap enum4linux-ng smbclient impacket-scripts
+    # Recon / enumeration
+    dnsrecon masscan hping3 fierce
+    # SSL/TLS
+    sslscan sslyze testssl.sh
+    # SSH
+    ssh-audit
+    # Screenshotter
+    eyewitness
+    # Exploit research
+    exploitdb
+    # Database clients (scheduler output parsing)
+    redis-tools default-mysql-client postgresql-client
+    # SNMP / RPC / NFS
+    snmpwalk snmpcheck onesixtyone rpcinfo nfs-common
+    # LDAP
+    ldap-utils ldapdomaindump
+    # Protocol tools
+    swaks smtp-user-enum finger nbtscan
+    # Wordlists
+    seclists
+)
+
+REQUIRED_FAIL=0
+for _pkg in "${_REQUIRED_TOOLS[@]}"; do
+    if dpkg -l "$_pkg" &>/dev/null 2>&1; then
+        ok "  $_pkg"
+    else
+        if sudo apt-get install -y "$_pkg" 2>/dev/null; then
+            ok "  $_pkg installed"
+        else
+            fail "  $_pkg — install failed"
+            REQUIRED_FAIL=$((REQUIRED_FAIL + 1))
+        fi
+    fi
+done
+
+if [[ $REQUIRED_FAIL -gt 0 ]]; then
+    warn "${REQUIRED_FAIL} required tool(s) failed to install — check apt sources and retry"
+    warn "These tools are used by legion.conf and scans will be incomplete without them"
+fi
+
+# Block C — optional tools: useful but not in the core scheduler/actions.
+# Missing packages are warned, not fatal.
+info "Installing optional tools…"
+
+_OPTIONAL_TOOLS=(
+    ike-scan joomscan davtest sqlmap dnsenum
+    theharvester bloodhound-python
+    net-tools
+    gpp-decrypt python3-impacket responder hashcat john
+)
+
+for _pkg in "${_OPTIONAL_TOOLS[@]}"; do
+    if dpkg -l "$_pkg" &>/dev/null 2>&1; then
+        ok "  $_pkg"
+    else
+        sudo apt-get install -y "$_pkg" 2>/dev/null \
+            && ok "  $_pkg installed" \
+            || warn "  $_pkg — not available (optional, scans will still work)"
+    fi
+done
 
 # Victim test infrastructure — servers that test_victim_tool_execution.py scans
 # against locally.  These are NOT Legion runtime deps; they are the target services
