@@ -775,113 +775,186 @@ else
 fi
 
 # =============================================================================
-# 8. Verification + auto-remediation
+# 8. Verification + auto-remediation (standalone — no pytest required)
 # =============================================================================
 step "8/10  Verification + auto-remediation"
 
-# pytest is needed for the verification tests but is not in requirements.txt
-# (it is a test-only tool, not a Legion runtime dependency).
-if ! "${VENV_PY}" -m pytest --version &>/dev/null 2>&1; then
-    info "Installing pytest for verification tests…"
-    sudo "${VENV_PIP}" install --root-user-action=ignore pytest -q 2>/dev/null \
-        && ok "pytest installed" \
-        || warn "pytest install failed — skipping verification (non-fatal)"
-fi
-
 cd "${SCRIPT_DIR}"
-
-# ── Disable errexit for the whole step — failures here must be handled, not abort ──
 set +e
 
-VERIFY_LOG=$(mktemp)
-MAX_ROUNDS=3
-ROUND=0
-ALL_PASS=false
+_V_PASS=0; _V_FAIL=0
+_v_ok()   { ok   "$*"; _V_PASS=$((_V_PASS + 1)); }
+_v_fail() { fail "$*"; _V_FAIL=$((_V_FAIL + 1)); }
 
-while [[ $ROUND -lt $MAX_ROUNDS ]]; do
-    ROUND=$(( ROUND + 1 ))
-    info "Verification round ${ROUND}/${MAX_ROUNDS}…"
+# ── 8a. Required tool binaries ────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}── Required tool binaries ──────────────────────${NC}"
 
-    # Run tests — capture output without letting a non-zero exit kill the script
-    # test_requirements.py: Python packages + Qt/Flask init + tool binaries
-    # test_tool_installation.py: conf integrity, SchedulerSettings consistency,
-    #   Perl Encoding::BER, nuclei templates + config dir, wordlist paths
-    sudo SUDO_USER="${REAL_USER}" "${VENV_PY}" -m pytest \
-        tests/test_requirements.py \
-        tests/test_tool_installation.py \
-        --noconftest -q --tb=line \
-        > "$VERIFY_LOG" 2>&1
-    pytest_exit=$?
+_VERIFY_BINS=(
+    nmap masscan hping3
+    feroxbuster gobuster ffuf nikto whatweb wafw00f wpscan nuclei
+    hydra medusa
+    netexec smbmap enum4linux-ng smbclient
+    dnsrecon fierce
+    sslscan sslyze testssl
+    ssh-audit
+    eyewitness searchsploit
+    redis-cli mysql psql
+    snmpwalk snmpcheck onesixtyone rpcinfo
+    ldapsearch
+    swaks smtp-user-enum finger nbtscan
+    pd-httpx katana gau waybackurls nomore403 urlfinder kerbrute
+    rdp-sec-check geckodriver
+)
 
-    cat "$VERIFY_LOG"   # always show the output
-
-    if [[ $pytest_exit -eq 0 ]]; then
-        ALL_PASS=true
-        break
+_BIN_MISSING=()
+for _b in "${_VERIFY_BINS[@]}"; do
+    if command -v "$_b" &>/dev/null; then
+        _v_ok "  $_b"
+    else
+        _v_fail "  $_b — NOT FOUND"
+        _BIN_MISSING+=("$_b")
     fi
-
-    [[ $ROUND -ge $MAX_ROUNDS ]] && break
-    info "Failures detected — remediating before round $(( ROUND + 1 ))…"
-    echo ""
-
-    # ── Fix: missing Python import — format: "Cannot import 'X' (package 'Y')" ──
-    while IFS= read -r line; do
-        import_name=$(echo "$line" | grep -oP "import '\K[^']+")
-        pkg_name=$(echo "$line"    | grep -oP "package '\K[^']+")
-        [[ -z "$import_name" ]] && continue
-        [[ -z "$pkg_name"    ]] && pkg_name="$import_name"
-        fail "  Python import '${import_name}' (package '${pkg_name}') missing — installing…"
-        _install_pkg "$import_name" "$pkg_name"
-    done < <(grep "Cannot import" "$VERIFY_LOG")
-
-    # ── Fix: missing tool binary — format: "'tool' not found in PATH" ──
-    # Deduplicate: the same binary may fail in multiple test files; install once.
-    declare -A _seen_tools
-    while IFS= read -r line; do
-        tool=$(echo "$line" | grep -oP "'\K[^']+(?=' not found in PATH)")
-        [[ -z "$tool" ]] && continue
-        [[ -n "${_seen_tools[$tool]+x}" ]] && continue
-        _seen_tools[$tool]=1
-        fail "  Binary '${tool}' not found in PATH — installing…"
-        _install_tool "$tool"
-    done < <(grep "not found in PATH" "$VERIFY_LOG")
-    unset _seen_tools
-
-    # ── Fix: missing /opt script — format: assertion about /opt/X/Y.py ──
-    while IFS= read -r line; do
-        script=$(echo "$line" | grep -oP "/opt/[^ '\"]+\.py")
-        [[ -z "$script" || -f "$script" ]] && continue
-        repo=$(basename "$(dirname "$script")")
-        fail "  ${script} missing — cloning ${repo}…"
-        case "$repo" in
-            LeakSearch)
-                sudo git clone --depth 1 \
-                    https://github.com/JoelGMSec/LeakSearch.git /opt/LeakSearch 2>/dev/null
-                sudo python3 -m pip install --break-system-packages neotermcolor -q 2>/dev/null || true
-                ;;
-            jexboss)
-                sudo git clone --depth 1 \
-                    https://github.com/joaomatosf/jexboss.git /opt/jexboss 2>/dev/null
-                ;;
-        esac
-    done < <(grep -i "AssertionError\|assert.*jexboss\|assert.*LeakSearch\|/opt/" "$VERIFY_LOG")
-
-    echo ""
 done
 
-rm -f "$VERIFY_LOG"
-
-# Re-enable errexit
-set -e
-
-if $ALL_PASS; then
-    ok "All verification tests passed"
-else
-    warn "Some tests still failing after ${MAX_ROUNDS} remediation rounds."
-    warn "Run this to see what remains:"
-    warn "  sudo "${VENV_PY}" -m pytest tests/test_requirements.py --noconftest -v"
-    warn "The installer will continue — Legion --web may still work."
+# Auto-remediate missing binaries (up to 2 rounds)
+if [[ ${#_BIN_MISSING[@]} -gt 0 ]]; then
+    info "Attempting to install ${#_BIN_MISSING[@]} missing tool(s)…"
+    for _b in "${_BIN_MISSING[@]}"; do
+        _install_tool "$_b"
+    done
+    # Re-check
+    _STILL_MISSING=()
+    for _b in "${_BIN_MISSING[@]}"; do
+        if command -v "$_b" &>/dev/null; then
+            ok "  $_b — HEALED"
+            _V_FAIL=$((_V_FAIL - 1)); _V_PASS=$((_V_PASS + 1))
+        else
+            _STILL_MISSING+=("$_b")
+        fi
+    done
+    if [[ ${#_STILL_MISSING[@]} -gt 0 ]]; then
+        warn "${#_STILL_MISSING[@]} tool(s) still missing after remediation:"
+        for _b in "${_STILL_MISSING[@]}"; do warn "    $_b"; done
+    fi
 fi
+
+# ── 8b. Python package imports (in venv) ──────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}── Python package imports (venv) ───────────────${NC}"
+
+_PY_IMPORTS=(
+    "flask"
+    "werkzeug"
+    "sqlalchemy"
+    "requests"
+    "anthropic"
+    "openai"
+    "google.auth"
+    "selenium"
+    "pyfiglet"
+    "colorama"
+    "termcolor"
+    "neotermcolor"
+)
+
+for _mod in "${_PY_IMPORTS[@]}"; do
+    if "${VENV_PY}" -c "import ${_mod}" 2>/dev/null; then
+        _v_ok "  import $_mod"
+    else
+        _v_fail "  import $_mod — FAILED"
+        # Try to fix
+        _pip_name="$_mod"
+        case "$_mod" in google.auth) _pip_name="google-auth" ;; esac
+        sudo "${VENV_PIP}" install --root-user-action=ignore -q "$_pip_name" 2>/dev/null || true
+        if "${VENV_PY}" -c "import ${_mod}" 2>/dev/null; then
+            ok "  import $_mod — HEALED"
+            _V_FAIL=$((_V_FAIL - 1)); _V_PASS=$((_V_PASS + 1))
+        fi
+    fi
+done
+
+# ── 8c. Legion core modules ──────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}── LegionnAIre core modules ────────────────────${NC}"
+
+_CORE_RESULT=$( cd "${SCRIPT_DIR}" && "${VENV_PY}" -c "
+import sys; sys.path.insert(0, '.')
+errors = []
+for stmt, label in [
+    ('from db.SqliteDbAdapter import Database',            'Database'),
+    ('from controller.web_controller import WebController','WebController'),
+    ('from app.web.routes import web_bp',                  'web_bp'),
+    ('from app.settings import AppSettings',               'AppSettings'),
+]:
+    try: exec(stmt)
+    except Exception as e: errors.append(f'{label}: {e}')
+print('OK' if not errors else '|'.join(errors))
+" 2>&1 )
+
+if [[ "$_CORE_RESULT" == "OK" ]]; then
+    _v_ok "  LegionnAIre core modules importable (Database, WebController, web_bp, AppSettings)"
+else
+    IFS='|' read -ra _errs <<< "$_CORE_RESULT"
+    for _e in "${_errs[@]}"; do _v_fail "  $_e"; done
+fi
+
+# ── 8d. /opt tools ────────────────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}── /opt tools ─────────────────────────────────${NC}"
+
+for _opt_check in "/opt/jexboss/jexboss.py:jexboss" "/opt/LeakSearch/LeakSearch.py:LeakSearch"; do
+    _path="${_opt_check%%:*}"; _name="${_opt_check##*:}"
+    if [[ -f "$_path" ]]; then
+        _v_ok "  $_name at $_path"
+    else
+        _v_fail "  $_name not found at $_path"
+    fi
+done
+
+# ── 8e. Legion server starts ─────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}── Server start test ──────────────────────────${NC}"
+
+_TEST_PORT=5199
+_SRV_RESULT=$( cd "${SCRIPT_DIR}" && timeout 15 "${VENV_PY}" -c "
+import sys, os, time, threading, urllib.request
+sys.path.insert(0, '.')
+os.environ['LEGION_TEST_MODE'] = '1'
+from app.web.routes import create_test_app
+app = create_test_app(enable_scheduler=False)
+srv_ok = [False]
+def _run():
+    try: app.run(host='127.0.0.1', port=${_TEST_PORT}, use_reloader=False)
+    except: pass
+t = threading.Thread(target=_run, daemon=True)
+t.start()
+for _ in range(30):
+    time.sleep(0.5)
+    try:
+        r = urllib.request.urlopen('http://127.0.0.1:${_TEST_PORT}/api/snapshot', timeout=3)
+        if r.status == 200: srv_ok[0] = True; break
+    except: pass
+print('OK' if srv_ok[0] else 'FAIL')
+" 2>&1 | tail -1 )
+
+if [[ "$_SRV_RESULT" == "OK" ]]; then
+    _v_ok "  LegionnAIre server started and /api/snapshot responded on port ${_TEST_PORT}"
+else
+    _v_fail "  LegionnAIre server failed to start — check output above"
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+echo ""
+echo -e "  ${BOLD}── Verification summary ────────────────────────${NC}"
+if [[ $_V_FAIL -eq 0 ]]; then
+    ok "All ${_V_PASS} checks passed"
+else
+    warn "${_V_PASS} passed, ${_V_FAIL} failed"
+    warn "LegionnAIre may still work but some tools will be missing from scans"
+fi
+
+set -e
 
 # =============================================================================
 # 9. AI tab setup (optional)
