@@ -202,6 +202,12 @@ _install_tool() {
         rpcclient)           sudo apt-get install -y smbclient 2>/dev/null || true ;;
         bloodhound-python)   sudo apt-get install -y bloodhound.py 2>/dev/null || true ;;
         ldeep)               sudo pip3 install --break-system-packages ldeep 2>/dev/null || true ;;
+        windapsearch)
+            local _ws_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && _ws_arch="arm64"
+            sudo curl -fsSL \
+                "https://github.com/ropnop/go-windapsearch/releases/download/v0.3.0/windapsearch-linux-${_ws_arch}" \
+                -o /usr/local/bin/windapsearch 2>/dev/null \
+                && sudo chmod +x /usr/local/bin/windapsearch || true ;;
         *)  sudo apt-get install -y --ignore-missing "$tool" 2>/dev/null || true ;;
     esac
     if command -v "$tool" &>/dev/null; then
@@ -415,11 +421,18 @@ for _ad_pip in certipy-ad adidnsdump ldeep pywerview; do
     fi
 done
 
-# windapsearch (Go binary)
+# windapsearch (GitHub binary — go install doesn't work, build uses magefile)
 if command -v windapsearch &>/dev/null; then
     ok "windapsearch already installed at $(command -v windapsearch)"
 else
-    _go_install_bin "github.com/ropnop/go-windapsearch@latest" "windapsearch"
+    info "Installing windapsearch from GitHub release…"
+    _ws_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && _ws_arch="arm64"
+    sudo curl -fsSL \
+        "https://github.com/ropnop/go-windapsearch/releases/download/v0.3.0/windapsearch-linux-${_ws_arch}" \
+        -o /usr/local/bin/windapsearch 2>/dev/null \
+        && sudo chmod +x /usr/local/bin/windapsearch \
+        && ok "windapsearch installed" \
+        || warn "windapsearch download failed"
 fi
 
 # subfinder (Go binary)
