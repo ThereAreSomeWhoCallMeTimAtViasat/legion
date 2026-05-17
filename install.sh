@@ -205,6 +205,57 @@ _install_pkg() {
 # =============================================================================
 step "1/10  apt-get update + install packages"
 
+# ── Ensure Kali rolling repos are configured ──────────────────────────────────
+# Minimal Kali installs (WSL, cloud images, containers) may ship with an empty
+# or commented-out sources.list.  Without the full kali-rolling repo, most
+# security tools (feroxbuster, gobuster, nuclei, netexec, etc.) are unavailable
+# via apt.  This block ensures the repo line is present and the signing key is
+# installed before we run apt-get update.
+SOURCES="/etc/apt/sources.list"
+KALI_REPO="deb http://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware"
+
+if grep -qsE '^\s*ID(_LIKE)?=.*kali' /etc/os-release 2>/dev/null; then
+    # This is a Kali system — ensure the repo is configured
+    if ! grep -qs '^deb.*kali-rolling' "$SOURCES" 2>/dev/null; then
+        info "Kali rolling repository not found in ${SOURCES} — adding it…"
+        echo "$KALI_REPO" | sudo tee -a "$SOURCES" > /dev/null
+        ok "Added kali-rolling to ${SOURCES}"
+    else
+        ok "Kali rolling repository already configured"
+    fi
+
+    # Ensure the archive keyring is installed (needed to verify packages)
+    if ! dpkg -l kali-archive-keyring &>/dev/null 2>&1; then
+        info "Installing kali-archive-keyring…"
+        # Bootstrap: fetch the keyring .deb directly since apt can't verify
+        # packages without it.  wget/curl are in Block A but may already be
+        # present on minimal installs.
+        if command -v wget &>/dev/null; then
+            _KR_DEB=$(mktemp /tmp/kali-keyring-XXXX.deb)
+            wget -q "https://http.kali.org/kali/pool/main/k/kali-archive-keyring/kali-archive-keyring_2024.1_all.deb" \
+                -O "$_KR_DEB" 2>/dev/null \
+                && sudo dpkg -i "$_KR_DEB" 2>/dev/null \
+                && ok "kali-archive-keyring installed" \
+                || warn "kali-archive-keyring bootstrap failed — apt may show GPG warnings"
+            rm -f "$_KR_DEB"
+        elif command -v curl &>/dev/null; then
+            _KR_DEB=$(mktemp /tmp/kali-keyring-XXXX.deb)
+            curl -fsSL "https://http.kali.org/kali/pool/main/k/kali-archive-keyring/kali-archive-keyring_2024.1_all.deb" \
+                -o "$_KR_DEB" 2>/dev/null \
+                && sudo dpkg -i "$_KR_DEB" 2>/dev/null \
+                && ok "kali-archive-keyring installed" \
+                || warn "kali-archive-keyring bootstrap failed — apt may show GPG warnings"
+            rm -f "$_KR_DEB"
+        else
+            warn "Neither wget nor curl available — cannot bootstrap kali-archive-keyring"
+        fi
+    else
+        ok "kali-archive-keyring present"
+    fi
+else
+    info "Not a Kali system — skipping Kali repo check"
+fi
+
 info "Updating package index…"
 sudo apt-get update -q
 ok "Package index updated"
