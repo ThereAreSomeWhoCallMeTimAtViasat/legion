@@ -201,7 +201,8 @@ _install_tool() {
         ldapsearch)          sudo apt-get install -y ldap-utils 2>/dev/null || true ;;
         rpcclient)           sudo apt-get install -y smbclient 2>/dev/null || true ;;
         bloodhound-python)   sudo apt-get install -y bloodhound.py 2>/dev/null || true ;;
-        ldeep)               sudo pip3 install --break-system-packages ldeep 2>/dev/null || true ;;
+        ldeep)               sudo "${VENV_PIP:-pip3}" install --root-user-action=ignore -q ldeep 2>/dev/null \
+                                 && sudo ln -sf "${LEGION_VENV:-/opt/legion-venv}/bin/ldeep" /usr/local/bin/ldeep 2>/dev/null || true ;;
         windapsearch)
             local _ws_arch="amd64"; [[ "$(uname -m)" == "aarch64" ]] && _ws_arch="arm64"
             sudo curl -fsSL \
@@ -409,17 +410,10 @@ fi
 
 ok "Security tool packages done (some may be skipped on non-Kali)"
 
-# AD enumeration tools (pip)
-info "  Installing AD enumeration pip packages (certipy-ad, adidnsdump, ldeep, pywerview)…"
-for _ad_pip in certipy-ad adidnsdump ldeep pywerview; do
-    if pip3 show "$_ad_pip" &>/dev/null 2>&1; then
-        ok "  $_ad_pip already installed"
-    else
-        pip3 install --break-system-packages "$_ad_pip" 2>/dev/null \
-            && ok "  $_ad_pip installed" \
-            || warn "  $_ad_pip pip install failed — run: sudo pip3 install --break-system-packages $_ad_pip"
-    fi
-done
+# AD enumeration tools (pip) — installed into the Legion venv in step 5.
+# System pip conflicts with apt-managed packages (e.g. termcolor), so these
+# MUST go into the venv. Deferred to after step 5 creates LEGION_VENV.
+_AD_PIP_TOOLS=(certipy-ad adidnsdump ldeep pywerview)
 
 # windapsearch (GitHub binary — go install doesn't work, build uses magefile)
 if command -v windapsearch &>/dev/null; then
@@ -647,6 +641,27 @@ done
 # Create a convenience symlink so 'legion-python3' always uses the venv
 sudo ln -sf "${VENV_PY}" /usr/local/bin/legion-python3 2>/dev/null || true
 ok "Symlink: /usr/local/bin/legion-python3 → ${VENV_PY}"
+
+# AD enumeration pip tools (deferred from step 1 — need the venv to avoid
+# conflicts with apt-managed packages like termcolor)
+info "Installing AD enumeration pip packages into venv…"
+for _ad_pip in "${_AD_PIP_TOOLS[@]}"; do
+    if "${VENV_PIP}" show "$_ad_pip" &>/dev/null 2>&1; then
+        ok "  $_ad_pip already in venv"
+    else
+        sudo "${VENV_PIP}" install --root-user-action=ignore -q "$_ad_pip" 2>/dev/null \
+            && ok "  $_ad_pip installed into venv" \
+            || warn "  $_ad_pip pip install failed"
+    fi
+done
+# Symlink AD tool binaries from venv into PATH
+for _ad_bin in certipy-ad adidnsdump ldeep pywerview windapsearch; do
+    _venv_bin="${LEGION_VENV}/bin/${_ad_bin}"
+    if [[ -f "$_venv_bin" ]] && ! command -v "$_ad_bin" &>/dev/null; then
+        sudo ln -sf "$_venv_bin" "/usr/local/bin/${_ad_bin}" 2>/dev/null \
+            && ok "  Symlink: ${_ad_bin} → ${_venv_bin}"
+    fi
+done
 
 # =============================================================================
 # 6. nuclei + templates
