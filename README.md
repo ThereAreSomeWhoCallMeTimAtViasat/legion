@@ -49,7 +49,7 @@ While I was in there I added the things I'd always wanted: Interactive terminals
 
 ### Core scanning
 - **Parallel staged nmap** — stages 1–5 (port ranges) run simultaneously; stage 6 (NSE/vulners) runs after all stages finish against every discovered open port
-- **45 tools auto-scheduled** on service discovery — feroxbuster, gobuster, nuclei, netexec, enum4linux-ng, ssh-audit, testssl, and more
+- **182 tools auto-scheduled** on service discovery — feroxbuster, gobuster, nuclei (40 template categories), netexec (18 modules), enum4linux-ng, ssh-audit, testssl, and more
 - **Live output streaming** — output appears in real time as tools run; progress % for nmap via `--stats-every 5s`
 - **Keyword match highlighting** — set search terms in Settings; matching lines turn orange in tool output; ▲/▼ arrows navigate between hits
 
@@ -133,6 +133,138 @@ Easy Edit covers every section of the config in typed, labeled forms:
 - SQLite database per session (WAL mode) — no shared state between instances
 - Save / Save As / Open with full fidelity — screenshots, outputfile paths, keyword matches, interactive terminal history all persist correctly
 - Heartbeat watchdog (20-second timeout) — cleans up gracefully when the browser closes
+
+---
+
+## Integrated tools
+
+LegionnAIre integrates **229 tools** (plus 204 individual nmap NSE scripts) across 15 categories. **182 are auto-triggered** by the scheduler when matching services are discovered — no manual action needed. The rest are available via right-click context menus. A full interactive reference is available in [`legion_tools.html`](legion_tools.html).
+
+### Port & service discovery
+| Tool | Auto | Expected output |
+|---|---|---|
+| nmap (staged: 6 stages) | Yes | Ports, services, versions, OS, vulners CVEs |
+| masscan | — | Full TCP port sweep (0-65535 at 1000 pps) |
+| hping3 | — | SYN scan, ICMP timestamp, traceroute |
+
+### Web content discovery
+| Tool | Auto | Expected output |
+|---|---|---|
+| feroxbuster | Yes | Directories and files from wordlist |
+| feroxbuster-thorough | Yes | Dirs + files with extensions (.php/.bak/.conf), backup detection, GET+POST |
+| gobuster dir / ext | Yes | Directory brute-force + extension scanning with backup discovery |
+| gobuster vhost | Yes | Virtual hostname enumeration |
+| gobuster dns | Yes | Subdomain enumeration via DNS |
+| katana | Yes | Crawled URLs, JS endpoints, linked paths |
+| katana-deep | Yes | Headless + jsluice + XHR + form fill + known files |
+| katana-headless | Yes | Browser-rendered pages invisible to standard crawlers |
+| ffuf | Yes | File fuzzing with filtered results |
+| davtest | Yes | WebDAV upload/execute permissions |
+
+### Web vulnerability scanning
+| Tool | Auto | Expected output |
+|---|---|---|
+| nikto | Yes | Misconfigurations, default files, outdated software |
+| nikto-ssl | Yes | Same but forces SSL for HTTPS ports |
+| nikto-tuned | — | Focused on injection, RCE, auth bypass, file retrieval |
+| nikto-mutate | Yes | Apache ~user enumeration, file name guessing |
+| sqlmap-scan (safe) | Yes | SQL injection check (level=1, risk=1) |
+| sqlmap-http (aggressive) | Yes | Deep SQL injection scan (level=3, risk=2) |
+| nomore403 | Yes | 403 bypass techniques |
+| jexboss | Yes | JBoss deserialization and deployment vulns |
+| nuclei (40 categories) | Yes | CVEs, misconfigs, exposed panels, default logins, credential stuffing, DAST, and more |
+
+### Web technology detection
+| Tool | Auto | Expected output |
+|---|---|---|
+| httpx | Yes | Status, title, server, tech stack, favicon hash, TLS cert, CDN, JARM, ASN |
+| whatweb | Yes | Server software, frameworks, CMS, language |
+| wafw00f | Yes | WAF product name and vendor |
+| wig | Yes | CMS name, version, platform |
+
+### CMS scanning
+| Tool | Auto | Expected output |
+|---|---|---|
+| wpscan | Yes | WP version, vulnerable plugins/themes, users, config backups, DB exports |
+| joomscan | Yes | Joomla version, components, issues |
+
+### SSL/TLS analysis
+| Tool | Auto | Expected output |
+|---|---|---|
+| sslscan | Yes | Ciphers, certificate, protocol versions |
+| sslyze | Yes | TLS config, cipher suites, known vulns |
+| testssl | Yes | Comprehensive audit: BEAST, POODLE, Heartbleed, etc. |
+
+### SMB / Windows enumeration
+| Tool | Auto | Expected output |
+|---|---|---|
+| netexec --shares | Yes | Share listing with permissions |
+| netexec --users | Yes | Domain user accounts |
+| netexec --pass-pol | Yes | Password policy (lockout thresholds) |
+| netexec --rid-brute | Yes | Users/groups via RID cycling |
+| netexec --gen-relay-list | Yes | SMB signing disabled = relay targets |
+| netexec -M zerologon | Yes | CVE-2020-1472 check |
+| netexec -M smbghost | Yes | CVE-2020-0796 check |
+| netexec -M printnightmare | Yes | Print spooler RCE check |
+| netexec -M nopac | Yes | CVE-2021-42278/42287 check |
+| netexec -M webdav/spooler | Yes | Coercion attack vector checks |
+| netexec -M enum_av | Yes | Endpoint protection detection |
+| netexec -M spider_plus | Yes | Recursive share file listing |
+| smbmap | Yes | Share permissions |
+| smbmap-recursive | Yes | File listing 3 levels deep |
+| smbmap-signing | Yes | SMB signing status |
+| enum4linux-ng | Yes | Users, groups, shares, policy, OS |
+| rpcclient-full-enum | Yes | Users, groups, policy, shares, domain role |
+
+### Active Directory
+| Tool | Auto | Expected output |
+|---|---|---|
+| netexec ldap --users/--groups | Yes | Domain users and groups via LDAP |
+| netexec ldap --asreproast | Yes | AS-REP roastable accounts |
+| ldapsearch-anon/users | Yes | LDAP anonymous enumeration |
+| certipy-find | Yes | Vulnerable AD CS templates (ESC1-ESC8) |
+| adidnsdump-enum | Yes | AD-integrated DNS zones |
+| windapsearch-users | Yes | Domain users via LDAP |
+| ldeep-enum | Yes | Deep LDAP: users, groups, OUs, GPOs |
+| gpp-sysvol-check | Yes | SYSVOL GPP XML with embedded passwords |
+| impacket-getnpusers-nopass | Yes | AS-REP roastable accounts |
+| impacket-lookupsid-null | Yes | SIDs via null session |
+
+### SNMP enumeration
+| Tool | Auto | Expected output |
+|---|---|---|
+| onesixtyone | Yes | Valid community strings |
+| snmpwalk | Yes | Full MIB tree |
+| snmpwalk-processes/users/software | Yes | Targeted OID walks (running processes, users, installed software) |
+| snmpwalk-discovered | Yes | Walk using community strings found by onesixtyone |
+| snmpcheck | Yes | System description, uptime, interfaces |
+
+### DNS enumeration
+| Tool | Auto | Expected output |
+|---|---|---|
+| dnsrecon | Yes | DNS records, zone transfer attempts |
+| dig (version + axfr) | Yes | Server version, zone transfer contents |
+| fierce | Yes | Subdomain brute-force |
+| subfinder | Yes | Passive subdomain discovery |
+| gobuster dns | Yes | DNS subdomain enumeration |
+| theharvester | Yes | Emails, subdomains from OSINT |
+
+### Credential testing
+| Tool | Auto | Expected output |
+|---|---|---|
+| hydra (ssh/ftp/telnet/mysql/mssql/postgres/vnc/oracle) | Yes | Default credential check per service |
+| netexec ftp/rdp/mssql | Yes | Anonymous/null access checks |
+
+### OSINT & exploit search
+| Tool | Auto | Expected output |
+|---|---|---|
+| searchsploit | — | ExploitDB matches for service versions |
+| searchsploit-nmap | Yes | ExploitDB auto-matched against all nmap XML results |
+| gau / waybackurls | Yes | Historical URLs from web archives |
+| leaksearch | Yes | Credential leaks for the domain |
+
+### Interactive terminals (right-click)
+ssh, ftp, mysql, psql, mssql, telnet, netcat, redis-cli, rdesktop, vncviewer, evil-winrm, rpcclient, impacket-smbclient, impacket-psexec — all open as embedded xterm.js PTY sessions in the browser.
 
 ---
 
