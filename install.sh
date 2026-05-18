@@ -51,6 +51,10 @@ done
 # the tee pipe on line 45.
 export DEBIAN_FRONTEND=noninteractive
 
+# Accept all defaults in CPAN/MakeMaker without prompting (first-run
+# "Would you like to configure automatically?" dialog blocks on tee pipe).
+export PERL_MM_USE_DEFAULT=1
+
 # In Docker / root-only environments, sudo is not installed — define a shim
 # so every 'sudo cmd' in this script just runs 'cmd' directly.
 # On real systems, wrap sudo to pass DEBIAN_FRONTEND through — sudo's
@@ -62,7 +66,7 @@ if ! command -v sudo &>/dev/null; then
     info "sudo not found — running as root, shim active"
 else
     _REAL_SUDO="$(command -v sudo)"
-    sudo() { $_REAL_SUDO DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}" "$@"; }
+    sudo() { $_REAL_SUDO DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}" PERL_MM_USE_DEFAULT="${PERL_MM_USE_DEFAULT:-1}" "$@"; }
     export -f sudo
 fi
 
