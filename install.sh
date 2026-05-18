@@ -953,46 +953,6 @@ for _opt_check in "/opt/jexboss/jexboss.py:jexboss" "/opt/LeakSearch/LeakSearch.
     fi
 done
 
-# ── 8e. LegionnAIre server starts ─────────────────────────────────────────────
-echo ""
-echo -e "  ${BOLD}── LegionnAIre server start test ───────────────${NC}"
-
-# Run the real legion.py --web on a test port, wait for /api/snapshot to
-# respond, then kill it.  This proves the full stack works: settings, DB,
-# WebController, Flask routes, and templates — same as what the user runs.
-_TEST_PORT=5199
-_SRV_LOG=$(mktemp)
-_SRV_PID=""
-
-cd "${SCRIPT_DIR}"
-"${VENV_PY}" legion.py --web --port ${_TEST_PORT} --no-browser --no-prompt > "$_SRV_LOG" 2>&1 &
-_SRV_PID=$!
-
-_srv_ok=false
-for _i in $(seq 1 30); do
-    sleep 1
-    if curl -sf "http://127.0.0.1:${_TEST_PORT}/api/snapshot" -o /dev/null 2>/dev/null; then
-        _srv_ok=true
-        break
-    fi
-    if ! kill -0 "$_SRV_PID" 2>/dev/null; then
-        break
-    fi
-done
-
-if $_srv_ok; then
-    _v_ok "  LegionnAIre server started and /api/snapshot responded on port ${_TEST_PORT}"
-else
-    _v_fail "  LegionnAIre server failed to start"
-    tail -30 "$_SRV_LOG" | while IFS= read -r _ln; do [[ -n "$_ln" ]] && warn "    $_ln"; done
-fi
-
-if [[ -n "$_SRV_PID" ]] && kill -0 "$_SRV_PID" 2>/dev/null; then
-    kill "$_SRV_PID" 2>/dev/null
-    wait "$_SRV_PID" 2>/dev/null || true
-fi
-rm -f "$_SRV_LOG"
-
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${BOLD}── Verification summary ────────────────────────${NC}"
@@ -1549,6 +1509,47 @@ _log_check \
     "sudo git pull  (update to latest flask-clean)"
 
 [[ $_LOG_ISSUES -eq 0 ]] && _chk_ok "No known error patterns found in install log"
+
+# ── Server start test (final check — after all healing is done) ───────────────
+echo ""
+echo -e "  ${BOLD}── LegionnAIre server start test ───────────────${NC}"
+
+# Run the real legion.py --web on a test port, wait for /api/snapshot to
+# respond, then kill it.  This is the ultimate end-to-end check — it proves
+# the full stack works: settings, DB, WebController, Flask routes, templates.
+# Runs last so all step 10 self-healing has completed first.
+_TEST_PORT=5199
+_SRV_LOG=$(mktemp)
+_SRV_PID=""
+
+cd "${SCRIPT_DIR}"
+"${VENV_PY}" legion.py --web --port ${_TEST_PORT} --no-browser --no-prompt > "$_SRV_LOG" 2>&1 &
+_SRV_PID=$!
+
+_srv_ok=false
+for _i in $(seq 1 30); do
+    sleep 1
+    if curl -sf "http://127.0.0.1:${_TEST_PORT}/api/snapshot" -o /dev/null 2>/dev/null; then
+        _srv_ok=true
+        break
+    fi
+    if ! kill -0 "$_SRV_PID" 2>/dev/null; then
+        break
+    fi
+done
+
+if $_srv_ok; then
+    _chk_ok "LegionnAIre server started and /api/snapshot responded on port ${_TEST_PORT}"
+else
+    _chk_fail "LegionnAIre server failed to start"
+    tail -30 "$_SRV_LOG" | while IFS= read -r _ln; do [[ -n "$_ln" ]] && warn "    $_ln"; done
+fi
+
+if [[ -n "$_SRV_PID" ]] && kill -0 "$_SRV_PID" 2>/dev/null; then
+    kill "$_SRV_PID" 2>/dev/null
+    wait "$_SRV_PID" 2>/dev/null || true
+fi
+rm -f "$_SRV_LOG"
 
 # ── Final summary ─────────────────────────────────────────────────────────────
 echo ""
