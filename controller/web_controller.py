@@ -707,7 +707,7 @@ class WebController:
 
     @staticmethod
     def _pattern_matches(pattern, line):
-        """Case-sensitive pattern match respecting space-based word-boundary guards.
+        r"""Case-sensitive pattern match respecting space-based word-boundary guards.
 
         If the stored keyword has a leading space, the character immediately before
         the keyword text in the line must NOT be a word character (\w = [a-zA-Z0-9_]).
