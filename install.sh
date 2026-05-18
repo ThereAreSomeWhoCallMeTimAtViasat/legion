@@ -454,15 +454,17 @@ else
     fi
 fi
 
-# rsh-client — provides netkit-rsh, netkit-rlogin, netkit-rcp
-# Note: 'rlogin' is NOT a separate package — it's inside rsh-client.
-if dpkg -l rsh-client 2>/dev/null | grep -q '^ii'; then
+# rsh — 'rsh-client' is a virtual package on Kali, provided by rsh-redone-client.
+# On older Debian/Ubuntu, rsh-client is the real package name.
+if dpkg -l rsh-redone-client 2>/dev/null | grep -q '^ii' || dpkg -l rsh-client 2>/dev/null | grep -q '^ii'; then
     ok "rsh-client already installed"
 else
-    info "Installing rsh-client (provides rsh + rlogin)…"
-    sudo apt-get install -y rsh-client 2>/dev/null \
-        && ok "rsh-client installed" \
-        || warn "rsh-client install failed — run: sudo apt-get install rsh-client"
+    info "Installing rsh (rsh-redone-client)…"
+    sudo apt-get install -y rsh-redone-client 2>/dev/null \
+        && ok "rsh-redone-client installed" \
+        || { sudo apt-get install -y rsh-client 2>/dev/null \
+            && ok "rsh-client installed" \
+            || warn "rsh-client install failed — optional legacy tool"; }
 fi
 
 # =============================================================================
@@ -1348,14 +1350,14 @@ elif _on_kali; then
         _chk_ok "All critical tool binaries present in PATH"
     fi
 
-    # rsh-client — provides netkit-rsh, netkit-rlogin (not 'rsh'/'rlogin')
-    if dpkg -l rsh-client 2>/dev/null | grep -q '^ii'; then
-        _chk_ok "rsh-client installed (netkit-rsh, netkit-rlogin)"
+    # rsh — virtual package on Kali, real package is rsh-redone-client
+    if dpkg -l rsh-redone-client 2>/dev/null | grep -q '^ii' || dpkg -l rsh-client 2>/dev/null | grep -q '^ii'; then
+        _chk_ok "rsh-client installed"
     else
-        _chk_fail "rsh-client missing — installing…"
-        sudo apt-get install -y rsh-client 2>/dev/null \
-            && _healed "rsh-client installed" \
-            || _chk_fail "rsh-client install failed — run: sudo apt-get install rsh-client"
+        _chk_fail "rsh-client missing — installing rsh-redone-client…"
+        sudo apt-get install -y rsh-redone-client 2>/dev/null \
+            && _healed "rsh-redone-client installed" \
+            || _chk_fail "rsh install failed — run: sudo apt-get install rsh-redone-client"
     fi
 
     # fierce — DNS brute-force tool required by fierce-dns SchedulerSettings entry
@@ -1491,7 +1493,7 @@ _log_check \
 _log_check \
     "rsh-client install conflict" \
     "rsh-client.*referred by|referred by.*rsh-client" \
-    "sudo apt-get install rsh-client"
+    "sudo apt-get install rsh-redone-client"
 
 _log_check \
     "testssl package not found (correct name is testssl.sh)" \
