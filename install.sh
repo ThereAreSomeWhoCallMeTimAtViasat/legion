@@ -1538,26 +1538,17 @@ _log_check \
 
 [[ $_LOG_ISSUES -eq 0 ]] && _chk_ok "No known error patterns found in install log"
 
-# ── Server start test (final check — after all healing is done) ───────────────
+# ── Server verification (final check — after all healing is done) ─────────────
 echo ""
-echo -e "  ${BOLD}── LegionnAIre server start test ───────────────${NC}"
+echo -e "  ${BOLD}── LegionnAIre server verification ─────────────${NC}"
 
-# Two tests:
-#   1. Headless: start server with --no-browser, verify /api/snapshot responds.
-#      Proves the full backend stack works (settings, DB, WebController, routes).
-#   2. GUI (if DISPLAY available): start server WITH Firefox auto-open, verify
-#      Firefox launches and the page loads.  Proves the browser integration works.
-#
-# Both run on a test port and are killed after the check.
-
+# Quick headless test: start server, verify /api/snapshot responds, kill it.
+# The real launch (left running) happens after the summary.
 _TEST_PORT=5199
 _SRV_LOG=$(mktemp)
 _SRV_PID=""
-_FF_PID=""
 
-# ── Headless test ─────────────────────────────────────────────────────────────
-info "  Headless: starting server on port ${_TEST_PORT}…"
-
+info "  Starting server on port ${_TEST_PORT}…"
 cd "${SCRIPT_DIR}"
 "${VENV_PY}" legion.py --web --port ${_TEST_PORT} --no-browser --no-prompt > "$_SRV_LOG" 2>&1 &
 _SRV_PID=$!
@@ -1579,84 +1570,18 @@ done
 printf "\r%-60s\r" "" >&2
 
 if $_srv_ok; then
-    _chk_ok "Headless: server started and /api/snapshot responded"
+    _chk_ok "Server started and /api/snapshot responded"
 else
-    _chk_fail "Headless: server failed to start"
+    _chk_fail "Server failed to start"
     tail -30 "$_SRV_LOG" | while IFS= read -r _ln; do [[ -n "$_ln" ]] && warn "    $_ln"; done
 fi
 
-# Kill headless test server
+# Kill the test server
 if [[ -n "$_SRV_PID" ]] && kill -0 "$_SRV_PID" 2>/dev/null; then
     kill "$_SRV_PID" 2>/dev/null
     wait "$_SRV_PID" 2>/dev/null || true
 fi
 rm -f "$_SRV_LOG"
-
-# ── GUI test (only if display is available) ───────────────────────────────────
-_HAS_DISPLAY=false
-if [[ -n "${DISPLAY:-}" ]]; then
-    # Verify the display actually works (DISPLAY can be set but broken)
-    if xdpyinfo &>/dev/null 2>&1; then
-        _HAS_DISPLAY=true
-    fi
-fi
-
-if $_HAS_DISPLAY && command -v firefox-esr &>/dev/null; then
-    info "  GUI: starting server with Firefox on port ${_TEST_PORT}…"
-
-    _SRV_LOG=$(mktemp)
-    cd "${SCRIPT_DIR}"
-    "${VENV_PY}" legion.py --web --port ${_TEST_PORT} --no-prompt > "$_SRV_LOG" 2>&1 &
-    _SRV_PID=$!
-
-    _gui_ok=false
-    for _i in $(seq 1 30); do
-        _sc=${_spin:$(( (_i - 1) % ${#_spin} )):1}
-        printf "\r  %s  Waiting for Firefox to connect… %ds" "$_sc" "$_i" >&2
-        sleep 1
-        if curl -sf "http://127.0.0.1:${_TEST_PORT}/api/snapshot" -o /dev/null 2>/dev/null; then
-            # Server is up — check if Firefox process exists
-            if pgrep -f "firefox.*legion-profile" &>/dev/null; then
-                _gui_ok=true
-                break
-            fi
-            # Give Firefox a few more seconds to launch
-            if [[ $_i -ge 10 ]]; then
-                _gui_ok=true
-                break
-            fi
-        fi
-        if ! kill -0 "$_SRV_PID" 2>/dev/null; then
-            break
-        fi
-    done
-    printf "\r%-60s\r" "" >&2
-
-    if $_gui_ok; then
-        _chk_ok "GUI: server started and Firefox launched"
-    else
-        _chk_warn "GUI: server started but Firefox may not have opened"
-        tail -10 "$_SRV_LOG" | grep -i 'firefox\|browser\|error' | while IFS= read -r _ln; do
-            [[ -n "$_ln" ]] && warn "    $_ln"
-        done
-    fi
-
-    # Kill Firefox and server
-    pkill -f "firefox.*legion-profile" 2>/dev/null || true
-    if [[ -n "$_SRV_PID" ]] && kill -0 "$_SRV_PID" 2>/dev/null; then
-        kill "$_SRV_PID" 2>/dev/null
-        wait "$_SRV_PID" 2>/dev/null || true
-    fi
-    rm -f "$_SRV_LOG"
-else
-    if [[ -z "${DISPLAY:-}" ]]; then
-        _chk_warn "GUI: skipped — no DISPLAY (use --no-browser and open http://127.0.0.1:5000 in your browser)"
-    elif ! command -v firefox-esr &>/dev/null; then
-        _chk_warn "GUI: skipped — firefox-esr not installed"
-    else
-        _chk_warn "GUI: skipped — display not functional (DISPLAY=${DISPLAY:-unset})"
-    fi
-fi
 
 # ── Final summary ─────────────────────────────────────────────────────────────
 echo ""
@@ -1680,25 +1605,58 @@ echo -e "  Full install log saved to: ${INSTALL_LOG}"
 set -e
 
 # =============================================================================
-# Done
+# Done — launch LegionnAIre
 # =============================================================================
 echo ""
-echo -e "${BOLD}${GREEN}╔════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${GREEN}║      Legion installation complete          ║${NC}"
-echo -e "${BOLD}${GREEN}╚════════════════════════════════════════════╝${NC}"
+echo -e "${BOLD}${GREEN}╔════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${GREEN}║      LegionnAIre installation complete         ║${NC}"
+echo -e "${BOLD}${GREEN}╚════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${BOLD}Legion uses a dedicated Python venv at:${NC}  ${LEGION_VENV}"
-echo    "  The 'legion-python3' symlink always points to it."
+echo -e "  ${BOLD}Python venv:${NC}  ${LEGION_VENV}"
+echo -e "  ${BOLD}Symlink:${NC}      /usr/local/bin/legion-python3"
+echo -e "  ${BOLD}Install log:${NC}  ${INSTALL_LOG}"
 echo ""
-echo -e "  ${BOLD}Start (opens Firefox automatically):${NC}"
+echo -e "  ${BOLD}Next time, start with:${NC}"
 echo    "    sudo legion-python3 legion.py --web"
-echo ""
-echo -e "  ${BOLD}Custom port:${NC}"
 echo    "    sudo legion-python3 legion.py --web --port 8080"
-echo ""
-echo -e "  ${BOLD}Headless (open http://127.0.0.1:5000 yourself):${NC}"
 echo    "    sudo legion-python3 legion.py --web --no-browser"
 echo ""
-echo -e "  ${BOLD}Qt6 desktop GUI (requires X11 display):${NC}"
-echo    "    sudo legion-python3 legion.py"
-echo ""
+
+# Detect display availability
+_HAS_DISPLAY=false
+if [[ -n "${DISPLAY:-}" ]]; then
+    xdpyinfo &>/dev/null 2>&1 && _HAS_DISPLAY=true
+fi
+
+# Launch LegionnAIre for real — left running so the user sees it immediately
+cd "${SCRIPT_DIR}"
+if $_HAS_DISPLAY; then
+    echo -e "  ${BOLD}${GREEN}Starting LegionnAIre with Firefox…${NC}"
+    echo ""
+    "${VENV_PY}" legion.py --web --no-prompt &
+    _LAUNCH_PID=$!
+    # Wait for server to be ready before exiting the script
+    for _i in $(seq 1 15); do
+        sleep 1
+        curl -sf "http://127.0.0.1:5000/api/snapshot" -o /dev/null 2>/dev/null && break
+    done
+    echo -e "  ${GREEN}✓${NC}  LegionnAIre is running at ${BOLD}http://127.0.0.1:5000${NC}"
+    echo -e "  ${GREEN}✓${NC}  Firefox should be opening now"
+    echo ""
+    echo -e "  To stop:  ${BOLD}sudo pkill -f legion.py${NC}"
+    echo ""
+else
+    echo -e "  ${BOLD}${YELLOW}No display detected — starting in headless mode.${NC}"
+    echo ""
+    "${VENV_PY}" legion.py --web --no-browser --no-prompt &
+    _LAUNCH_PID=$!
+    for _i in $(seq 1 15); do
+        sleep 1
+        curl -sf "http://127.0.0.1:5000/api/snapshot" -o /dev/null 2>/dev/null && break
+    done
+    echo -e "  ${GREEN}✓${NC}  LegionnAIre is running at ${BOLD}http://127.0.0.1:5000${NC}"
+    echo -e "  ${YELLOW}!${NC}  Open that URL in your browser (Windows browser for WSL)"
+    echo ""
+    echo -e "  To stop:  ${BOLD}sudo pkill -f legion.py${NC}"
+    echo ""
+fi
