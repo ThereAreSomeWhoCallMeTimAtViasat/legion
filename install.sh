@@ -953,45 +953,43 @@ for _opt_check in "/opt/jexboss/jexboss.py:jexboss" "/opt/LeakSearch/LeakSearch.
     fi
 done
 
-# ── 8e. Flask server binds ────────────────────────────────────────────────────
+# ── 8e. LegionnAIre server starts ─────────────────────────────────────────────
 echo ""
-echo -e "  ${BOLD}── Flask server bind test ─────────────────────${NC}"
+echo -e "  ${BOLD}── LegionnAIre server start test ───────────────${NC}"
 
-# Light test: start Flask on a random port, check it responds to GET /.
-# Full /api/snapshot requires WebController which needs a DB — too heavy for
-# install verification.  Core module imports (8c) already prove the code loads.
+# Run the real legion.py --web on a test port, wait for /api/snapshot to
+# respond, then kill it.  This proves the full stack works: settings, DB,
+# WebController, Flask routes, and templates — same as what the user runs.
 _TEST_PORT=5199
 _SRV_LOG=$(mktemp)
-cd "${SCRIPT_DIR}" && timeout 10 "${VENV_PY}" -c "
-import sys, os, time, threading, urllib.request
-sys.path.insert(0, '.')
-from flask import Flask
-app = Flask(__name__, template_folder='app/web/templates', static_folder='app/web/static')
+_SRV_PID=""
 
-@app.route('/health')
-def health(): return 'ok'
+cd "${SCRIPT_DIR}"
+"${VENV_PY}" legion.py --web --port ${_TEST_PORT} --no-browser --no-prompt > "$_SRV_LOG" 2>&1 &
+_SRV_PID=$!
 
-srv_ok = [False]
-def _run():
-    import logging; logging.getLogger('werkzeug').setLevel(logging.ERROR)
-    try: app.run(host='127.0.0.1', port=${_TEST_PORT}, use_reloader=False)
-    except: pass
-t = threading.Thread(target=_run, daemon=True); t.start()
-for _ in range(20):
-    time.sleep(0.5)
-    try:
-        r = urllib.request.urlopen('http://127.0.0.1:${_TEST_PORT}/health', timeout=2)
-        if r.status == 200: srv_ok[0] = True; break
-    except: pass
-print('OK' if srv_ok[0] else 'FAIL')
-" > "$_SRV_LOG" 2>&1
-_SRV_RESULT=$(tail -1 "$_SRV_LOG")
+_srv_ok=false
+for _i in $(seq 1 30); do
+    sleep 1
+    if curl -sf "http://127.0.0.1:${_TEST_PORT}/api/snapshot" -o /dev/null 2>/dev/null; then
+        _srv_ok=true
+        break
+    fi
+    if ! kill -0 "$_SRV_PID" 2>/dev/null; then
+        break
+    fi
+done
 
-if [[ "$_SRV_RESULT" == "OK" ]]; then
-    _v_ok "  Flask server started and responded on port ${_TEST_PORT}"
+if $_srv_ok; then
+    _v_ok "  LegionnAIre server started and /api/snapshot responded on port ${_TEST_PORT}"
 else
-    _v_fail "  Flask server failed to start"
-    cat "$_SRV_LOG" | while IFS= read -r _ln; do [[ -n "$_ln" ]] && warn "    $_ln"; done
+    _v_fail "  LegionnAIre server failed to start"
+    tail -30 "$_SRV_LOG" | while IFS= read -r _ln; do [[ -n "$_ln" ]] && warn "    $_ln"; done
+fi
+
+if [[ -n "$_SRV_PID" ]] && kill -0 "$_SRV_PID" 2>/dev/null; then
+    kill "$_SRV_PID" 2>/dev/null
+    wait "$_SRV_PID" 2>/dev/null || true
 fi
 rm -f "$_SRV_LOG"
 
