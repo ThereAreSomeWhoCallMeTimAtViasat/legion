@@ -1542,13 +1542,21 @@ _log_check \
 echo ""
 echo -e "  ${BOLD}── LegionnAIre server start test ───────────────${NC}"
 
-# Run the real legion.py --web on a test port, wait for /api/snapshot to
-# respond, then kill it.  This is the ultimate end-to-end check — it proves
-# the full stack works: settings, DB, WebController, Flask routes, templates.
-# Runs last so all step 10 self-healing has completed first.
+# Two tests:
+#   1. Headless: start server with --no-browser, verify /api/snapshot responds.
+#      Proves the full backend stack works (settings, DB, WebController, routes).
+#   2. GUI (if DISPLAY available): start server WITH Firefox auto-open, verify
+#      Firefox launches and the page loads.  Proves the browser integration works.
+#
+# Both run on a test port and are killed after the check.
+
 _TEST_PORT=5199
 _SRV_LOG=$(mktemp)
 _SRV_PID=""
+_FF_PID=""
+
+# ── Headless test ─────────────────────────────────────────────────────────────
+info "  Headless: starting server on port ${_TEST_PORT}…"
 
 cd "${SCRIPT_DIR}"
 "${VENV_PY}" legion.py --web --port ${_TEST_PORT} --no-browser --no-prompt > "$_SRV_LOG" 2>&1 &
@@ -1558,7 +1566,7 @@ _srv_ok=false
 _spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 for _i in $(seq 1 30); do
     _sc=${_spin:$(( (_i - 1) % ${#_spin} )):1}
-    printf "\r  %s  Waiting for server to start… %ds" "$_sc" "$_i" >&2
+    printf "\r  %s  Waiting for server to respond… %ds" "$_sc" "$_i" >&2
     sleep 1
     if curl -sf "http://127.0.0.1:${_TEST_PORT}/api/snapshot" -o /dev/null 2>/dev/null; then
         _srv_ok=true
@@ -1571,17 +1579,84 @@ done
 printf "\r%-60s\r" "" >&2
 
 if $_srv_ok; then
-    _chk_ok "LegionnAIre server started and /api/snapshot responded on port ${_TEST_PORT}"
+    _chk_ok "Headless: server started and /api/snapshot responded"
 else
-    _chk_fail "LegionnAIre server failed to start"
+    _chk_fail "Headless: server failed to start"
     tail -30 "$_SRV_LOG" | while IFS= read -r _ln; do [[ -n "$_ln" ]] && warn "    $_ln"; done
 fi
 
+# Kill headless test server
 if [[ -n "$_SRV_PID" ]] && kill -0 "$_SRV_PID" 2>/dev/null; then
     kill "$_SRV_PID" 2>/dev/null
     wait "$_SRV_PID" 2>/dev/null || true
 fi
 rm -f "$_SRV_LOG"
+
+# ── GUI test (only if display is available) ───────────────────────────────────
+_HAS_DISPLAY=false
+if [[ -n "${DISPLAY:-}" ]]; then
+    # Verify the display actually works (DISPLAY can be set but broken)
+    if xdpyinfo &>/dev/null 2>&1; then
+        _HAS_DISPLAY=true
+    fi
+fi
+
+if $_HAS_DISPLAY && command -v firefox-esr &>/dev/null; then
+    info "  GUI: starting server with Firefox on port ${_TEST_PORT}…"
+
+    _SRV_LOG=$(mktemp)
+    cd "${SCRIPT_DIR}"
+    "${VENV_PY}" legion.py --web --port ${_TEST_PORT} --no-prompt > "$_SRV_LOG" 2>&1 &
+    _SRV_PID=$!
+
+    _gui_ok=false
+    for _i in $(seq 1 30); do
+        _sc=${_spin:$(( (_i - 1) % ${#_spin} )):1}
+        printf "\r  %s  Waiting for Firefox to connect… %ds" "$_sc" "$_i" >&2
+        sleep 1
+        if curl -sf "http://127.0.0.1:${_TEST_PORT}/api/snapshot" -o /dev/null 2>/dev/null; then
+            # Server is up — check if Firefox process exists
+            if pgrep -f "firefox.*legion-profile" &>/dev/null; then
+                _gui_ok=true
+                break
+            fi
+            # Give Firefox a few more seconds to launch
+            if [[ $_i -ge 10 ]]; then
+                _gui_ok=true
+                break
+            fi
+        fi
+        if ! kill -0 "$_SRV_PID" 2>/dev/null; then
+            break
+        fi
+    done
+    printf "\r%-60s\r" "" >&2
+
+    if $_gui_ok; then
+        _chk_ok "GUI: server started and Firefox launched"
+    else
+        _chk_warn "GUI: server started but Firefox may not have opened"
+        tail -10 "$_SRV_LOG" | grep -i 'firefox\|browser\|error' | while IFS= read -r _ln; do
+            [[ -n "$_ln" ]] && warn "    $_ln"
+        done
+    fi
+
+    # Kill Firefox and server
+    pkill -f "firefox.*legion-profile" 2>/dev/null || true
+    if [[ -n "$_SRV_PID" ]] && kill -0 "$_SRV_PID" 2>/dev/null; then
+        kill "$_SRV_PID" 2>/dev/null
+        wait "$_SRV_PID" 2>/dev/null || true
+    fi
+    rm -f "$_SRV_LOG"
+else
+    if [[ -z "${DISPLAY:-}" ]]; then
+        _chk_warn "GUI: skipped — no DISPLAY (use --no-browser and open http://127.0.0.1:5000 in your browser)"
+    elif ! command -v firefox-esr &>/dev/null; then
+        _chk_warn "GUI: skipped — firefox-esr not installed"
+    else
+        _chk_warn "GUI: skipped — display not functional (DISPLAY=${DISPLAY:-unset})"
+    fi
+fi
 
 # ── Final summary ─────────────────────────────────────────────────────────────
 echo ""
