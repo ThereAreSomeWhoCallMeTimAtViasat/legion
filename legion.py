@@ -625,7 +625,7 @@ if __name__ == "__main__":
             _profile = _os.path.join(_home, '.mozilla', 'firefox', 'legion-profile')
             if not _os.path.isdir(_profile):
                 _os.makedirs(_profile, exist_ok=True)
-                # Profile dir must be owned by the user, not root
+                _os.chmod(_profile, 0o700)
                 if _sudo_user:
                     try:
                         import pwd as _pwd

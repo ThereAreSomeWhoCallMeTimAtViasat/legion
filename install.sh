@@ -815,19 +815,14 @@ else
     sudo rm -rf "$TMP"
 fi
 
-# Firefox clean state — the initial apt install of firefox-esr (running as
-# root) leaves the browser in a broken state where it cannot create or load
-# profiles.  The only proven fix is a full purge → delete user data → reinstall
-# cycle.  This adds ~30s but guarantees Firefox works on first launch.
-info "Ensuring Firefox is in a clean state…"
-pkill -9 firefox 2>/dev/null || true
-sleep 1
-sudo apt-get purge -y firefox-esr 2>/dev/null || true
-sudo rm -rf "${REAL_HOME}/.cache/mozilla" "${REAL_HOME}/.mozilla"
-sudo apt-get install -y firefox-esr
+# Firefox profile setup — Firefox requires the --profile directory to be
+# mode 700 (owner-only).  Without this, Firefox on WSLg refuses to load
+# the profile with "Your profile cannot be loaded."
+_LEGION_PROFILE="${REAL_HOME}/.mozilla/firefox/legion-profile"
+sudo mkdir -p "$_LEGION_PROFILE" "${REAL_HOME}/.cache/mozilla"
+sudo chmod 700 "$_LEGION_PROFILE"
 if [[ "${REAL_USER}" != "root" ]]; then
-    sudo chown -R "${REAL_USER}:${REAL_USER}" "${REAL_HOME}/.mozilla" "${REAL_HOME}/.cache" 2>/dev/null || true
-    sudo chmod 700 "${REAL_HOME}/.mozilla" 2>/dev/null || true
+    sudo chown -R "${REAL_USER}:${REAL_USER}" "${REAL_HOME}/.mozilla" "${REAL_HOME}/.cache/mozilla" 2>/dev/null || true
 fi
 ok "Firefox purged and reinstalled clean"
 
