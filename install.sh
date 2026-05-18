@@ -301,6 +301,12 @@ sudo apt-get install -y \
     xvfb x11-utils \
     firefox-esr
 
+# Ensure all packages are fully configured — if a previous install was
+# interrupted (e.g. by keyboard-configuration dialog freeze), some packages
+# may be left in a half-configured state where the binary exists but
+# post-install scripts never ran (e.g. firefox-esr can't create profiles).
+sudo dpkg --configure -a 2>/dev/null || true
+
 ok "Critical packages installed  (Python $(python3 --version | grep -oP '[\d.]+')  Go $(go version | grep -oP 'go[\d.]+'))"
 
 for req in python3 go git curl; do
