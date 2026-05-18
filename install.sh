@@ -1549,7 +1549,10 @@ cd "${SCRIPT_DIR}"
 _SRV_PID=$!
 
 _srv_ok=false
+_spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 for _i in $(seq 1 30); do
+    _sc=${_spin:$(( (_i - 1) % ${#_spin} )):1}
+    printf "\r  %s  Waiting for server to start… %ds" "$_sc" "$_i" >&2
     sleep 1
     if curl -sf "http://127.0.0.1:${_TEST_PORT}/api/snapshot" -o /dev/null 2>/dev/null; then
         _srv_ok=true
@@ -1559,6 +1562,7 @@ for _i in $(seq 1 30); do
         break
     fi
 done
+printf "\r%-60s\r" "" >&2
 
 if $_srv_ok; then
     _chk_ok "LegionnAIre server started and /api/snapshot responded on port ${_TEST_PORT}"
