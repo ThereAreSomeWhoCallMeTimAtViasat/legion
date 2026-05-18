@@ -1337,6 +1337,7 @@ class WebController:
 
                             outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{tool_id}-{hip}-{port_num}")
                             command = command_template.replace('[IP]', hip).replace('[PORT]', port_num).replace('[OUTPUT]', outputfile)
+                            command = command.replace('[OUTPUT_DIR]', self.logic.activeProject.properties.outputFolder)
                             if 'nmap' in command and protocol == 'udp':
                                 command = command.replace('-sV', '-sVU')
 
@@ -2427,6 +2428,7 @@ class WebController:
         runningFolder = self.logic.activeProject.properties.runningFolder
         outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{name}-{ip}")
         command = command.replace('[OUTPUT]', outputfile)
+        command = command.replace('[OUTPUT_DIR]', self.logic.activeProject.properties.outputFolder)
 
         # Qt6: checkDuplicate before running user-triggered host actions.
         # Only 'skip' actually blocks the run. Qt6's other modes ('newTab',
@@ -2528,6 +2530,7 @@ class WebController:
             runningFolder = self.logic.activeProject.properties.runningFolder
             outputfile = os.path.join(runningFolder, f"{getTimestamp()}-{tool}-{ip}-{port}")
             command = command.replace('[IP]', ip).replace('[PORT]', port).replace('[OUTPUT]', outputfile)
+            command = command.replace('[OUTPUT_DIR]', self.logic.activeProject.properties.outputFolder)
             if 'nmap' in command and protocol == 'udp':
                 command = command.replace("-sV", "-sVU")
             tabTitle = f"{tool} ({port}/{protocol})"
