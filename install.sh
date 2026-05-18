@@ -815,20 +815,17 @@ else
     sudo rm -rf "$TMP"
 fi
 
-# Firefox profile cleanup — apt postinst and any failed --CreateProfile attempts
-# can leave root-owned artifacts in the user's ~/.mozilla and ~/.cache/mozilla.
-# Firefox refuses to load a profile it can't write to ("profile cannot be loaded").
-# Fix: ensure the user owns everything, and remove any crash/lock artifacts.
+# Firefox clean state — running as root during install leaves root-owned
+# artifacts in ~/.mozilla and ~/.cache/mozilla that Firefox (running as the
+# real user) cannot read.  Delete everything and let Firefox create a clean
+# state on first launch.  This replicates the proven manual fix sequence:
+#   rm -rf ~/.cache/mozilla ~/.mozilla → chown → chmod 700
 if [[ "${REAL_USER}" != "root" ]]; then
-    for _moz_dir in "${REAL_HOME}/.mozilla" "${REAL_HOME}/.cache/mozilla"; do
-        if [[ -d "$_moz_dir" ]]; then
-            sudo chown -R "${REAL_USER}:${REAL_USER}" "$_moz_dir" 2>/dev/null || true
-            # Remove crash artifacts that block profile loading
-            find "$_moz_dir" -name 'lock' -delete 2>/dev/null || true
-            find "$_moz_dir" -name '.parentlock' -delete 2>/dev/null || true
-        fi
-    done
-    ok "Firefox directories owned by ${REAL_USER}"
+    sudo rm -rf "${REAL_HOME}/.cache/mozilla" "${REAL_HOME}/.mozilla"
+    sudo mkdir -p "${REAL_HOME}/.mozilla" "${REAL_HOME}/.cache/mozilla"
+    sudo chown -R "${REAL_USER}:${REAL_USER}" "${REAL_HOME}/.mozilla" "${REAL_HOME}/.cache/mozilla"
+    sudo chmod 700 "${REAL_HOME}/.mozilla"
+    ok "Firefox directories clean (owned by ${REAL_USER}, mode 700)"
 fi
 
 # =============================================================================
