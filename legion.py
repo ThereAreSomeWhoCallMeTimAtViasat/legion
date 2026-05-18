@@ -623,39 +623,15 @@ if __name__ == "__main__":
             # instance.  If free, proceed normally.
             _home = f'/home/{_sudo_user}' if _sudo_user else _os.path.expanduser('~')
             _profile = _os.path.join(_home, '.mozilla', 'firefox', 'legion-profile')
-            _profile_valid = _os.path.isdir(_profile) and _os.path.exists(
-                _os.path.join(_profile, 'prefs.js'))
-            if not _profile_valid:
-                # An empty mkdir'd directory is NOT a valid profile — Firefox
-                # shows "Your profile cannot be loaded".  Use --CreateProfile
-                # to properly initialize it with prefs.js etc.
-                _os.makedirs(_os.path.dirname(_profile), exist_ok=True)
-                _create_cmd = ['firefox', '--headless',
-                               '--CreateProfile',
-                               f'legion-profile {_profile}']
-                try:
-                    if _sudo_user:
-                        _sp.Popen(
-                            ['sudo', '-u', _sudo_user] + _create_cmd,
-                            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL
-                        ).wait(timeout=10)
-                    else:
-                        _sp.Popen(
-                            _create_cmd,
-                            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL
-                        ).wait(timeout=10)
-                except Exception:
-                    _os.makedirs(_profile, exist_ok=True)
-                if _sudo_user and _os.path.isdir(_profile):
+            if not _os.path.isdir(_profile):
+                _os.makedirs(_profile, exist_ok=True)
+                # Profile dir must be owned by the user, not root
+                if _sudo_user:
                     try:
                         import pwd as _pwd
                         _pi = _pwd.getpwnam(_sudo_user)
                         _os.chown(_profile, _pi.pw_uid, _pi.pw_gid)
-                        for _f in _os.listdir(_profile):
-                            _os.chown(_os.path.join(_profile, _f),
-                                      _pi.pw_uid, _pi.pw_gid)
-                        _os.chown(_os.path.dirname(_profile),
-                                  _pi.pw_uid, _pi.pw_gid)
+                        _os.chown(_os.path.dirname(_profile), _pi.pw_uid, _pi.pw_gid)
                     except Exception:
                         pass
 
