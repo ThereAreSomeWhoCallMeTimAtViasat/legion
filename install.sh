@@ -806,13 +806,35 @@ else
 fi
 
 PROFILE_DIR="${REAL_HOME}/.mozilla/firefox/legion-profile"
-if [[ -d "$PROFILE_DIR" ]]; then
-    ok "Legion Firefox profile already exists"
+if [[ -d "$PROFILE_DIR" && -f "$PROFILE_DIR/prefs.js" ]]; then
+    ok "Legion Firefox profile already initialized"
+elif command -v firefox &>/dev/null || command -v firefox-esr &>/dev/null; then
+    # Firefox --CreateProfile initializes a valid profile directory with
+    # prefs.js, compatibility.ini, etc.  An empty mkdir'd directory is NOT
+    # a valid profile — Firefox shows "Your profile cannot be loaded."
+    _FF=$(command -v firefox || command -v firefox-esr)
+    info "Initializing Firefox profile at ${PROFILE_DIR}…"
+    sudo mkdir -p "$(dirname "$PROFILE_DIR")"
+    if [[ -n "$REAL_USER" && "$REAL_USER" != "root" ]]; then
+        sudo -u "${REAL_USER}" "$_FF" --headless --CreateProfile "legion-profile ${PROFILE_DIR}" 2>/dev/null &
+        _FF_PID=$!
+        sleep 3
+        kill "$_FF_PID" 2>/dev/null; wait "$_FF_PID" 2>/dev/null || true
+    else
+        "$_FF" --headless --CreateProfile "legion-profile ${PROFILE_DIR}" 2>/dev/null &
+        _FF_PID=$!
+        sleep 3
+        kill "$_FF_PID" 2>/dev/null; wait "$_FF_PID" 2>/dev/null || true
+    fi
+    if [[ -d "$PROFILE_DIR" ]]; then
+        [[ "$REAL_USER" != "root" ]] && \
+            sudo chown -R "${REAL_USER}:${REAL_USER}" "${REAL_HOME}/.mozilla" 2>/dev/null || true
+        ok "Firefox profile initialized at ${PROFILE_DIR}"
+    else
+        warn "Firefox profile creation failed — will be created on first run"
+    fi
 else
-    sudo mkdir -p "$PROFILE_DIR"
-    [[ "$REAL_USER" != "root" ]] && \
-        sudo chown -R "${REAL_USER}:${REAL_USER}" "${REAL_HOME}/.mozilla" 2>/dev/null || true
-    ok "Firefox profile created at ${PROFILE_DIR}"
+    warn "Firefox not installed — skipping profile creation"
 fi
 
 # =============================================================================
