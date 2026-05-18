@@ -51,6 +51,13 @@ done
 # the tee pipe on line 45.
 export DEBIAN_FRONTEND=noninteractive
 
+# Keep existing config files when dpkg detects a conffile conflict (e.g.
+# /etc/xrdp/sesman.ini).  DEBIAN_FRONTEND=noninteractive does NOT suppress
+# conffile prompts — they come from dpkg, not debconf.
+echo 'Dpkg::Options { "--force-confdef"; "--force-confold"; };' \
+    > /etc/apt/apt.conf.d/99legion-install
+trap 'rm -f /etc/apt/apt.conf.d/99legion-install' EXIT
+
 # Accept all defaults in CPAN/MakeMaker without prompting (first-run
 # "Would you like to configure automatically?" dialog blocks on tee pipe).
 export PERL_MM_USE_DEFAULT=1
