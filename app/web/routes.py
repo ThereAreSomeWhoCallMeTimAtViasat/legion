@@ -1360,6 +1360,11 @@ def _ensure_profiles():
     default = os.path.join(_PROFILES_DIR, 'default.conf')
     if not os.path.exists(default) and os.path.exists(_WORKING_CONF):
         shutil.copy(_WORKING_CONF, default)
+    shipped = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'profiles')
+    if os.path.isdir(shipped):
+        for fn in os.listdir(shipped):
+            if fn.endswith('.conf') and not os.path.exists(os.path.join(_PROFILES_DIR, fn)):
+                shutil.copy(os.path.join(shipped, fn), os.path.join(_PROFILES_DIR, fn))
 
 @web_bp.get("/api/config/profiles")
 def config_profiles():

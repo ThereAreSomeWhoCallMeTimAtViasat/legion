@@ -710,6 +710,9 @@ if __name__ == "__main__":
             import threading as _threading
             _threading.Timer(0.5, _open_browser).start()   # 0.5s: Flask binds in <100ms
 
+        import logging as _logging_setup
+        _logging_setup.getLogger('werkzeug').setLevel(_logging_setup.ERROR)
+
         try:
             app.run(host="127.0.0.1", port=_port, debug=False, threaded=True)
         except OSError as _bind_err:
