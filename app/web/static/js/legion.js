@@ -146,6 +146,7 @@ var L = {
                portclosed:false, tcp:true, udp:true, keywords:[]},
     selectedTool: null,
     selectedProcessId: null,
+    _activeTable: null,
     hostCache: {},
     pollTimer: null,
     procPollTimer: null,
@@ -1699,6 +1700,7 @@ function initInteractions() {
     $('hosts-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.hostId) return;
+        L._activeTable = 'hosts-body';
         var hostId = parseInt(tr.dataset.hostId);
         /* Qt6: clearAllTabHighlights then restore per-host unread state.
            Tabs that were unread for the new host get orange back; tabs for
@@ -1823,6 +1825,7 @@ function initInteractions() {
     $('services-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr) return;
+        L._activeTable = 'services-body';
         L.selectedService = tr.dataset.service || '';
         L.selectedServicePort = tr.dataset.port || '';
         L._serviceViewActive = true;
@@ -1842,6 +1845,7 @@ function initInteractions() {
     $('tools-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr) return;
+        L._activeTable = 'tools-body';
         L.selectedTool = tr.dataset.toolId || '';
         $('tools-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
@@ -1859,6 +1863,7 @@ function initInteractions() {
     $('tool-hosts-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.processId) return;
+        L._activeTable = 'tool-hosts-body';
         $('tool-hosts-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
         });
@@ -1897,6 +1902,7 @@ function initInteractions() {
     $('os-list-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr) return;
+        L._activeTable = 'os-list-body';
         var os = tr.dataset.os || '';
         $('os-list-body').querySelectorAll('tr').forEach(function(r) { r.classList.toggle('selected', r === tr); });
         /* G4: fetch matching hosts from server (view.py:updateOsHostsTableView) */
@@ -1912,6 +1918,7 @@ function initInteractions() {
     $('os-hosts-body').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.hostId) return;
+        L._activeTable = 'os-hosts-body';
         L.selectedHostId = parseInt(tr.dataset.hostId);
         $('os-hosts-body').querySelectorAll('tr').forEach(function(r) { r.classList.toggle('selected', r === tr); });
         loadHostDetail(L.selectedHostId);
@@ -2023,6 +2030,7 @@ function initInteractions() {
         if (e.target.closest('input[type="checkbox"]')) return;  /* handled above */
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.processId) return;
+        L._activeTable = 'processes-body';
         L.selectedProcessId = parseInt(tr.dataset.processId);
         $('processes-body').querySelectorAll('tr').forEach(function(r) {
             r.classList.toggle('selected', r === tr);
@@ -2064,6 +2072,7 @@ function initInteractions() {
     $('host-detail-scripts').addEventListener('click', function(e) {
         var tr = e.target.closest('tr');
         if (!tr || !tr.dataset.scriptId) return;
+        L._activeTable = 'host-detail-scripts';
         $('host-detail-scripts').querySelectorAll('tr').forEach(function(r) { r.classList.toggle('selected', r === tr); });
         var sid = tr.dataset.scriptId;
         var outEl = $('script-output-inline');
@@ -4720,6 +4729,39 @@ document.addEventListener('DOMContentLoaded', function() {
             var si = $('proc-search-input');
             if (si) { si.focus(); si.select(); }
         }
+    });
+
+    /* ── Arrow-key table navigation ── */
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+        var ae = document.activeElement;
+        if (ae) {
+            var tag = ae.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if (ae.isContentEditable) return;
+            if (ae.classList.contains('xterm-helper-textarea')) return;
+        }
+        if (document.querySelector('.is-open')) return;
+        if (!L._activeTable) return;
+        var tbody = $(L._activeTable);
+        if (!tbody) return;
+        var rows = tbody.querySelectorAll('tr');
+        if (!rows.length) return;
+        var curIdx = -1;
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].classList.contains('selected')) { curIdx = i; break; }
+        }
+        var targetIdx;
+        if (e.key === 'ArrowUp') {
+            targetIdx = curIdx <= 0 ? 0 : curIdx - 1;
+        } else {
+            targetIdx = curIdx < 0 ? 0 : Math.min(curIdx + 1, rows.length - 1);
+        }
+        if (targetIdx === curIdx) return;
+        e.preventDefault();
+        rows[targetIdx].click();
+        rows[targetIdx].scrollIntoView({block: 'nearest', behavior: 'smooth'});
     });
 
     /* ── New Project ── */
