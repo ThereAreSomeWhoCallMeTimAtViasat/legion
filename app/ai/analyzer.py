@@ -62,6 +62,18 @@ _CHARS_PER_TOKEN      = 4      # rough approximation
 _CONF_PATH = os.path.expanduser('~/.local/share/legion/legion.conf')
 
 
+def _real_home():
+    """Return the home directory of the user who invoked sudo, not root."""
+    sudo_user = os.environ.get('SUDO_USER')
+    if sudo_user:
+        import pwd
+        try:
+            return pwd.getpwnam(sudo_user).pw_dir
+        except KeyError:
+            return f'/home/{sudo_user}'
+    return os.path.expanduser('~')
+
+
 def _read_ai_config():
     """Read AI provider settings from legion.conf [AISettings] section.
 
@@ -131,11 +143,7 @@ def _read_ai_config():
 def _read_legacy_vertex_config():
     """Read legacy Vertex AI config from ~/.claude/settings.json.
     Returns dict or None if not configured."""
-    sudo_user = os.environ.get('SUDO_USER')
-    if sudo_user:
-        settings_path = f'/home/{sudo_user}/.claude/settings.json'
-    else:
-        settings_path = os.path.expanduser('~/.claude/settings.json')
+    settings_path = os.path.join(_real_home(), '.claude', 'settings.json')
     try:
         with open(settings_path) as f:
             s = json.load(f)
@@ -153,12 +161,16 @@ def _read_legacy_vertex_config():
 
 
 def _read_gcloud_project_id():
-    """Try to read the default GCP project from gcloud CLI config."""
+    """Try to read the default GCP project from gcloud CLI config.
+    Runs as the real user (SUDO_USER) so it reads their gcloud config."""
     import subprocess
+    sudo_user = os.environ.get('SUDO_USER')
     try:
+        cmd = ['gcloud', 'config', 'get-value', 'project']
+        if sudo_user:
+            cmd = ['sudo', '-u', sudo_user, '--'] + cmd
         result = subprocess.run(
-            ['gcloud', 'config', 'get-value', 'project'],
-            capture_output=True, text=True, timeout=5,
+            cmd, capture_output=True, text=True, timeout=5,
         )
         val = result.stdout.strip()
         if val and val != '(unset)':
@@ -173,12 +185,8 @@ def _find_adc_path():
     explicit = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
     if explicit and os.path.exists(explicit):
         return explicit
-    sudo_user = os.environ.get('SUDO_USER')
-    if sudo_user:
-        p = f'/home/{sudo_user}/.config/gcloud/application_default_credentials.json'
-        if os.path.exists(p):
-            return p
-    p = os.path.expanduser('~/.config/gcloud/application_default_credentials.json')
+    p = os.path.join(_real_home(), '.config', 'gcloud',
+                     'application_default_credentials.json')
     if os.path.exists(p):
         return p
     return ''
@@ -242,15 +250,11 @@ def _get_client(config=None):
 
     if provider == 'vertex':
         from anthropic import AnthropicVertex
-        # When running as root via sudo, ADC credentials live under the
-        # original user's home, not /root.
         if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-            sudo_user = os.environ.get('SUDO_USER')
-            if sudo_user:
-                adc_path = f'/home/{sudo_user}/.config/gcloud/application_default_credentials.json'
-                if os.path.exists(adc_path):
-                    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = adc_path
-                    log.debug(f"[AI] Using ADC from {adc_path}")
+            adc_path = _find_adc_path()
+            if adc_path:
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = adc_path
+                log.debug(f"[AI] Using ADC from {adc_path}")
         return AnthropicVertex(
             project_id=config['vertex_project_id'],
             region=config['vertex_region'],
