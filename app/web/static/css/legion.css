@@ -542,6 +542,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--highlight);outline:no
 .match-current{background:#ff0!important;color:#000!important;
   outline:2px solid #fa0;outline-offset:0;border-radius:1px}
 .match-line{border-left:3px solid #ff0;padding-left:4px}
+/* Process output search highlights (cyan, distinct from yellow match-positive) */
+.search-match{background:rgba(0,180,255,0.25);color:#0ff;font-weight:700}
+.search-match.match-current{background:rgba(0,220,255,0.5)!important;color:#fff!important;outline:2px solid #0ff;border-radius:1px}
+#proc-search-input{background:var(--base);border:1px solid var(--border);color:var(--text);border-radius:3px}
+#proc-search-input:focus{border-color:var(--highlight);outline:none}
 /* Process row with match hit — Qt6 turns the tab orange/red */
 tr.proc-match td{color:#fa0}
 /* Host checked indicator — Qt6: CheckedHost column sets row marker */

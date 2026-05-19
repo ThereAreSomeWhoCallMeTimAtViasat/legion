@@ -169,6 +169,8 @@ var _termState = {
     offset: 0,           /* Read offset into PTY buffer */
 };
 
+var _procSearch = { query: '', results: [], active: false };
+
 function _showPlainOutput() {
     var p = $('plain-output'), t = $('terminal-output');
     if (p) p.style.display = '';
@@ -825,6 +827,10 @@ function _drawProcesses() {
         if (filter === 'match' && !p.has_match) return;
         if (filter !== 'match' && filter && p.status !== filter) return;
         if (_hideNoMatch && !p.has_match) return;
+        if (_procSearch.active && _procSearch.results.length) {
+            var _sid = String(p.id);
+            if (!_procSearch.results.some(function(r) { return String(r.process_id) === _sid; })) return;
+        }
         var tr = document.createElement('tr');
         tr.dataset.processId = p.id || '';
         tr.style.cursor = 'pointer';
@@ -849,6 +855,11 @@ function _drawProcesses() {
         }
         /* Show tabTitle (e.g. "nmap (stage 1)") when available, fall back to name */
         var displayName = p.tabTitle && p.tabTitle !== p.name ? p.tabTitle : p.name || '';
+        var searchBadge = '';
+        if (_procSearch.active) {
+            var _sr = _procSearch.results.find(function(r) { return String(r.process_id) === String(p.id); });
+            if (_sr) searchBadge = ' <span style="color:#0ff;font-size:8pt">(' + _sr.hit_count + ')</span>';
+        }
         var isChecked = _checkedProcessIds.has(String(p.id));
         tr.innerHTML =
             '<td style="text-align:center;padding:0 4px" class="proc-check-cell">' +
@@ -857,7 +868,7 @@ function _drawProcesses() {
               ' style="cursor:pointer;accent-color:var(--highlight)">' +
             '</td>' +
             '<td>' + esc(p.id) + '</td>' +
-            '<td>' + matchIcon + esc(displayName) + '</td>' +
+            '<td>' + matchIcon + esc(displayName) + searchBadge + '</td>' +
             '<td>' + esc(target) + '</td>' +
             '<td>' + esc(p.pid||'') + '</td>' +
             '<td class="' + statusClass + '">' + spinnerHtml + esc(p.status||'') + '</td>' +
@@ -1497,14 +1508,30 @@ function loadProcessOutput(processId, targetEl) {
                 + '</span>'
                 + '</div>';
         }
-        /* Screenshooter: output is "screenshot:/path/to/file.png" — render as image */
+        /* Search banner (cyan, distinct from yellow match banner) */
+        var searchBanner = '';
+        if (_procSearch.active && _procSearch.query) {
+            var _sr2 = _procSearch.results.find(function(r) { return String(r.process_id) === String(processId); });
+            searchBanner = '<div class="match-banner" style="background:#068">'
+                + '\u{1f50d} "' + esc(_procSearch.query) + '"'
+                + (_sr2 ? ' \u2014 ' + _sr2.hit_count + ' hits' : '')
+                + '<span class="match-nav">'
+                + '<button type="button" class="search-prev" title="Previous search hit">\u25b2</button>'
+                + '<span class="match-nav-counter"></span>'
+                + '<button type="button" class="search-next" title="Next search hit">\u25bc</button>'
+                + '</span></div>';
+        }
+        /* Screenshooter: output is "screenshot:/path/to/file.png" \u2014 render as image */
         if (text.startsWith('screenshot:')) {
             var imgPath = text.slice('screenshot:'.length).trim();
             var imgUrl = '/api/screenshots?path=' + encodeURIComponent(imgPath);
             targetEl.innerHTML = matchBanner + '<img src="' + imgUrl + '" style="max-width:100%;max-height:100%;object-fit:contain" alt="screenshot"/>';
         } else {
-            var html = matchBanner + highlightMatches(ansiToHtml(text));
-            /* If process is Running but output hasn't changed, show activity indicator */
+            var html = highlightMatches(ansiToHtml(text));
+            if (_procSearch.active && _procSearch.query) {
+                html = procSearchHighlight(html, _procSearch.query);
+            }
+            html = searchBanner + matchBanner + html;
             if (proc && proc.status === 'Running' && text.length > 0) {
                 var elapsed = proc.elapsed_secs || 0;
                 var fmtE = Math.floor(elapsed/60) + 'm ' + (elapsed%60) + 's';
@@ -1512,10 +1539,8 @@ function loadProcessOutput(processId, targetEl) {
                       + '\u23f3 Running... ' + fmtE + ' elapsed</div>';
             }
             targetEl.innerHTML = html;
-            /* Cache rendered HTML for static processes — next renderDynamicToolTabs
-               wipe+restore retrieves it instantly without re-fetching or re-parsing. */
             if (proc && (proc.status === 'Finished' || proc.status === 'Killed' ||
-                         proc.status === 'Crashed')) {
+                         proc.status === 'Crashed') && !_procSearch.active) {
                 _dynOutputCache[processId] = targetEl.innerHTML;
             }
         }
@@ -1530,6 +1555,18 @@ function loadProcessOutput(processId, targetEl) {
                 e.stopPropagation(); _matchNav(targetEl, processId, +1);
             });
             _matchNavInit(targetEl, processId);
+        }
+        /* Wire search navigation buttons */
+        if (_procSearch.active && _procSearch.query) {
+            var _sprev = targetEl.querySelector('.search-prev');
+            var _snext = targetEl.querySelector('.search-next');
+            if (_sprev) _sprev.addEventListener('click', function(e) {
+                e.stopPropagation(); _matchNav(targetEl, processId, -1, '.search-match');
+            });
+            if (_snext) _snext.addEventListener('click', function(e) {
+                e.stopPropagation(); _matchNav(targetEl, processId, +1, '.search-match');
+            });
+            _matchNavInit(targetEl, processId, '.search-match');
         }
         /* Restore scroll position after the innerHTML reflow. */
         if (atBottom) {
@@ -1550,8 +1587,8 @@ function loadProcessOutput(processId, targetEl) {
    _matchNavInit  — re-highlights current span, updates counter, no scroll.
    _matchNav      — moves index, re-highlights, scrolls span into view.
    ─────────────────────────────────────────────────────────────────── */
-function _matchNavInit(targetEl, processId) {
-    var spans = targetEl.querySelectorAll('.match-positive');
+function _matchNavInit(targetEl, processId, selector) {
+    var spans = targetEl.querySelectorAll(selector || '.match-positive');
     var counter = targetEl.querySelector('.match-nav-counter');
     if (!spans.length) {
         if (counter) counter.textContent = '0 \u2044 0';
@@ -1565,8 +1602,8 @@ function _matchNavInit(targetEl, processId) {
     _matchNavState[processId] = {idx: idx};
 }
 
-function _matchNav(targetEl, processId, dir) {
-    var spans = Array.from(targetEl.querySelectorAll('.match-positive'));
+function _matchNav(targetEl, processId, dir, selector) {
+    var spans = Array.from(targetEl.querySelectorAll(selector || '.match-positive'));
     if (!spans.length) return;
     var state  = _matchNavState[processId] || {idx: 0};
     var count  = spans.length;
@@ -1582,6 +1619,60 @@ function _matchNav(targetEl, processId, dir) {
     var spanTop = spans[idx].getBoundingClientRect().top
                 - targetEl.getBoundingClientRect().top;
     targetEl.scrollTop += spanTop - bannerH - 12;
+}
+
+/* ── Process output search ───────────────────────────────────────── */
+
+function procSearchRun(query) {
+    if (!query || query.length < 2) return;
+    _procSearch.query = query;
+    _procSearch.active = true;
+    var spinner = $('proc-search-spinner');
+    var countEl = $('proc-search-count');
+    var clearBtn = $('proc-search-clear');
+    if (spinner) spinner.style.display = '';
+    if (countEl) countEl.textContent = '';
+    fetchJson('/api/processes/search?q=' + encodeURIComponent(query)).then(function(data) {
+        if (spinner) spinner.style.display = 'none';
+        _procSearch.results = data.results || [];
+        var nProcs = _procSearch.results.length;
+        var nHits = data.total_hits || 0;
+        if (countEl) countEl.textContent = nProcs ? nProcs + ' proc' + (nProcs > 1 ? 's' : '') + ', ' + nHits + ' hits' : 'no results';
+        if (clearBtn) clearBtn.style.display = '';
+        renderProcesses(L.processes);
+        if (nProcs) {
+            var firstId = _procSearch.results[0].process_id;
+            var row = document.querySelector('#processes-body tr[data-process-id="' + firstId + '"]');
+            if (row) row.click();
+        }
+    }).catch(function() {
+        if (spinner) spinner.style.display = 'none';
+        if (countEl) countEl.textContent = 'error';
+    });
+}
+
+function procSearchClear() {
+    _procSearch = { query: '', results: [], active: false };
+    var countEl = $('proc-search-count');
+    var clearBtn = $('proc-search-clear');
+    if (countEl) countEl.textContent = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    renderProcesses(L.processes);
+    var plain = $('plain-output');
+    if (plain && plain._searchHighlighted) {
+        plain._searchHighlighted = false;
+    }
+}
+
+function procSearchHighlight(html, query) {
+    if (!query) return html;
+    var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var parts = escaped.split(/\s+/);
+    var pattern = parts.join('(?:</?span[^>]*>)*\\s*');
+    try {
+        var re = new RegExp('(' + pattern + ')', 'gi');
+        return html.replace(re, '<span class="search-match">$1</span>');
+    } catch(e) { return html; }
 }
 
 /* ================================================================
@@ -3812,6 +3903,19 @@ document.addEventListener('DOMContentLoaded', function() {
         _drawProcesses();
     });
 
+    var procSearchInput = $('proc-search-input');
+    if (procSearchInput) {
+        procSearchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); procSearchRun(this.value.trim()); }
+            else if (e.key === 'Escape') { procSearchClear(); this.value = ''; this.blur(); }
+        });
+    }
+    var procSearchClearBtn = $('proc-search-clear');
+    if (procSearchClearBtn) procSearchClearBtn.addEventListener('click', function() {
+        procSearchClear();
+        var si = $('proc-search-input'); if (si) si.value = '';
+    });
+
     var clearFinished = $('process-clear-finished-button');
     if (clearFinished) clearFinished.addEventListener('click', function() {
         var hiding = this.dataset.hidden !== '1';
@@ -4611,6 +4715,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (e.key === 'F1') { e.preventDefault(); $('action-help') && $('action-help').click(); }
         if (e.key === 'F2') { e.preventDefault(); $('action-config') && $('action-config').click(); }
+        if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+            e.preventDefault();
+            var si = $('proc-search-input');
+            if (si) { si.focus(); si.select(); }
+        }
     });
 
     /* ── New Project ── */

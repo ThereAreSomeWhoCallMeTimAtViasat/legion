@@ -500,6 +500,118 @@ def process_output(process_id):
         "completed": status not in ("Running", "Waiting"),
     })
 
+@web_bp.get("/api/processes/search")
+def process_search():
+    """Search all process output for a term. Returns matching processes
+    with hit counts and context snippets."""
+    from sqlalchemy import text as _st
+    logic = _logic()
+    term = (request.args.get('q') or '').strip()
+    if len(term) < 2:
+        return _err("Search term must be at least 2 characters")
+
+    term_lower = term.lower()
+    max_results = 50
+    max_snippets = 5
+    snippet_len = 200
+
+    session = logic.activeProject.database.session()
+    results = []
+    total_hits = 0
+
+    try:
+        rows = session.execute(_st(
+            'SELECT process.id, '
+            '  COALESCE(process.name, "") AS name, '
+            '  COALESCE(process.tabTitle, "") AS tabTitle, '
+            '  COALESCE(process.hostIp, "") AS hostIp, '
+            '  COALESCE(process.port, "") AS port, '
+            '  COALESCE(process.status, "") AS status, '
+            '  COALESCE(process.outputfile, "") AS outputfile, '
+            '  COALESCE(output.output, "") AS output '
+            'FROM process AS process '
+            'LEFT JOIN process_output AS output ON process.id = output.processId '
+            'WHERE process.closed = "False" '
+            '  AND INSTR(LOWER(COALESCE(output.output, "")), LOWER(:term)) > 0 '
+            'ORDER BY process.id DESC '
+            'LIMIT :lim'
+        ), {'term': term, 'lim': max_results}).fetchall()
+
+        keys = ['id', 'name', 'tabTitle', 'hostIp', 'port', 'status', 'outputfile', 'output']
+        for row in rows:
+            r = dict(zip(keys, row))
+            output = r.pop('output', '')
+            r.pop('outputfile', None)
+            hits, snippets = _extract_snippets(output, term_lower, max_snippets, snippet_len)
+            r['hit_count'] = hits
+            r['snippets'] = snippets
+            r['process_id'] = r.pop('id')
+            total_hits += hits
+            results.append(r)
+    finally:
+        session.close()
+
+    # Also search .live_output files for Running processes not yet in DB
+    matched_ids = {r['process_id'] for r in results}
+    wc = _wc()
+    for pid, proc_obj in list(getattr(wc, '_active_processes', {}).items()):
+        if pid in matched_ids:
+            continue
+        outputfile = getattr(proc_obj, 'outputfile', '') or ''
+        live_path = outputfile + '.live_output' if outputfile else ''
+        if not live_path or not os.path.isfile(live_path):
+            continue
+        try:
+            with open(live_path, 'r', encoding='ISO-8859-1', errors='replace') as _f:
+                content = _f.read()
+        except Exception:
+            continue
+        if term_lower not in content.lower():
+            continue
+        hits, snippets = _extract_snippets(content, term_lower, max_snippets, snippet_len)
+        results.append({
+            'process_id': pid,
+            'name': getattr(proc_obj, 'name', ''),
+            'tabTitle': getattr(proc_obj, 'tabTitle', ''),
+            'hostIp': getattr(proc_obj, 'hostIp', ''),
+            'port': getattr(proc_obj, 'port', ''),
+            'status': 'Running',
+            'hit_count': hits,
+            'snippets': snippets,
+        })
+        total_hits += hits
+
+    return jsonify({'query': term, 'results': results, 'total_hits': total_hits})
+
+
+def _extract_snippets(text, term_lower, max_snippets, snippet_len):
+    """Extract hit count and context snippets from text for a search term."""
+    text_lower = text.lower()
+    hits = 0
+    pos = 0
+    while True:
+        pos = text_lower.find(term_lower, pos)
+        if pos == -1:
+            break
+        hits += 1
+        pos += 1
+
+    snippets = []
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        if len(snippets) >= max_snippets:
+            break
+        if term_lower in line.lower():
+            snip = line.strip()
+            if len(snip) > snippet_len:
+                idx = snip.lower().find(term_lower)
+                start = max(0, idx - snippet_len // 3)
+                snip = ('…' if start > 0 else '') + snip[start:start + snippet_len] + '…'
+            snippets.append({'line': i + 1, 'text': snip})
+
+    return hits, snippets
+
+
 @web_bp.get("/api/screenshots")
 def serve_screenshot():
     """Serve a screenshot image by absolute path (query param avoids Flask path-stripping)."""
