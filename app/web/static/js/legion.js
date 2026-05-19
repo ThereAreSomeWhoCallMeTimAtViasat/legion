@@ -411,7 +411,10 @@ function highlightMatches(html) {
         var stripped = pattern.replace(/^ | $/g, '');
         if (!stripped) return;
         var htmlEscaped = stripped.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        var core    = htmlEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var escaped = htmlEscaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var TAG_OPT = '(?:</?span[^>]*>)*';
+        var tokens = escaped.match(/\\./g) ? escaped.match(/(\\.|[^\\])/g) : escaped.split('');
+        var core    = tokens.join(TAG_OPT);
         var prefix  = (pattern[0]                    === ' ') ? '(?<![\\w])' : '';
         var suffix  = (pattern[pattern.length - 1]   === ' ') ? '(?![\\w])'  : '';
         var re = new RegExp('(' + prefix + core + suffix + ')', 'g');
