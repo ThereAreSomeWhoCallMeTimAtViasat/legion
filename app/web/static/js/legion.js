@@ -1532,6 +1532,9 @@ function loadProcessOutput(processId, targetEl) {
             if (_procSearch.active && _procSearch.query) {
                 html = procSearchHighlight(html, _procSearch.query);
             }
+            if (searchBanner && matchBanner) {
+                matchBanner = matchBanner.replace('class="match-banner"', 'class="match-banner" style="top:26px"');
+            }
             html = searchBanner + matchBanner + html;
             if (proc && proc.status === 'Running' && text.length > 0) {
                 var elapsed = proc.elapsed_secs || 0;
@@ -1614,9 +1617,10 @@ function _matchNav(targetEl, processId, dir, selector) {
     var counter = targetEl.querySelector('.match-nav-counter');
     if (counter) counter.textContent = (idx + 1) + ' \u2044 ' + count;
     _matchNavState[processId] = {idx: idx};
-    /* Scroll the span into view inside targetEl, offset below the sticky banner */
-    var banner  = targetEl.querySelector('.match-banner');
-    var bannerH = banner ? banner.offsetHeight : 0;
+    /* Scroll the span into view, offset below all sticky banners */
+    var banners = targetEl.querySelectorAll('.match-banner');
+    var bannerH = 0;
+    banners.forEach(function(b) { bannerH += b.offsetHeight; });
     var spanTop = spans[idx].getBoundingClientRect().top
                 - targetEl.getBoundingClientRect().top;
     targetEl.scrollTop += spanTop - bannerH - 12;
