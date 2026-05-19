@@ -74,9 +74,8 @@
         </div>
     </div>
     <div class="menu-spacer"></div>
-    <span class="title" id="window-title">LEGION v10.258-flask – *untitled</span>
-    <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> F:<strong id="stat-finished">0</strong></span>
-    <span class="title" id="js-version" style="color:var(--disabled);font-size:8pt"></span>
+    <span class="title" id="window-title">LEGION v10.259 – *untitled</span>
+    <span class="title">H:<strong id="stat-hosts">0</strong> P:<strong id="stat-open-ports">0</strong> R:<strong id="stat-running">0</strong> W:<strong id="stat-waiting">0</strong> F:<strong id="stat-finished">0</strong></span>
     <span class="title" id="live-status">●</span>
 </div>
 
@@ -91,6 +90,7 @@
 <div class="tab-bar" id="main-tab-bar">
     <button class="tab-btn active" type="button" data-tab="scan-tab">Scan</button>
     <button class="tab-btn" type="button" data-tab="brute-tab">Brute</button>
+    <button id="gear-config-btn" type="button" title="Config Manager (F2)" style="padding:2px 7px;font-size:12pt;line-height:1;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--disabled);border-radius:3px;margin-left:4px">⚙</button>
     <!-- Tab nav arrows: centered between Brute tab and Font controls -->
     <div style="flex:1;display:flex;align-items:center;justify-content:center;gap:1px">
         <button id="right-tab-scroll-first" type="button" title="Jump to first output tab"  style="padding:0 5px;font-size:10pt;line-height:1">◀◀</button>
@@ -284,7 +284,7 @@
         <p style="color:#e8a838;font-size:11pt;margin-bottom:8px">AI Provider Not Configured</p>
         <p id="ai-config-error" style="color:var(--disabled);font-size:10pt;margin-bottom:12px"></p>
         <p style="color:var(--disabled);font-size:9pt">
-            Open <b>Config Manager</b> (gear icon) and set <code>[AISettings]</code>:<br>
+            Click the <b>⚙</b> button (or press F2) to open <b>Config Manager</b>, then set <code>[AISettings]</code>:<br>
             <code>ai_provider</code> = <b>anthropic</b> | <b>openai</b> | <b>vertex</b><br>
             <code>ai_api_key</code> = your API key (not needed for vertex)<br>
             <code>ai_model</code> = model name (e.g. claude-sonnet-4-6, gpt-4o)
@@ -527,8 +527,8 @@
 
 <!-- ========== STATUSBAR ========== -->
 <div id="statusbar">
-    <span class="path" id="project-output-folder"></span>
-    <span class="right"><span id="project-name">*untitled</span> | <span id="action-status">Idle</span> | <span id="workspace-status">Idle</span></span>
+    <span class="path">Output: <span id="project-output-folder"></span></span>
+    <span class="right">Project: <span id="project-name">*untitled</span> | Profile: <span id="stat-profile">default</span></span>
 </div>
 
 </div><!-- end #app -->

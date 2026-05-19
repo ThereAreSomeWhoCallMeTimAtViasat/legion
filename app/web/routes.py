@@ -161,6 +161,7 @@ def snapshot():
     tool_matches = {}
     processes = []
     running = 0
+    waiting = 0
     finished = 0
     import time as _time
     from datetime import datetime as _dt
@@ -186,10 +187,6 @@ def snapshot():
 
         if status == "Running":
             running += 1
-            # Use _start_wall (set in checkProcessQueue when the process actually
-            # begins executing) so elapsed reflects only execution time, not queue
-            # wait time.  Fall back to parsed startTime for processes started before
-            # this attribute was added.
             proc_obj = None
             try:
                 proc_obj = wc._active_processes.get(int(proc.get('id', -1)))
@@ -207,6 +204,9 @@ def snapshot():
                     except Exception:
                         pass
                 proc['elapsed_secs'] = int(_time.time() - start_ts) if start_ts else 0
+        elif status == "Waiting":
+            waiting += 1
+            proc['elapsed_secs'] = None
         else:
             finished += 1
             proc['elapsed_secs'] = None
@@ -240,6 +240,14 @@ def snapshot():
     _uptime_start = getattr(wc, '_scan_uptime_start', None)
     _uptime_end   = getattr(wc, '_scan_uptime_end',   None)
 
+    _active_prof = 'default'
+    try:
+        _af_path = os.path.expanduser('~/.local/share/legion/active_profile.txt')
+        with open(_af_path) as _af:
+            _active_prof = _af.read().strip() or 'default'
+    except Exception:
+        pass
+
     return jsonify({
         "hosts": hosts,
         "services": services,
@@ -247,7 +255,9 @@ def snapshot():
         "processes": processes,
         "summary": {"hosts": len(hosts), "open_ports": total_ports,
                      "services": len(services), "cves": 0,
-                     "running_processes": running, "finished_processes": finished},
+                     "running_processes": running, "waiting_processes": waiting,
+                     "finished_processes": finished,
+                     "active_profile": _active_prof},
         "project": {"name": getattr(logic.activeProject.properties, "projectName", "*untitled"),
                      "output_folder": getattr(logic.activeProject.properties, "outputFolder", ""),
                      "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True),
@@ -1917,20 +1927,23 @@ def ai_host_status(host_id):
     _, est_cost_enhanced = estimate_cost_enhanced(est_chars)
 
     # Provider configuration status
-    from app.ai.analyzer import _read_ai_config
+    from app.ai.analyzer import _read_ai_config, _find_adc_path
     try:
         ai_cfg = _read_ai_config()
         ai_provider = ai_cfg['provider']
         ai_model    = ai_cfg['model']
         if not ai_provider or ai_provider == 'none':
             ai_configured = False
-            ai_config_error = 'AI provider not configured. Set ai_provider in Config Manager → [AISettings].'
+            ai_config_error = 'AI provider not configured. Set ai_provider in Config Manager (⚙) → [AISettings].'
         elif ai_provider in ('anthropic', 'openai') and not ai_cfg['api_key']:
             ai_configured = False
-            ai_config_error = f'API key required for {ai_provider} provider. Set ai_api_key in Config Manager → [AISettings].'
+            ai_config_error = f'API key required for {ai_provider} provider. Set ai_api_key in Config Manager (⚙) → [AISettings].'
         elif ai_provider == 'vertex' and not ai_cfg['vertex_project_id']:
             ai_configured = False
-            ai_config_error = 'Vertex project ID required. Set ai_vertex_project_id in Config Manager → [AISettings].'
+            ai_config_error = 'Vertex project ID required. Set ai_vertex_project_id in Config Manager (⚙) → [AISettings], or run: gcloud config set project YOUR_PROJECT_ID'
+        elif ai_provider == 'vertex' and not _find_adc_path():
+            ai_configured = False
+            ai_config_error = 'GCP credentials not found. Run: gcloud auth application-default login'
         else:
             ai_configured = True
             ai_config_error = ''

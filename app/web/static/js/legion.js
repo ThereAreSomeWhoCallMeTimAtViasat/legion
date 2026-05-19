@@ -109,22 +109,15 @@ function markTabUnread(tabId) {
 var _VERSION = (function() {
     var el = document.getElementById('window-title');
     if (!el) return 'LEGION';
-    /* Initial text is "LEGION vX.Y-flask – *untitled" — take everything before the dash */
     var txt = el.textContent || el.innerText || '';
     var dash = txt.indexOf(' \u2013 ');
-    return dash > 0 ? txt.slice(0, dash).trim() : txt.split('–')[0].trim() || 'LEGION';
-})();
-
-/* Show JS cache-bust version in the title bar */
-(function() {
+    var base = dash > 0 ? txt.slice(0, dash).trim() : txt.split('\u2013')[0].trim() || 'LEGION';
     var scripts = document.querySelectorAll('script[src*="legion.js"]');
     if (scripts.length) {
         var m = scripts[0].src.match(/[?&]v=(\d+)/);
-        if (m) {
-            var el = document.getElementById('js-version');
-            if (el) el.textContent = 'js:' + m[1];
-        }
+        if (m) base += '-' + m[1];
     }
+    return base;
 })();
 
 /* ── State (mirrors ui/ViewState.py) ── */
@@ -140,6 +133,8 @@ var L = {
     _serviceViewActive: false,  /* true when cross-host service results shown in right panel */
     _hostProcSig: null,
     _nmapSig: null,
+    _activeProfile: 'default',
+    _projectName: '*untitled',
     _hostUnreadTabs: {},   /* hostId → {tabId: true} — persists orange indicators across host switches */
     _lastProcCount: 0,
     _pollCount: 0,
@@ -157,6 +152,11 @@ var L = {
     snapshot: null,
     version: 'v1.0-rewrite',
 };
+
+function _updateTitle() {
+    var prof = L._activeProfile && L._activeProfile !== 'default' ? ' [' + L._activeProfile + ']' : '';
+    setText('window-title', _VERSION + prof + ' – ' + L._projectName);
+}
 
 /* ── xterm.js terminal manager ──
    Manages the xterm.js instance in #terminal-output for Interactive processes.
@@ -816,9 +816,10 @@ function _drawProcesses() {
     });
 
     body.innerHTML = '';
-    var running = 0, finished = 0;
+    var running = 0, waiting = 0, finished = 0;
     sorted.forEach(function(p) {
         if (p.status === 'Running') running++;
+        else if (p.status === 'Waiting') waiting++;
         else finished++;
         /* Match-only filter (dropdown "★ Has Match" or Hide No-Match button) */
         if (filter === 'match' && !p.has_match) return;
@@ -865,6 +866,7 @@ function _drawProcesses() {
         body.appendChild(tr);
     });
     setText('stat-running', running);
+    setText('stat-waiting', waiting);
     setText('stat-finished', finished);
     setText('process-count', L.processes.length);
 
@@ -1210,9 +1212,6 @@ function loadHostDetail(hostId) {
            shows the project filename until the user explicitly clicks a host. */
         if (L._suppressTitleUpdate) {
             L._suppressTitleUpdate = false;
-        } else {
-            var title = host.ip + (host.hostname && host.hostname !== host.ip ? ' ('+host.hostname+')' : '');
-            setText('window-title', _VERSION + ' – ' + title);
         }
 
         /* Dynamic tool output tabs for this host */
@@ -2244,9 +2243,13 @@ function pollSnapshot() {
         renderServiceNames(snap.services || []);
         renderTools(snap.tools || []);
         renderProcesses(snap.processes || []);
-        setText('project-name', (snap.project||{}).name || '*untitled');
+        L._projectName = (snap.project||{}).name || '*untitled';
+        L._activeProfile = (snap.summary||{}).active_profile || 'default';
+        setText('project-name', L._projectName);
+        setText('stat-profile', L._activeProfile);
         setText('project-output-folder', (snap.project||{}).output_folder || '');
         setText('stat-open-ports', (snap.summary||{}).open_ports || 0);
+        _updateTitle();
 
         /* ── Dynamic right-panel refresh (Qt6: signal-driven, Flask: poll-driven) ──
            Three triggers that reload the right panel without requiring a host click:
@@ -2443,9 +2446,13 @@ document.addEventListener('DOMContentLoaded', function() {
         renderServiceNames(snap.services || []);
         renderTools(snap.tools || []);
         renderProcesses(snap.processes || []);
-        setText('project-name', (snap.project||{}).name || '*untitled');
+        L._projectName = (snap.project||{}).name || '*untitled';
+        L._activeProfile = (snap.summary||{}).active_profile || 'default';
+        setText('project-name', L._projectName);
+        setText('stat-profile', L._activeProfile);
         setText('project-output-folder', (snap.project||{}).output_folder || '');
         setText('stat-open-ports', (snap.summary||{}).open_ports || 0);
+        _updateTitle();
     } catch(e) { console.error('Initial snapshot parse error:', e); }
 
     /* Uptime clock ticks every second (smooth display without waiting for snapshot) */
@@ -2833,13 +2840,16 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     var configBtn = $('action-config');
-    if (configBtn) configBtn.addEventListener('click', function() {
+    var _openConfigManager = function() {
         setText('config-status', '');
         setText('easy-status', '');
         openModal('config-modal');
         cfgLoadProfiles();
         cfgFindShow();
-    });
+    };
+    if (configBtn) configBtn.addEventListener('click', _openConfigManager);
+    var gearBtn = $('gear-config-btn');
+    if (gearBtn) gearBtn.addEventListener('click', _openConfigManager);
     var configClose = $('config-close');
     if (configClose) configClose.addEventListener('click', function() {
         cfgFindHide();
@@ -2901,6 +2911,9 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(function() {
             setText('config-status', name + ' activated!');
             cfgState.active = name;
+            L._activeProfile = name;
+            setText('stat-profile', name);
+            _updateTitle();
             cfgLoadProfiles();
             reapplyLiveSettings();
         })
@@ -3969,7 +3982,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             postJson('/api/project/open', { path: path })
             .then(function() {
-                setText('window-title', _VERSION + ' – ' + path.split('/').pop());
+                L._projectName = path.split('/').pop();
+                _updateTitle();
                 /* Suppress the first auto-selected host from overwriting the
                    project name in the title. Cleared by loadHostDetail after
                    the first auto-select fires, so subsequent user clicks work. */
@@ -3988,7 +4002,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', _VERSION + ' – ' + path.split('/').pop()); })
+            .then(function() { L._projectName = path.split('/').pop(); _updateTitle(); })
             .catch(function(err) { alert('Save failed: ' + err.message); });
         });
     });
@@ -4000,7 +4014,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path) return;
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
-            .then(function() { setText('window-title', _VERSION + ' – ' + path.split('/').pop()); })
+            .then(function() { L._projectName = path.split('/').pop(); _updateTitle(); })
             .catch(function(err) { alert('Save As failed: ' + err.message); });
         });
     });
@@ -4080,7 +4094,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!path.endsWith('.legion')) path += '.legion';
             postJson('/api/project/save-as', { path: path })
                 .then(function() {
-                    setText('window-title', _VERSION + ' \u2013 ' + path.split('/').pop());
+                    L._projectName = path.split('/').pop();
+                    _updateTitle();
                     _doExit();
                 })
                 .catch(function(err) { alert('Save failed: ' + err.message); });
@@ -4718,7 +4733,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (newBtn) newBtn.addEventListener('click', function() {
         if (confirm('Create new project? Current data will be lost.')) {
             postJson('/api/project/new-temp', {}).then(function() {
-                setText('window-title', _VERSION + ' – *untitled');
+                L._projectName = '*untitled';
+                _updateTitle();
                 _clearAllUI();
                 pollSnapshot();
                 /* Belt-and-suspenders: re-clear output panels after one full snapshot

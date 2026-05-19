@@ -100,6 +100,18 @@ def _read_ai_config():
             vertex_reg = legacy['region']
             model      = legacy['model']
 
+    # Auto-detect Vertex project ID when provider is vertex but no
+    # project ID was set — check legacy config, then gcloud CLI
+    if provider == 'vertex' and not vertex_pid:
+        legacy = _read_legacy_vertex_config()
+        if legacy:
+            vertex_pid = legacy['project_id']
+            vertex_reg = legacy.get('region', vertex_reg)
+            if not model:
+                model = legacy['model']
+        if not vertex_pid:
+            vertex_pid = _read_gcloud_project_id()
+
     if not model:
         if provider == 'openai':
             model = 'gpt-4o'
@@ -138,6 +150,38 @@ def _read_legacy_vertex_config():
         }
     except Exception:
         return None
+
+
+def _read_gcloud_project_id():
+    """Try to read the default GCP project from gcloud CLI config."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['gcloud', 'config', 'get-value', 'project'],
+            capture_output=True, text=True, timeout=5,
+        )
+        val = result.stdout.strip()
+        if val and val != '(unset)':
+            return val
+    except Exception:
+        pass
+    return ''
+
+
+def _find_adc_path():
+    """Return the path to GCP ADC credentials file, or '' if not found."""
+    explicit = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
+    if explicit and os.path.exists(explicit):
+        return explicit
+    sudo_user = os.environ.get('SUDO_USER')
+    if sudo_user:
+        p = f'/home/{sudo_user}/.config/gcloud/application_default_credentials.json'
+        if os.path.exists(p):
+            return p
+    p = os.path.expanduser('~/.config/gcloud/application_default_credentials.json')
+    if os.path.exists(p):
+        return p
+    return ''
 
 
 class _OpenAIAdapter:

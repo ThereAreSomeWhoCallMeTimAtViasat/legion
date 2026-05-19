@@ -17,7 +17,7 @@
 - Host is always the key — never mix data from different hosts in views
 - Version number must be bumped in `index.html` with every change set, BEFORE restarting server
 - Stay on version 10.x until user says go to 11
-- Version bump format: `LEGION v10.X-flask` — increment the point version each fix/feature
+- Version bump format: `LEGION v10.X` — increment the point version each fix/feature
 - Static asset cache buster in `base.html` (`?v=N`) — bump when CSS or JS changes
 
 ## Cost Management Strategy
@@ -45,8 +45,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.258-flask
-- **Static asset cache:** CSS `?v=94`, JS `?v=138` in `base.html`
+- **Current Flask version:** v10.259
+- **Static asset cache:** CSS `?v=94`, JS `?v=139` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 - **Default config:** `legion.conf` ships with scan-medium (120 tools) + Vertex AI; `masterLegion.conf` is the full 179-tool baseline with ai_provider=none
 
@@ -307,6 +307,7 @@ Called automatically from `start()` on every project open/create:
 - **v10.256**: 4 test fixes: test_save_open_data match keyword changed from removed `tcp open` to stable `200 OK`; test_escape_hides_find_bar updated for v10.221 always-visible find bar (assert input cleared not bar hidden); test_phase4_state H1.1 scan window 1000→2500 chars; waybackurls test uses `--help` instead of pipe.
 - **v10.257**: Scan speed profiles — 3 shipped profiles controlling scheduler auto-triggers: `scan-fast.conf` (74 tools — screenshots, CVE checks, default creds, key enum, one dir bruter), `scan-medium.conf` (120 tools — adds multiple dir bruters, most nuclei categories, web scanners, deeper AD/LDAP/SMB), `scan-extensive.conf` (179 tools — everything, identical to masterLegion.conf). All share identical non-SchedulerSettings sections. Auto-copied to user profiles dir via `_ensure_profiles()`. 12 new tests: files exist, subset chain (fast ⊂ medium ⊂ extensive), extensive = master, non-scheduler sections identical.
 - **v10.258**: `legion.conf` (the default shipped config) now uses scan-medium (120 scheduler tools) + Vertex AI (`ai_provider=vertex`, `ai_model=claude-sonnet-4-6`). `masterLegion.conf` unchanged as full 179-tool baseline with `ai_provider=none`. `--reset-conf` restores from master. Users switch tiers via Config Manager profile dropdown.
+- **v10.259**: (1) Vertex AI auto-detection — `_read_ai_config()` auto-detects `vertex_project_id` from legacy `~/.claude/settings.json` and `gcloud config get-value project` when blank; status endpoint checks ADC file existence (`_find_adc_path()`). (2) Gear icon (⚙) button next to Brute tab opens Config Manager (same as F2). (3) Title bar redesigned: removed `-flask` and IP/OS; shows `LEGION v10.259-139 [profile] – project`; JS cache buster appended with dash. (4) `W:` (waiting processes) added to status bar alongside H/P/R/F. (5) `active_profile` + `waiting_processes` added to `/api/snapshot` summary. (6) `_updateTitle()` helper centralises all title updates; profile activation updates title immediately.
 
 ---
 

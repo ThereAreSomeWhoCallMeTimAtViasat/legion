@@ -590,7 +590,7 @@ if __name__ == "__main__":
         import re as _re, os as _os
         _idx = _os.path.join(_os.path.dirname(__file__), 'app/web/templates/index.html')
         try:
-            _m = _re.search(r'LEGION (v[\d.]+-flask)', open(_idx).read())
+            _m = _re.search(r'LEGION (v[\d.]+)', open(_idx).read())
             _ver = _m.group(1) if _m else 'v??'
         except Exception:
             _ver = 'v??'
