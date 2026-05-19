@@ -1669,10 +1669,17 @@ function procSearchClear() {
     if (countEl) countEl.textContent = '';
     if (clearBtn) clearBtn.style.display = 'none';
     renderProcesses(L.processes);
-    var plain = $('plain-output');
-    if (plain && plain._searchHighlighted) {
-        plain._searchHighlighted = false;
-    }
+    /* Strip cyan highlights and search banner from all output panels */
+    document.querySelectorAll('.search-match').forEach(function(s) {
+        s.outerHTML = s.innerHTML;
+    });
+    document.querySelectorAll('.match-banner[style*="#068"]').forEach(function(b) {
+        b.remove();
+    });
+    /* Reset offset of match banner that was pushed down for dual-banner layout */
+    document.querySelectorAll('.match-banner[style*="top:26px"]').forEach(function(b) {
+        b.style.top = '';
+    });
 }
 
 function procSearchHighlight(html, query) {
