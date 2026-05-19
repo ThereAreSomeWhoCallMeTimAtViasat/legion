@@ -3085,7 +3085,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         var SECTIONS = [
-            'GeneralSettings','BruteSettings','ToolSettings','StagedNmapSettings',
+            'GeneralSettings','BruteSettings','ToolSettings','AISettings','StagedNmapSettings',
             'HostActions','PortActions','PortTerminalActions','SchedulerSettings','MatchSettings'
         ];
 
@@ -3120,6 +3120,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 {key:'cutycapt-path',    type:'text', label:'CutyCapt Path'},
                 {key:'texteditor-path',  type:'text', label:'Text Editor Path'},
                 {key:'pyshodan-api-key', type:'text', label:'pyShodan API Key'},
+            ],
+            AISettings: [
+                {key:'ai_provider',          type:'enum', label:'AI Provider',
+                 options:['none','anthropic','openai','vertex']},
+                {key:'ai_api_key',           type:'text', label:'API Key'},
+                {key:'ai_model',             type:'text', label:'Model'},
+                {key:'ai_api_url',           type:'text', label:'API URL (OpenAI-compatible endpoint)'},
+                {key:'ai_vertex_project_id', type:'text', label:'Vertex Project ID'},
+                {key:'ai_vertex_region',     type:'text', label:'Vertex Region'},
             ],
         };
 
