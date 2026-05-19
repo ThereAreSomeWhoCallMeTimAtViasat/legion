@@ -611,12 +611,12 @@ if __name__ == "__main__":
         import re as _re, os as _os
         _idx = _os.path.join(_os.path.dirname(__file__), 'app/web/templates/index.html')
         try:
-            _m = _re.search(r'LEGION (v[\d.]+)', open(_idx).read())
+            _m = _re.search(r'LegionnAIre (v[\d.]+)', open(_idx).read())
             _ver = _m.group(1) if _m else 'v??'
         except Exception:
             _ver = 'v??'
         _port = args.port
-        print(f"LEGION {_ver} — web UI starting at http://127.0.0.1:{_port}")
+        print(f"LegionnAIre {_ver} — web UI starting at http://127.0.0.1:{_port}")
 
         # Open a new Firefox window after Flask has had 1.5 s to bind.
         # Using --new-window guarantees a fresh window rather than a new tab
