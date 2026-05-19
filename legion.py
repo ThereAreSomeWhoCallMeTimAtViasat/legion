@@ -512,6 +512,27 @@ if __name__ == "__main__":
                 sys.exit(1)
             print(f"Project opened: {os.path.basename(_open_path)}")
 
+        # --input-file: read targets and queue them for scanning after server starts
+        from app.validation import validateNmapInput
+        _input_targets = []
+        if args.input_file:
+            _inf = os.path.abspath(args.input_file)
+            if not os.path.isfile(_inf):
+                print(f"Error: input file not found: {_inf}", file=sys.stderr)
+                sys.exit(1)
+            with open(_inf, 'r', encoding='utf-8', errors='ignore') as _f:
+                for _line in _f:
+                    _t = _line.strip()
+                    if _t and not _t.startswith('#'):
+                        if validateNmapInput(_t):
+                            _input_targets.append(_t)
+                        else:
+                            print(f"Warning: skipping invalid target: {_t!r}")
+            if _input_targets:
+                print(f"Loaded {len(_input_targets)} target(s) from {os.path.basename(_inf)}")
+            else:
+                print(f"Warning: no valid targets found in {_inf}")
+
         # Create Flask app
         app = Flask(__name__,
                     template_folder='app/web/templates',
@@ -709,6 +730,23 @@ if __name__ == "__main__":
         if not args.no_browser:
             import threading as _threading
             _threading.Timer(0.5, _open_browser).start()   # 0.5s: Flask binds in <100ms
+
+        if _input_targets:
+            import threading as _threading_inp
+            def _auto_scan_targets():
+                import time as _t
+                _t.sleep(2)
+                for _target in _input_targets:
+                    print(f"[input-file] Scanning: {_target}")
+                    wc.addHosts(
+                        targetHosts=_target,
+                        runHostDiscovery=True,
+                        runStagedNmap=True,
+                        nmapSpeed='4',
+                        scanMode='Easy',
+                    )
+                print(f"[input-file] All {len(_input_targets)} target(s) queued.")
+            _threading_inp.Thread(target=_auto_scan_targets, daemon=True).start()
 
         import logging as _logging_setup
         _logging_setup.getLogger('werkzeug').setLevel(_logging_setup.ERROR)
