@@ -1518,7 +1518,7 @@ function loadProcessOutput(processId, targetEl) {
                 + (_sr2 ? ' \u2014 ' + _sr2.hit_count + ' hits' : '')
                 + '<span class="match-nav">'
                 + '<button type="button" class="search-prev" title="Previous search hit">\u25b2</button>'
-                + '<span class="match-nav-counter"></span>'
+                + '<span class="search-nav-counter"></span>'
                 + '<button type="button" class="search-next" title="Next search hit">\u25bc</button>'
                 + '</span></div>';
         }
@@ -1565,12 +1565,12 @@ function loadProcessOutput(processId, targetEl) {
             var _sprev = targetEl.querySelector('.search-prev');
             var _snext = targetEl.querySelector('.search-next');
             if (_sprev) _sprev.addEventListener('click', function(e) {
-                e.stopPropagation(); _matchNav(targetEl, processId, -1, '.search-match');
+                e.stopPropagation(); _matchNav(targetEl, processId, -1, '.search-match', '.search-nav-counter');
             });
             if (_snext) _snext.addEventListener('click', function(e) {
-                e.stopPropagation(); _matchNav(targetEl, processId, +1, '.search-match');
+                e.stopPropagation(); _matchNav(targetEl, processId, +1, '.search-match', '.search-nav-counter');
             });
-            _matchNavInit(targetEl, processId, '.search-match');
+            _matchNavInit(targetEl, processId, '.search-match', '.search-nav-counter');
         }
         /* Restore scroll position after the innerHTML reflow. */
         if (atBottom) {
@@ -1591,32 +1591,38 @@ function loadProcessOutput(processId, targetEl) {
    _matchNavInit  — re-highlights current span, updates counter, no scroll.
    _matchNav      — moves index, re-highlights, scrolls span into view.
    ─────────────────────────────────────────────────────────────────── */
-function _matchNavInit(targetEl, processId, selector) {
-    var spans = targetEl.querySelectorAll(selector || '.match-positive');
-    var counter = targetEl.querySelector('.match-nav-counter');
+function _matchNavInit(targetEl, processId, selector, counterSel) {
+    selector = selector || '.match-positive';
+    counterSel = counterSel || '.match-nav-counter';
+    var spans = targetEl.querySelectorAll(selector);
+    var counter = targetEl.querySelector(counterSel);
+    var stateKey = processId + (selector === '.match-positive' ? '' : selector);
     if (!spans.length) {
         if (counter) counter.textContent = '0 \u2044 0';
         return;
     }
-    var state  = _matchNavState[processId];
+    var state  = _matchNavState[stateKey];
     var idx    = state ? Math.min(state.idx, spans.length - 1) : 0;
     spans.forEach(function(s) { s.classList.remove('match-current'); });
     spans[idx].classList.add('match-current');
     if (counter) counter.textContent = (idx + 1) + ' \u2044 ' + spans.length;
-    _matchNavState[processId] = {idx: idx};
+    _matchNavState[stateKey] = {idx: idx};
 }
 
-function _matchNav(targetEl, processId, dir, selector) {
-    var spans = Array.from(targetEl.querySelectorAll(selector || '.match-positive'));
+function _matchNav(targetEl, processId, dir, selector, counterSel) {
+    selector = selector || '.match-positive';
+    counterSel = counterSel || '.match-nav-counter';
+    var stateKey = processId + (selector === '.match-positive' ? '' : selector);
+    var spans = Array.from(targetEl.querySelectorAll(selector));
     if (!spans.length) return;
-    var state  = _matchNavState[processId] || {idx: 0};
+    var state  = _matchNavState[stateKey] || {idx: 0};
     var count  = spans.length;
     var idx    = ((state.idx + dir) % count + count) % count;
     spans.forEach(function(s) { s.classList.remove('match-current'); });
     spans[idx].classList.add('match-current');
-    var counter = targetEl.querySelector('.match-nav-counter');
+    var counter = targetEl.querySelector(counterSel);
     if (counter) counter.textContent = (idx + 1) + ' \u2044 ' + count;
-    _matchNavState[processId] = {idx: idx};
+    _matchNavState[stateKey] = {idx: idx};
     /* Scroll the span into view, offset below all sticky banners */
     var banners = targetEl.querySelectorAll('.match-banner');
     var bannerH = 0;
