@@ -322,9 +322,11 @@ ssh, ftp, mysql, psql, mssql, telnet, netcat, redis-cli, rdesktop, vncviewer, ev
 
 ## Requirements
 
+**Recommended platform:** Kali Linux — either a VM (VMware/VirtualBox/Hyper-V) or Kali in WSL2. The installer handles everything on Kali. Ubuntu 22.04+ also works but requires more manual tool installation.
+
 | Requirement | Minimum | Notes |
 |---|---|---|
-| **OS** | Kali Linux 2024.1+ | Ubuntu 22.04+ also works; Kali has most tools pre-installed |
+| **OS** | Kali Linux 2024.1+ | VM or WSL2; Ubuntu 22.04+ also works but Kali has most tools pre-installed |
 | **Python** | 3.10+ | 3.11–3.13 tested |
 | **Firefox ESR** | any recent | Opened automatically by `--web`; geckodriver needed for Selenium tests |
 | **sudo / root** | required | nmap, masscan, and several schedulers need raw socket access |
@@ -611,180 +613,44 @@ and retries up to three times.
 
 ---
 
-## Installation — Docker
+## Installation — Kali WSL2 (Windows users)
 
-Docker gives you LegionnAIre plus all tools in a self-contained image. Scanning still works — the container gets the same raw socket capabilities as the host via `--cap-add`.
-
-> **WSL users:** If you are running Kali in WSL2, skip Docker and install
-> directly with `sudo bash install.sh` — it is simpler and avoids the
-> networking limitations described in [Docker on WSL](#docker-on-wsl) below.
-> Docker is most useful on non-Kali systems (Ubuntu desktop, macOS, CI)
-> where you don't want to install 50 security tools on the host.
-
-### Option A — Docker Compose (easiest)
+The recommended way to run LegionnAIre on Windows is Kali Linux in WSL2 — no Docker needed, no VM overhead, full scanning capability.
 
 ```bash
-# Use flask-clean-prod for stable, or flask-clean for development
-sudo git clone --branch flask-clean-prod \
-    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
-cd legion
+# 1. Install Kali WSL2 from Microsoft Store, or:
+#    wsl --install -d kali-linux
 
-# Build the image (takes 5–15 minutes; downloads all tools)
-sudo docker compose build
-
-# Start LegionnAIre in the background
-sudo docker compose up -d
-
-# Follow the logs
-sudo docker compose logs -f
-
-# Open in browser:  http://127.0.0.1:5000
-```
-
-**Stop:**
-```bash
-sudo docker compose down           # stop and remove container (keeps volumes)
-sudo docker compose down -v        # also remove volumes (deletes saved projects)
-```
-
-**Custom port:**
-```bash
-LEGION_PORT=8080 sudo docker compose up -d
-# Open http://127.0.0.1:8080
-```
-
-**Mount a host directory for project files:**
-```bash
-LEGION_PROJECTS_DIR=/home/kali/legion-projects sudo docker compose up -d
-# Save/open .legion files from /home/kali/legion-projects inside the app
-```
-
-### Option B — Docker manual (full control)
-
-```bash
-# Build
-sudo docker build -t legion .
-
-# Run — attach to host network so scans reach LAN targets
-sudo docker run -d \
-  --name legion \
-  --network host \
-  --cap-add NET_ADMIN \
-  --cap-add NET_RAW \
-  -v legion-config:/root/.local/share/legion \
-  -v legion-tmp:/tmp/legion \
-  legion
-
-# Logs
-sudo docker logs -f legion
-
-# Open http://127.0.0.1:5000 in your browser
-
-# Stop
-sudo docker stop legion && sudo docker rm legion
-```
-
-**Custom port:**
-```bash
-sudo docker run -d --name legion \
-  --network host --cap-add NET_ADMIN --cap-add NET_RAW \
-  -v legion-config:/root/.local/share/legion \
-  legion --port 8080
-# Open http://127.0.0.1:8080
-```
-
-**Save projects to a host directory:**
-```bash
-sudo docker run -d --name legion \
-  --network host --cap-add NET_ADMIN --cap-add NET_RAW \
-  -v legion-config:/root/.local/share/legion \
-  -v /home/kali/legion-projects:/projects \
-  legion
-# Files saved via File → Save As appear in /home/kali/legion-projects/
-```
-
-**Open a shell inside the container:**
-```bash
-sudo docker exec -it legion bash
-```
-
-### Docker — verify from a clean image
-
-This builds from scratch on a fresh Kali image and runs the install verification tests:
-
-```bash
-sudo docker build --no-cache -f Dockerfile.test -t legion-test .
-sudo docker run --rm legion-test
-# Expected: 22 passed, 71 skipped
-# (tool binary tests skip inside Docker — they run on the host)
-```
-
-### Docker on WSL
-
-There are two ways to run Docker on WSL2, and they behave differently for
-LegionnAIre's network scanning:
-
-#### Docker Engine inside the WSL distro (works)
-
-Install Docker Engine natively inside your Kali WSL2 distro. `--network host`
-works correctly — the container shares the WSL2 VM's network namespace, so
-nmap and masscan can scan your LAN.
-
-**Prerequisites** — WSL2 Kali does not ship with systemd or the right iptables
-backend, so two things must be fixed first:
-
-```bash
-# 1. Enable systemd (required for dockerd to start as a service)
-#    Add to /etc/wsl.conf:
-echo -e '[boot]\nsystemd=true' | sudo tee -a /etc/wsl.conf
-
-# 2. Restart WSL from PowerShell:
-#    wsl --shutdown
-#    (then relaunch Kali)
-
-# 3. Switch to iptables-legacy (Docker does not work with nftables)
-sudo update-alternatives --set iptables /usr/sbin/iptables-legacy
-
-# 4. Install Docker
-sudo apt update && sudo apt install -y docker.io docker-compose-v2
-
-# 5. Clone and run LegionnAIre
-sudo git clone --branch flask-clean-prod \
-    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
-cd legion
-sudo docker compose up -d
-
-# Open http://127.0.0.1:5000 in your Windows browser
-```
-
-#### Docker Desktop for Windows with WSL integration (limited)
-
-Docker Desktop uses WSL2 as its backend, but `--network host` does **not**
-give true host networking on Windows — this is a known Docker Desktop
-limitation. The container gets its own network namespace. Port 5000 will be
-accessible (the web UI works), but **scanning LAN targets from inside the
-container will fail** because the container cannot send raw packets to your
-physical network.
-
-If you already have Docker Desktop, LegionnAIre's web UI will work for importing
-existing nmap XML files and reviewing saved projects — but live scanning
-requires either the native install or Docker Engine inside WSL (above).
-
-#### Recommendation for WSL users
-
-For a clean Kali WSL2 install, **skip Docker entirely** and install directly:
-
-```bash
+# 2. Inside Kali:
 sudo git clone --branch flask-clean-prod \
     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
 cd legion
 sudo bash install.sh
+
+# 3. Start LegionnAIre
 sudo python3 legion.py --web --no-browser
 # Open http://127.0.0.1:5000 in your Windows browser
 ```
 
-Use `--no-browser` because WSL2 without WSLg has no GUI. If you have WSLg
-(Windows 11 22H2+), Firefox will open automatically without the flag.
+Use `--no-browser` because WSL2 without WSLg has no GUI. If you have WSLg (Windows 11 22H2+), Firefox will open automatically without the flag.
+
+---
+
+## Installation — Docker (alternative)
+
+A `Dockerfile` and `docker-compose.yml` are included for users who prefer containers. Docker is most useful on non-Kali systems (Ubuntu desktop, macOS, CI) where you don't want to install security tools on the host.
+
+> **Note:** For Kali VM or WSL2 users, the native install above is simpler and avoids Docker networking limitations.
+
+```bash
+sudo git clone --branch flask-clean-prod \
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+cd legion
+sudo docker compose build && sudo docker compose up -d
+# Open http://127.0.0.1:5000
+```
+
+See the `Dockerfile` and `docker-compose.yml` for full options (custom port via `LEGION_PORT`, project directory mount via `LEGION_PROJECTS_DIR`, `--cap-add NET_ADMIN` for raw socket scanning).
 
 ---
 
