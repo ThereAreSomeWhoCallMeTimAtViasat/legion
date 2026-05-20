@@ -2,20 +2,25 @@
 
 ![LegionnAIre main interface](gifs/shots/hero_full.png)
 
+![Title bar detail — version, profile, gear button, H/P/R/W/F counters](gifs/shots/hero_titlebar_zoomed.png)
+
 ---
 
 ## What is LegionnAIre?
 
 LegionnAIre is an open source, semi-automated network penetration testing framework for discovery, reconnaissance, and exploitation. It is a fork of [Legion](https://github.com/GoVanguard/legion), which was itself a fork of [Sparta](https://github.com/SECFORCE/sparta) — a tool that has been in active pentest use since 2015.
 
-The core workflow is the same as it has always been:
+The core workflow is the same but enhanced:
 
-1. **Add targets** — IPs, CIDRs, hostnames, or ranges. LegionnAIre adds them to scope.
+1. **Add targets** — IPs, CIDRs, hostnames, ranges, or a file of targets. LegionnAIre adds them to scope.
 2. **Scan** — nmap runs staged port scans across your targets. Services are identified and versioned.
-3. **Auto-attack** — the scheduler fires the right tool for each discovered service automatically. HTTP gets feroxbuster, nuclei, gobuster. SSH gets ssh-audit. SMB gets netexec and enum4linux-ng. And so on.
-4. **Investigate** — browse results by host: open ports, service versions, CVEs, NSE script output, screenshots, and tool output all in one place.
-5. **Exploit** — right-click any host or port for a context menu of targeted tools. Open an interactive terminal. Run Hydra against authentication services from the Brute tab.
-6. **Document** — notes per host with Ctrl+B terminal capture, scan commands auto-logged, AI-generated attack plans.
+3. **Auto-Enumerate** — 179 scheduler rules across 80+ preconfigured tools fire automatically on service discovery. HTTP gets feroxbuster, nuclei, gobuster. SSH gets ssh-audit. SMB gets netexec and enum4linux-ng. And so on — zero manual configuration needed.
+4. **Investigate** — browse results by host: open ports, service versions, CVEs, NSE script output, screenshots, and tool output all in one place. **Search all output** with Ctrl+Shift+F across every tool in the project.
+5. **Analyze with AI** — connect to any LLM (Claude, Gemini, GPT-4, or local models). The AI synthesizes all findings, recommends additional tools to fill coverage gaps (you approve each command), and generates an actionable attack plan. Export as a standalone HTML report.
+6. **Document** — notes per host with Ctrl+B terminal capture (ANSI colour preserved), scan commands auto-logged, AI-generated attack plan reports.
+7. **Exploit** — right-click any host or port for a context menu of targeted tools. Open an interactive terminal embedded in the browser — output is captured to the database alongside all other results. Run Hydra against authentication services from the Brute tab.
+
+Everything — every tool's output, every screenshot, every CVE, every note, every AI analysis — lives in a **single SQLite database** per project. Save, reopen, and pick up exactly where you left off.
 
 ### What the original Legion did — and still does
 
@@ -28,10 +33,10 @@ These are the foundational capabilities inherited from Sparta/Legion and fully p
 - **CPE and CVE detection** — Vulners NSE runs against every discovered service; CVEs are stored per host with severity and ExploitDB cross-references.
 - **Integrated screenshotting** — EyeWitness captures web service screenshots automatically on HTTP/HTTPS discovery.
 - **Hydra brute forcing** — the Brute tab targets FTP, SSH, MySQL, PostgreSQL, VNC, Telnet, and more with configurable wordlists.
-- **nmap XML import** — import existing scan results without re-scanning. All parsed data (hosts, ports, services, scripts) loads into the project database.
+- **Nmap XML import** — import existing scan results without re-scanning. All parsed data (hosts, ports, services, scripts) loads into the project database.
 - **IPv6 support** — full IPv6 scanning with automatic fallback when connectivity is unavailable.
 - **Project save and restore** — SQLite-backed sessions save all results, notes, process history, screenshots, and tool output. Pick up exactly where you left off.
-- **Extensible tool configuration** — `legion.conf` defines every host action, port action, and scheduled tool. Add your own scripts with `[IP]`, `[PORT]`, and `[OUTPUT]` placeholders. No code changes required.
+- **Extensible tool configuration** — `legion.conf` defines every host action, port action, and scheduled tool. Add your own scripts with `[IP]`, `[PORT]`, and `[OUTPUT]` placeholders. No code changes required. LegionnAIre adds: a GUI config manager with **multiple profiles**, **syntax validation**, and **Easy Edit mode** so you never have to hand-edit the raw conf file.
 
 ---
 
@@ -41,7 +46,7 @@ I've always liked Legion. The classic layout with hosts on the left, tabbed deta
 
 Since the main branch was moving to Flask, I rewrote the classic interface as a Flask web app. The layout is very close to the original. The keyboard shortcuts, tab structure, and process model are the same. The underlying Python scanning engine (`controller.py`, `logic.py`, the SQLAlchemy ORM, the staged nmap pipeline) is unchanged — I just replaced every Qt widget with its HTML equivalent, polled with a 1.5-second snapshot API instead of Qt signals, and ran the whole thing in a browser.
 
-While I was in there I added the things I'd always wanted: Interactive terminals, AI host analysis (Anthropic Claude, Google Gemini, OpenAI, or local models), tool keyword match highlighting with navigation arrows, better note taking, parallel nmap stages, a config GUI so you don't have to hand-edit `legion.conf`, and several other UI features. There is a full selenium test suite for developers.  The name **LegionnAIre** reflects the AI addition and its Legion roots.
+While I was in there I added the things I'd always wanted: embedded interactive terminals whose output is captured to the project database, AI host analysis with human-in-the-loop tool enumeration (Anthropic Claude, Google Gemini, OpenAI, or local models via ollama), real-time keyword match highlighting across all tool output with navigation arrows, global search across every process output in the database, enhanced note-taking with ANSI colour preservation, parallel nmap stages, 80+ preconfigured tools that auto-install, config migration so updates don't overwrite your customizations, a config GUI so you don't have to hand-edit `legion.conf`, and a 675-test Selenium suite for developers. The name **LegionnAIre** reflects the AI addition and its Legion roots.
 
 ---
 
@@ -49,31 +54,48 @@ While I was in there I added the things I'd always wanted: Interactive terminals
 
 ### Core scanning
 - **Parallel staged nmap** — stages 1–5 (port ranges) run simultaneously; stage 6 (NSE/vulners) runs after all stages finish against every discovered open port
-- **182 tools auto-scheduled** on service discovery — feroxbuster, gobuster, nuclei (40 template categories), netexec (18 modules), enum4linux-ng, ssh-audit, testssl, and more
+- **80+ tools, 179 auto-trigger rules** — all tool binaries are auto-installed by `install.sh`. The scheduler fires the right tool for each discovered service with zero manual configuration. Includes feroxbuster, gobuster, nuclei (40 template categories), netexec (18 modules), enum4linux-ng, ssh-audit, testssl, and more.
 - **Live output streaming** — output appears in real time as tools run; progress % for nmap via `--stats-every 5s`
-- **Keyword match highlighting** — set search terms in Settings; matching lines turn orange in tool output; ▲/▼ arrows navigate between hits
+- **Keyword match highlighting** — configure match keywords in Settings; every line of every tool's output is scanned in real time. Matches turn orange with ▲/▼ navigation arrows
+- **Global output search** — Ctrl+Shift+F searches all stored process output across every tool for any keyword. Matching processes are highlighted with cyan hit counts; click a result to see the output with cyan highlights and ▲/▼ navigation
+- **Single unified database** — all tool output, CVEs, NSE scripts, screenshots, notes, match highlights, process history, and AI analyses stored in one SQLite file per project
+- **Arrow-key navigation** — Up/Down arrow keys move between rows in any table (hosts, services, processes, tools, OS, scripts)
 
 ![Services and ports panel](gifs/shots/services_annotated.png)
+
+![Services panel detail — port list with state and version](gifs/shots/services_zoomed.png)
 
 ### Web interface
 - Runs in any browser at `http://127.0.0.1:PORT` — works locally or over SSH port forwarding with no X11 needed
 - Layout identical to the original Legion/LegionnAIre desktop app: host list left, tabbed panels right, process list bottom
 - **All splitters draggable** with saved position; **font size controls** for upper and lower panels independently
-- **Sticky process table header**, scrollable tab bar, context menus that stay in viewport
-- Opens Firefox automatically on start with a dedicated isolated profile
+- **Sticky process table header**, scrollable tab bar with ◀▶ scroll arrows, context menus that stay in viewport
+- **⚙ gear button** next to Brute tab opens Config Manager (same as F2)
+- **Status bar** shows H: (hosts) P: (ports) R: (running) W: (waiting) F: (finished) counters; bottom bar shows Output path, Project name, and active Profile
+- **Multithreaded process control** — configurable concurrency limits for fast tools and slow tools (nmap) independently; queue management, process timeout, kill/restart from the UI
+- Opens Firefox automatically on start with a dedicated isolated profile; `--input-file targets.txt` auto-scans targets from a file on startup
 
 ![Process output with ANSI colour](gifs/shots/output_annotated.png)
 
+![Process filter bar detail — search input, status filter, match/hide controls](gifs/shots/output_filter_zoomed.png)
+
 ### AI host analysis (multi-provider)
 - **Phase 1 — Synthesizer**: reads all tool output, NSE scripts, CVEs, and analyst notes for a host; extracts a structured findings table (severity-coded Critical/High/Medium/Low/Info)
-- **Phase 2 — Attack Planner**: on-demand; takes Phase 1 findings as input and produces a specific, actionable attack plan with exact commands
+- **Automated gap analysis** — after Phase 1, the AI recommends additional tools to fill coverage gaps. **You review and approve each command** before it runs (human-in-the-loop). Re-synthesis with enriched data produces more complete findings
+- **Phase 2 — Attack Planner**: on-demand; takes Phase 1 findings (including gap-fill results) as input and produces a specific, actionable attack plan with exact commands
+- **Attack plan reports** — export a self-contained HTML report with Phase 1 findings table (sortable by severity/port), Phase 2 attack plan, and enumeration commands run. Standalone file — no server needed to view
 - **Persistent history DB** at `~/.local/share/legion/ai_history.db` — analyses survive project switches; Jaccard similarity matching shows historical hosts that look like the current target (≥95% match on port/service/version fingerprint)
-- **Three provider backends** — configure in `legion.conf` `[AISettings]`:
+- **↻ Refresh button** — re-reads AI config without leaving the tab; Vertex AI project ID auto-detected from gcloud CLI
+- **Five provider options** — configure in `legion.conf` `[AISettings]` or use pre-built profiles:
   - **Anthropic** — direct API key auth (`api.anthropic.com`)
-  - **Google Vertex AI** — Claude on GCP via Application Default Credentials
-  - **OpenAI-compatible** — works with OpenAI, Google Gemini, Azure OpenAI, ollama, vLLM, LM Studio, or any provider that speaks the OpenAI chat completions API
+  - **Google Vertex AI** — Claude on GCP via Application Default Credentials (auto-detected)
+  - **OpenAI** — GPT-4o, o3-mini, or any OpenAI model
+  - **Google Gemini** — via OpenAI-compatible endpoint (free tier available)
+  - **Local models** — ollama, vLLM, LM Studio, or any OpenAI-compatible server (free, runs on your GPU)
 
 ![AI tab — Phase 1 findings table and Phase 2 attack plan](gifs/shots/ai_annotated.png)
+
+![AI toolbar detail — Analyze, Attack Advice, Re-analyze, Export, ↻ Refresh, provider badge](gifs/shots/ai_toolbar_zoomed.png)
 
 ### Interactive terminals (xterm.js)
 
@@ -84,38 +106,54 @@ Right-click any host → **Open Terminal** to get a full PTY session embedded di
 - **Full PTY** — readline, tab completion, colour, cursor movement, scrollback all work exactly as in a real terminal
 - **ANSI colour preserved** — the Kali bash prompt, `ls` colour coding, tool output highlights all render correctly
 - **Ctrl+B to capture** — select any output in the terminal, press Ctrl+B, and it lands in the host's Notes tab with colour intact
-- **Saved on project close** — terminal history is written to the project database so it survives save/open cycles
+- **Output captured to database** — terminal history is written to the project SQLite DB on save/close, so it persists across sessions and is searchable via global search (Ctrl+Shift+F). Interactive scripts run inside the GUI produce output that is treated the same as any other tool — stored, searchable, included in AI analysis
 - **Multiple sessions** — each Interactive process gets its own tab in the upper output panel; click between them without losing state
 - **Font size controls** — A−/A+ buttons resize the terminal font independently of other output panels
 
-### Config manager (F2) — Easy Edit mode
+### Config manager (F2) — profiles, syntax checking, Easy Edit
 
-Press **F2** to open the Config Manager. Click **⊞ Easy Edit** to switch from the raw conf textarea to a structured form editor — no need to know the `legion.conf` syntax.
+The original Legion required hand-editing a raw `.conf` file with no validation — a misplaced comma or missing `[IP]` placeholder silently broke tools. LegionnAIre replaces this with a full config management system.
+
+Press **F2** (or click the **⚙ gear button**) to open the Config Manager.
 
 ![Easy Edit — structured form editor for all legion.conf sections](gifs/shots/easy_mode_dialog.png)
 
-Easy Edit covers every section of the config in typed, labeled forms:
+![Easy Edit detail — profiles, section tabs, form fields](gifs/shots/easy_mode_form_zoomed.png)
+
+**Multiple profiles** — switch between scan profiles instantly from the profile dropdown: `scan-fast` (74 tools), `scan-medium` (120 tools), `scan-extensive` (179 tools), plus 6 AI provider profiles (`ai-anthropic`, `ai-vertex`, `ai-openai`, `ai-gemini`, `ai-ollama`, `ai-disabled`). Create, rename, duplicate, and delete custom profiles. The active profile name appears in both the title bar and the bottom status bar.
+
+**Syntax validation** — every save validates the conf before writing: `[IP]` and `[PORT]` placeholders are checked in port action commands, section names are verified, and malformed entries are flagged with inline red-border errors that block the save until fixed.
+
+**Easy Edit mode** — click **⊞ Easy Edit** to switch from the raw conf textarea to a structured form editor — no need to know the `legion.conf` syntax:
 
 | Tab | What you can change |
 |---|---|
 | **General** | Max concurrent processes, process timeout, scheduler on/off, tool duplication mode |
 | **Brute** | Hydra defaults — username, password, wordlist paths, per-service field visibility |
 | **Tool** | Binary paths for nmap, hydra, and other tools |
+| **AI** | Provider selection (dropdown), API key, model, endpoint URL, Vertex project/region |
 | **StagedNmap** | Port ranges for each of the 6 scan stages (PORTS|spec or NSE|scripts) |
 | **Host / Port / PortTerminal** | Searchable tables — add, edit, or remove host actions and port right-click menu entries with `[IP]`/`[PORT]` placeholder validation |
 | **Scheduler** | Which tools fire automatically on service discovery, and for which service names |
 | **Match** | Tag chip editor — add or remove keywords that get highlighted in tool output |
 
-- **← Back to Advanced** applies your Easy Edit changes and returns to the raw textarea
-- **✓ Apply to Config** serialises the form state into the raw conf without leaving Easy Edit
-- Every save is timestamped to `~/.local/share/legion/backup/` — nothing is lost
+![Easy Edit — Scheduler tab showing auto-run tool entries with service filters](gifs/shots/easy_mode_scheduler.png)
 
-### Notes
+![Scheduler detail — tool dropdown, service filter, protocol, per-entry add/delete](gifs/shots/easy_mode_scheduler_zoomed.png)
+
+- **← Back to Advanced** applies your Easy Edit changes and returns to the raw textarea
+- Every save is timestamped to `~/.local/share/legion/backup/` — nothing is lost
+- **Config migration** — `--migrate-conf` CLI flag or yellow GUI banner merges new settings from updates without overwriting your customizations. Help comments are preserved.
+
+### Enhanced notes
 - **Ctrl+B** — copies the current terminal or DOM output selection into the host's Notes tab with ANSI colour preserved
 - Notes render with full ANSI-to-HTML conversion; the Log tab also renders colour codes
 - All nmap stage commands are written to Notes automatically so scans are reproducible
+- Notes are per-host and persist in the unified project database — searchable via global search
 
 ![Notes panel with Ctrl+B capture](gifs/shots/notes_annotated.png)
+
+![Notes detail — ANSI colour preserved, nmap commands auto-logged](gifs/shots/notes_content_zoomed.png)
 
 ### CVEs and vulnerability data
 - Vulners NSE runs as the final nmap stage against all discovered ports
@@ -124,21 +162,23 @@ Easy Edit covers every section of the config in typed, labeled forms:
 
 ![CVEs panel](gifs/shots/cves_annotated.png)
 
+![CVEs detail — severity, description, CVSS scores from Vulners NSE](gifs/shots/cves_content_zoomed.png)
+
 ### Brute force
 - Hydra wired to the Brute tab — username, password, wordlist fields pre-fill from `legion.conf` defaults
 - Combo file support (`-C` flag) for credential pair lists
 - Per-service show/hide for username/password fields (`no-username-services`, `no-password-services` in conf)
 
 ### Project management
-- SQLite database per session (WAL mode) — no shared state between instances
+- **Single SQLite database** per session (WAL mode) — every host, port, service, CVE, NSE script, tool output, screenshot, note, match highlight, process history, and AI analysis in one file. No shared state between instances
 - Save / Save As / Open with full fidelity — screenshots, outputfile paths, keyword matches, interactive terminal history all persist correctly
-- Heartbeat watchdog (20-second timeout) — cleans up gracefully when the browser closes
+- Heartbeat watchdog (5-minute timeout) — cleans up gracefully when the browser closes
 
 ---
 
 ## Integrated tools
 
-LegionnAIre integrates **229 tools** (plus 204 individual nmap NSE scripts) across 15 categories. **182 are auto-triggered** by the scheduler when matching services are discovered — no manual action needed. The rest are available via right-click context menus. A full interactive reference is available in [`legion_tools.html`](legion_tools.html).
+LegionnAIre integrates **80+ unique tool binaries** — all preconfigured and auto-installed by `install.sh`. The scheduler has **179 auto-trigger rules** that fire the right tool for each discovered service with zero manual configuration. Tools are also available via right-click context menus (610 total conf entries including protocol variants and 204 individual nmap NSE scripts). A full interactive reference is available in [`legion_tools.html`](legion_tools.html).
 
 ### Port & service discovery
 | Tool | Auto | Expected output |
@@ -146,6 +186,12 @@ LegionnAIre integrates **229 tools** (plus 204 individual nmap NSE scripts) acro
 | nmap (staged: 6 stages) | Yes | Ports, services, versions, OS, vulners CVEs |
 | masscan | — | Full TCP port sweep (0-65535 at 1000 pps) |
 | hping3 | — | SYN scan, ICMP timestamp, traceroute |
+| ike-scan | Yes | IKE/IPSec VPN gateway detection and fingerprinting |
+| rpcinfo | Yes | RPC service enumeration (portmapper) |
+| showmount | Yes | NFS export listing |
+| smtp-user-enum | Yes | SMTP user enumeration (EXPN/VRFY/RCPT) |
+| swaks | Yes | SMTP open relay testing |
+| nbtscan | Yes | NetBIOS name table enumeration |
 
 ### Web content discovery
 | Tool | Auto | Expected output |
@@ -215,6 +261,9 @@ LegionnAIre integrates **229 tools** (plus 204 individual nmap NSE scripts) acro
 | smbmap-signing | Yes | SMB signing status |
 | enum4linux-ng | Yes | Users, groups, shares, policy, OS |
 | rpcclient-full-enum | Yes | Users, groups, policy, shares, domain role |
+| impacket-rpcdump | Yes | RPC endpoint enumeration |
+| impacket-samrdump | — | SAM remote dump — users, aliases, groups |
+| impacket-secretsdump | — | NTLM hashes, Kerberos keys, cleartext passwords (requires creds) |
 
 ### Active Directory
 | Tool | Auto | Expected output |
@@ -229,6 +278,9 @@ LegionnAIre integrates **229 tools** (plus 204 individual nmap NSE scripts) acro
 | gpp-sysvol-check | Yes | SYSVOL GPP XML with embedded passwords |
 | impacket-getnpusers-nopass | Yes | AS-REP roastable accounts |
 | impacket-lookupsid-null | Yes | SIDs via null session |
+| impacket-getuserspns | — | Kerberoastable service accounts (requires creds) |
+| bloodhound-python | Yes | Domain enumeration — users, groups, sessions, ACLs for BloodHound graph |
+| ldapdomaindump | Yes | Domain users, groups, computers, policy via LDAP |
 
 ### SNMP enumeration
 | Tool | Auto | Expected output |
@@ -264,7 +316,7 @@ LegionnAIre integrates **229 tools** (plus 204 individual nmap NSE scripts) acro
 | leaksearch | Yes | Credential leaks for the domain |
 
 ### Interactive terminals (right-click)
-ssh, ftp, mysql, psql, mssql, telnet, netcat, redis-cli, rdesktop, vncviewer, evil-winrm, rpcclient, impacket-smbclient, impacket-psexec — all open as embedded xterm.js PTY sessions in the browser.
+ssh, ftp, mysql, psql, mssql, telnet, netcat, redis-cli, rdesktop, vncviewer, evil-winrm, rpcclient, rlogin, rsh, impacket-smbclient, impacket-psexec, impacket-mssqlclient, msfconsole, xephyr — all open as embedded xterm.js PTY sessions in the browser. Output is captured to the project database.
 
 ---
 
@@ -351,24 +403,24 @@ sudo git log --oneline -3
 
 ### Step 2 — Install Python packages
 
-`requirements.txt` covers **both** Flask web mode and Qt6 GUI mode.
+`install.sh` creates a virtual environment at `/opt/legion-venv` and installs all packages there — no `--break-system-packages` needed. `legion.py` auto-detects and re-execs into the venv on startup.
+
+If you need to install manually (without `install.sh`):
 
 ```bash
-sudo pip3 install --break-system-packages -r requirements.txt
+sudo python3 -m venv /opt/legion-venv
+sudo /opt/legion-venv/bin/pip install -r requirements.txt
 ```
-
-Expected output: a list of packages being installed, ending with `Successfully installed ...`
 
 **Verify:**
 ```bash
-python3 -c "import flask, PyQt6.QtCore, sqlalchemy, anthropic, openai; print('OK')"
+sudo /opt/legion-venv/bin/python3 -c "import flask, sqlalchemy, anthropic, openai; print('OK')"
 # Expected: OK
 ```
 
 If this fails, check:
 - Python version: `python3 --version` must be 3.10+
-- pip is available: `python3 -m pip --version`
-- On Ubuntu you may need: `sudo apt-get install python3-pip python3-dev`
+- The venv exists: `ls /opt/legion-venv/bin/python3`
 
 ### Step 3 — Install system security tools
 
@@ -537,7 +589,7 @@ method), it still works automatically — LegionnAIre falls back to that file wh
 
 ### Step 6 — Verify the complete install
 
-Runs 93 tests that check every Python import, verify LegionnAIre starts in web mode, confirm Qt6 works, and check that every tool binary is in PATH:
+Runs parametrized tests that check every Python import, verify LegionnAIre starts in web mode, and check that every tool binary is in PATH:
 
 ```bash
 sudo python3 -m pytest tests/test_requirements.py --noconftest -v
@@ -550,7 +602,7 @@ tests/test_requirements.py::test_flask_web_mode_starts_and_responds PASSED
 tests/test_requirements.py::test_qt6_qapplication_offscreen PASSED
 tests/test_requirements.py::test_kali_apt_tool_present[nmap] PASSED
 ...
-93 passed in ~45s
+XX passed in ~45s   (count varies by Kali version and installed tools)
 ```
 
 If some tool binary tests fail, run `sudo bash install.sh --no-ai` — step 8 of
@@ -791,6 +843,9 @@ sudo python3 legion.py --web --port 8080
 
 # Without auto-browser
 sudo python3 legion.py --web --no-browser
+
+# Auto-scan targets from a file
+sudo python3 legion.py --web --input-file targets.txt
 ```
 
 Navigate to `http://127.0.0.1:5000` (or your chosen port).
@@ -798,8 +853,9 @@ Navigate to `http://127.0.0.1:5000` (or your chosen port).
 1. **Add a host** — type an IP, CIDR, or hostname in the Add Hosts dialog; click Staged Scan
 2. **Watch the scan** — five nmap stages run in parallel; the process list shows live progress %; vulners runs last
 3. **Review results** — Services, Ports, Scripts, CVEs, and Notes tabs populate as data arrives
-4. **Configure** — press F2 to open the Config Manager; use Easy Edit to add tools or adjust settings without touching the raw conf file
-5. **Analyze with AI** — click the AI tab on any host; click Analyze when all scans finish
+4. **Search** — press Ctrl+Shift+F to search all tool output for any keyword
+5. **Configure** — press F2 (or click ⚙) to open the Config Manager; use Easy Edit to add tools or adjust settings without touching the raw conf file
+6. **Analyze with AI** — click the AI tab on any host; click Analyze when all scans finish
 
 ![Add host dialog — IP, CIDR, or hostname; Easy/Hard mode; timing slider](gifs/shots/add_host_dialog.png)
 
@@ -809,7 +865,7 @@ Navigate to `http://127.0.0.1:5000` (or your chosen port).
 
 The main config file is at `~/.local/share/legion/legion.conf` (created on first run from the repo default).
 
-Press **F2** → **⊞ Easy Edit** to configure everything through a structured GUI — no need to know the conf syntax. The Scheduler tab shown below controls which tools fire automatically when a service is discovered.
+Press **F2** (or click **⚙**) → **⊞ Easy Edit** to configure everything through a structured GUI — no need to know the conf syntax. The Scheduler tab shown below controls which tools fire automatically when a service is discovered.
 
 ![Easy Edit — Scheduler tab showing 50 auto-run tool entries with service filters](gifs/shots/easy_mode_scheduler.png)
 
@@ -831,6 +887,8 @@ Key sections:
 | `[ToolSettings]` | Binary paths (nmap, hydra, etc.) |
 | `[MatchSettings]` | Keywords highlighted in tool output |
 | `[AISettings]` | AI provider, API key, model, endpoint URL |
+
+`config_version` in `[GeneralSettings]` tracks the conf schema version (matches the Legion point version, e.g. `config_version=268`). The migration system uses this to detect when new settings are available.
 
 ---
 
