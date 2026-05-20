@@ -1,11 +1,11 @@
-![LegionnAIre](images/LegionnaireBannerGood.png)
-
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform: Kali Linux](https://img.shields.io/badge/Platform-Kali%20Linux-557C94.svg)](https://www.kali.org/)
 [![Flask](https://img.shields.io/badge/Flask-Web%20UI-000000.svg)](https://flask.palletsprojects.com/)
 
 **Semi-automated network penetration testing framework with AI-powered analysis, 80+ auto-installed tools, and a browser-based interface — runs on Kali Linux (VM or WSL2).**
+
+![LegionnAIre](images/LegionnaireBannerGood.png)
 
 ![LegionnAIre main interface](gifs/shots/hero_full.png)
 
