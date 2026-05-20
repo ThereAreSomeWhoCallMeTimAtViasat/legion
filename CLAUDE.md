@@ -45,7 +45,7 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.264
+- **Current Flask version:** v10.265
 - **Static asset cache:** CSS `?v=95`, JS `?v=144` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 - **Default config:** `legion.conf` ships with scan-medium (120 tools) + Vertex AI; `masterLegion.conf` is the full 179-tool baseline with ai_provider=none
