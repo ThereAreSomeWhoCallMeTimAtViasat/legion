@@ -4293,7 +4293,7 @@ document.addEventListener('DOMContentLoaded', function() {
     /* ── Help ── */
     var helpBtn = $('action-help');
     if (helpBtn) helpBtn.addEventListener('click', function() {
-        alert(_VERSION + '\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts\\n\\nhttps://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion');
+        alert(_VERSION + '\\nNetwork penetration testing framework\\n\\nHelp: F2 for Config Manager\\nCtrl+H to add hosts\\n\\nhttps://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire');
     });
 
     /* ── xterm buffer → ANSI string ─────────────────────────────────────────────

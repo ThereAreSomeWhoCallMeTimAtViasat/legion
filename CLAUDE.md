@@ -41,7 +41,7 @@
 ---
 
 ## Project Overview
-- **Repo:** https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+- **Repo:** https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire.git
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite

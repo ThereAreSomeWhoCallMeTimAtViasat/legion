@@ -7,16 +7,16 @@ making contributions to the project. We ask that you also follow our contributor
 #### Did you find a bug?
 
 * Awesome. First, ensure that your bug isn't a duplicate by checking
-  the [Issues](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion/issues). **If the issue already exists**, go ahead and comment on
+  the [Issues](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire/issues). **If the issue already exists**, go ahead and comment on
   the issue with your bug report information, following the guidelines below as if you were reporting a new issue - just
   don't make a new issue.
-* **If you can't find the issue**, its time to [open a new issue](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion/issues/new). Fill
+* **If you can't find the issue**, its time to [open a new issue](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire/issues/new). Fill
   in the issue with a clear title and description. Where possible, include steps to reproduce the bug, code samples, and
   screenshots. Tag the issue if it fits into one of our existing categories.
 
 #### Did you patch a bug?
 
-* Excellent - your first steps are to open a new [Pull Request](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion/pulls) with your
+* Excellent - your first steps are to open a new [Pull Request](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire/pulls) with your
   patch. Be prepared to answer questions or receive feedback from the team.
 * Ensure the PR has a description that clearly details the problem and your solution. Be sure to include issue numbers
   if possible.
@@ -24,12 +24,12 @@ making contributions to the project. We ask that you also follow our contributor
 
 #### Do you want to add a feature?
 
-* We love new features! Please [make an issue](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion/issues/new) for discussion, with a
+* We love new features! Please [make an issue](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire/issues/new) for discussion, with a
   clear title and description of the proposed feature. Add the Proposal tag, and use the comments to follow up with the
   team.
 * Wait for a response and approval to your proposal before working on your patch and submitting a PR. This way, if we
   find any problems with the proposal, and discuss remediation before work gets wasted.
-* Once your feature is complete, all you need to do is [submit a PR](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion/pulls).
+* Once your feature is complete, all you need to do is [submit a PR](https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire/pulls).
 
 #### Do you have a general question?
 

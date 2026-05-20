@@ -377,7 +377,7 @@ The automated installer handles everything in one step: Python packages, system 
 
 ```bash
 # Production install (recommended)
-sudo git clone --branch flask-clean-prod https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+sudo git clone --branch flask-clean-prod https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire.git
 cd legion
 
 # Confirm you are on the right branch before continuing
@@ -388,7 +388,7 @@ sudo bash install.sh
 
 To install the **development branch** instead:
 ```bash
-sudo git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+sudo git clone --branch flask-clean https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire.git
 cd legion
 sudo bash install.sh
 ```
@@ -415,12 +415,12 @@ The repository has multiple branches:
 ```bash
 # Production (recommended)
 sudo git clone --branch flask-clean-prod \
-    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire.git
 cd legion
 
 # Or development branch:
 # sudo git clone --branch flask-clean \
-#     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+#     https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire.git
 
 # Verify you are on the right branch before doing anything else
 sudo git branch
@@ -651,7 +651,7 @@ The recommended way to run LegionnAIre on Windows is Kali Linux in WSL2 — no D
 
 # 2. Inside Kali:
 sudo git clone --branch flask-clean-prod \
-    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire.git
 cd legion
 sudo bash install.sh
 
@@ -672,7 +672,7 @@ A `Dockerfile` and `docker-compose.yml` are included for users who prefer contai
 
 ```bash
 sudo git clone --branch flask-clean-prod \
-    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legion.git
+    https://github.com/ThereAreSomeWhoCallMeTimAtViasat/legionnaire.git
 cd legion
 sudo docker compose build && sudo docker compose up -d
 # Open http://127.0.0.1:5000
