@@ -7077,6 +7077,11 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    var _aiRefreshBtn = $('ai-refresh-btn');
+    if (_aiRefreshBtn) _aiRefreshBtn.addEventListener('click', function() {
+        if (_aiHostId) _aiLoadStatus(_aiHostId);
+    });
+
     /* Phase 2 button — get attack advice on demand */
     var _aiPhase2Btn = $('ai-phase2-btn');
     if (_aiPhase2Btn) {
