@@ -239,7 +239,36 @@ def migrate_conf(user_path, master_path, dry_run=False):
     with open(user_path, 'w', encoding='utf-8') as f:
         up.write(f)
 
+    _inject_master_comments(user_path, master_path)
+
     return result
+
+
+def _inject_master_comments(target_path, master_path):
+    """Re-inject comment blocks from master conf into a file written by
+    configparser (which strips all comments).
+
+    For each [Section] in the master, extracts the comment lines between
+    the section header and the first key, then inserts them into the
+    target file after the matching section header."""
+    import re
+    with open(master_path, 'r', encoding='utf-8') as f:
+        master_text = f.read()
+    with open(target_path, 'r', encoding='utf-8') as f:
+        target_text = f.read()
+
+    for m in re.finditer(r'(\[([^\]]+)\]\n)((?:#[^\n]*\n|\n)*)', master_text):
+        header = m.group(1)
+        section = m.group(2)
+        comments = m.group(3)
+        if not comments.strip():
+            continue
+        target_header = f'[{section}]\n'
+        if target_header in target_text:
+            target_text = target_text.replace(target_header, target_header + comments, 1)
+
+    with open(target_path, 'w', encoding='utf-8') as f:
+        f.write(target_text)
 
 
 def migrate_profiles(master_path):
