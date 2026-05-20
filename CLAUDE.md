@@ -45,8 +45,8 @@
 - **Primary Branch:** `flask-clean` (branched from `visualUpgrades` — pure code, no upstream)
 - **Type:** Network penetration testing framework (fork of Sparta/Hackman238 Legion)
 - **Stack:** Python 3.10+, PyQt6 (replaced by Flask), SQLAlchemy ORM, SQLite
-- **Current Flask version:** v10.263
-- **Static asset cache:** CSS `?v=95`, JS `?v=142` in `base.html`
+- **Current Flask version:** v10.264
+- **Static asset cache:** CSS `?v=95`, JS `?v=143` in `base.html`
 - **legion.conf path:** `/root/.local/share/legion/legion.conf` (app reads this at runtime)
 - **Default config:** `legion.conf` ships with scan-medium (120 tools) + Vertex AI; `masterLegion.conf` is the full 179-tool baseline with ai_provider=none
 
@@ -310,7 +310,9 @@ Called automatically from `start()` on every project open/create:
 - **v10.259**: (1) Vertex AI auto-detection — `_read_ai_config()` auto-detects `vertex_project_id` from legacy `~/.claude/settings.json` and `gcloud config get-value project` when blank; status endpoint checks ADC file existence (`_find_adc_path()`). (2) Gear icon (⚙) button next to Brute tab opens Config Manager (same as F2). (3) Title bar redesigned: removed `-flask` and IP/OS; shows `LEGION v10.259-139 [profile] – project`; JS cache buster appended with dash. (4) `W:` (waiting processes) added to status bar alongside H/P/R/F. (5) `active_profile` + `waiting_processes` added to `/api/snapshot` summary. (6) `_updateTitle()` helper centralises all title updates; profile activation updates title immediately. (7) Vertex AI credential paths made user-agnostic via `_real_home()` (uses `pwd.getpwnam` not hardcoded `/home/`); `gcloud` runs as `SUDO_USER`. (8) Bottom statusbar: removed dead Idle/Idle elements; added `Output:` / `Project:` / `Profile:` labels.
 - **v10.260**: `--input-file` now works with `--web` mode — `sudo python3 legion.py --web --input-file targets.txt` reads targets from the file, validates each with `validateNmapInput`, and auto-starts Easy Mode staged nmap scans (discovery + staged) for all targets 2s after the server starts. Comments and blank lines are skipped. Invalid targets are warned and skipped. Previously `--input-file` only worked with `--headless`.
 - **v10.261**: UI rebranded from "LEGION" to "LegionnAIre" — browser tab title, title bar, help dialog, server shutdown alert, AI export report title/header/footer, startup banner. Internal variable names (`LEGION_WC`, log tags) unchanged.
+- **v10.264**: Config migration system — `--migrate-conf` CLI flag merges new sections/keys from `masterLegion.conf` into user's existing conf without overwriting customizations. Interactive startup prompt (`[M]igrate / [S]kip / [V]iew`) when config version is outdated; `--no-prompt` auto-migrates silently. `config_version=1` key in `[GeneralSettings]` tracks conf schema version (missing = version 0). Web GUI: yellow dismissible banner when config outdated, "Migrate Now" button calls `POST /api/config/migrate`. `_ensure_profiles()` now merges shipped profiles with stale versions instead of skipping. All 11 conf files (legion.conf, masterLegion.conf, 9 profiles) get `config_version=1`. `config_version` added to `_validate_legion_conf` whitelist. `migrate_conf()`, `check_conf_version()`, `migrate_profiles()` in `app/cli_utils.py`. README.md `## Upgrading` section added. JS `?v=143`.
 - **v10.263**: Arrow-key table navigation — Up/Down arrow keys move row selection in whichever table was last clicked. `L._activeTable` tracks the active tbody ID (8 tables: hosts, services, tools, tool-hosts, os-list, os-hosts, processes, scripts). Single `document.addEventListener('keydown')` handler finds the `.selected` row, calls `.click()` on the adjacent row (reuses all existing click handler side effects), and `scrollIntoView({block:'nearest'})`. Suppressed when: text input/textarea/xterm focused, any `.is-open` modal, modifier keys held. No wrap at boundaries. JS `?v=142`.
+- **Tests**: `tests/test_ui_arrow_nav.py` (port 5109, 20 tests): 7 classes — host/process/service arrow nav with side effects (loadHostDetail, loadProcessOutput), boundary behavior (no wrap, rapid arrows no JS errors), suppression (modal open, input focused, modifier keys, null activeTable), activeTable tracking across table switches, regressions (click still works after arrow nav, selection survives snapshot re-render, exactly 1 .selected row). 3 hosts seeded, 3 processes seeded. Integrated into `run_tests.sh --selenium`.
 - **v10.262**: Search all process output — search bar in process filter bar (Enter to search, Esc to clear, Ctrl+Shift+F to focus). `GET /api/processes/search?q=<term>` queries `process_output` table via `INSTR(LOWER())` + searches `.live_output` files for Running processes. Process table filters to matching processes with hit count badges (cyan). Clicking a result highlights search hits in the output panel with `<span class="search-match">` (cyan, distinct from yellow match-positive). Search navigation arrows (▲/▼) reuse `_matchNav`/`_matchNavInit` parameterized with optional `selector` arg. Search banner shows query + hit count. `procSearchHighlight()` wraps matches case-insensitively with ANSI-span-aware regex. Results capped at 50 processes, 5 snippets/200 chars each.
 
 ---
@@ -1052,6 +1054,8 @@ Allows changing `[GeneralSettings]`, `[BruteSettings]`, `[ToolSettings]`, and `[
 | 5085 | test_goal_selection_confinement.py / test_user_stories.py (live server) |
 | 5084 | test_shutdown_subprocess.py (heartbeat watchdog) |
 | 5083 | test_shutdown_subprocess.py (kill descendants) |
+| 5108 | test_ui_search_output.py |
+| 5109 | test_ui_arrow_nav.py |
 
 ### User Story Tests (tests/test_user_stories.py)
 Run against a **real** `legion.py --web --port 5085` server (not a test-app fixture).

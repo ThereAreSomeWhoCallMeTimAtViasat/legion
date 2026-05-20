@@ -736,6 +736,50 @@ Use `--no-browser` because WSL2 without WSLg has no GUI. If you have WSLg
 
 ---
 
+## Upgrading
+
+### From source (production — `flask-clean-prod`)
+
+```bash
+git pull origin flask-clean-prod
+sudo bash install.sh                          # picks up new dependencies + tools
+sudo python3 legion.py --web                  # auto-detects outdated config, prompts to migrate
+```
+
+Or non-interactively:
+
+```bash
+sudo python3 legion.py --migrate-conf         # merge new settings without prompting
+sudo python3 legion.py --web
+```
+
+### From source (development — `flask-clean`)
+
+```bash
+git pull origin flask-clean
+sudo pip install -r requirements.txt          # pick up new Python packages
+sudo python3 legion.py --web                  # same auto-detect + prompt
+```
+
+### What migration does
+
+- **Backs up** your current config to `~/.local/share/legion/backup/`
+- **Adds** new config sections (e.g. `[AISettings]`) without touching existing ones
+- **Adds** new tool entries to SchedulerSettings / PortActions without removing yours
+- **Adds** new match keywords without removing yours
+- **Updates** shipped profiles (scan-fast, scan-medium, scan-extensive) with new entries
+- **Never overwrites** your customized values
+
+You can also migrate from the web UI — a yellow banner appears at the top of the page when an update is available.
+
+### Recovery
+
+```bash
+sudo python3 legion.py --reset-conf           # full reset from masterLegion.conf (backs up first)
+```
+
+---
+
 ## Quick start
 
 ```bash

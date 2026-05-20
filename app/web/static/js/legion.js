@@ -2432,6 +2432,53 @@ function pollSnapshot() {
         var osPanel = $('os-panel');
         if (osPanel && osPanel.classList.contains('active')) renderOsList();
 
+        /* Config upgrade banner — shown once per session when config_outdated=true */
+        if ((snap.project || {}).config_outdated && !L._configBannerShown) {
+            L._configBannerShown = true;
+            if (!localStorage.getItem('legion_config_banner_dismissed')) {
+                var banner = document.createElement('div');
+                banner.id = 'config-upgrade-banner';
+                banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;'
+                    + 'background:#8B6914;color:#fff;padding:8px 16px;display:flex;'
+                    + 'align-items:center;justify-content:center;gap:12px;font-size:10pt;'
+                    + 'box-shadow:0 2px 8px rgba(0,0,0,0.4)';
+                banner.innerHTML = '<span>⚠ Config update available — new tools and settings. '
+                    + 'Your customizations will be preserved.</span>'
+                    + '<button id="config-migrate-btn" style="padding:4px 12px;cursor:pointer;'
+                    + 'background:#4a9;color:#fff;border:none;border-radius:3px;font-weight:bold">'
+                    + 'Migrate Now</button>'
+                    + '<button id="config-dismiss-btn" style="padding:4px 12px;cursor:pointer;'
+                    + 'background:transparent;color:#ccc;border:1px solid #888;border-radius:3px">'
+                    + 'Dismiss</button>';
+                document.body.appendChild(banner);
+                $('config-migrate-btn').addEventListener('click', function() {
+                    this.textContent = 'Migrating...';
+                    this.disabled = true;
+                    postJson('/api/config/migrate', {}).then(function(d) {
+                        banner.style.background = '#2a6';
+                        banner.innerHTML = '<span>✓ Config migrated successfully. '
+                            + (d.sections_added && d.sections_added.length
+                                ? 'Added: ' + d.sections_added.join(', ') + '. ' : '')
+                            + '</span>';
+                        localStorage.removeItem('legion_config_banner_dismissed');
+                        setTimeout(function() { banner.remove(); }, 5000);
+                    }).catch(function() {
+                        banner.style.background = '#a33';
+                        banner.innerHTML = '<span>Migration failed — use --migrate-conf from the command line.</span>';
+                    });
+                });
+                $('config-dismiss-btn').addEventListener('click', function() {
+                    localStorage.setItem('legion_config_banner_dismissed', '1');
+                    banner.remove();
+                });
+            }
+        }
+        if (!(snap.project || {}).config_outdated) {
+            localStorage.removeItem('legion_config_banner_dismissed');
+            var _cb = $('config-upgrade-banner');
+            if (_cb) _cb.remove();
+        }
+
         /* Ctrl+C in terminal — server sets exit_requested flag; show save dialog here.
            NOTE: _exitFlow is defined inside DOMContentLoaded so it is not in this
            scope — access it via L._exitFlow which is set once DOMContentLoaded runs. */

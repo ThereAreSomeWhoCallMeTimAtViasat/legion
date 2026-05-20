@@ -63,6 +63,21 @@ def _filters():
 # network gaps, and slow user interaction without spurious shutdowns.
 # A page refresh (~2–5 s gap) is still well under this threshold.
 _HB_TIMEOUT  = 300       # seconds without a ping → browser is gone
+
+# Config version check — computed once on import, cached for all snapshot polls
+def _check_config_outdated():
+    try:
+        from app.cli_utils import check_conf_version
+        _cp = os.path.expanduser('~/.local/share/legion/legion.conf')
+        _mp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'masterLegion.conf')
+        if os.path.exists(_cp) and os.path.exists(_mp):
+            u, m = check_conf_version(_cp, _mp)
+            return u < m
+    except Exception:
+        pass
+    return False
+
+_config_outdated = _check_config_outdated()
 _hb_lock     = threading.Lock()
 _hb_last     = None      # float timestamp; None = no heartbeat yet received
 _hb_started  = False     # True once the watchdog thread is running
@@ -91,7 +106,8 @@ def index():
                      "running_processes": 0, "finished_processes": 0},
         "project": {"name": getattr(logic.activeProject.properties, "projectName", "*untitled"),
                      "output_folder": getattr(logic.activeProject.properties, "outputFolder", ""),
-                     "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True)},
+                     "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True),
+                     "config_outdated": _config_outdated},
     }
     return render_template("index.html", snapshot=snapshot, ws_enabled=False)
 
@@ -261,7 +277,8 @@ def snapshot():
         "project": {"name": getattr(logic.activeProject.properties, "projectName", "*untitled"),
                      "output_folder": getattr(logic.activeProject.properties, "outputFolder", ""),
                      "is_temporary": getattr(logic.activeProject.properties, "isTemporary", True),
-                     "exit_requested": getattr(wc, '_exit_requested', False)},
+                     "exit_requested": getattr(wc, '_exit_requested', False),
+                     "config_outdated": _config_outdated},
         "scan_uptime": {
             "start": _uptime_start,
             "end":   _uptime_end,
@@ -1485,8 +1502,37 @@ def _ensure_profiles():
     shipped = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'profiles')
     if os.path.isdir(shipped):
         for fn in os.listdir(shipped):
-            if fn.endswith('.conf') and not os.path.exists(os.path.join(_PROFILES_DIR, fn)):
-                shutil.copy(os.path.join(shipped, fn), os.path.join(_PROFILES_DIR, fn))
+            if not fn.endswith('.conf'):
+                continue
+            user_prof = os.path.join(_PROFILES_DIR, fn)
+            shipped_prof = os.path.join(shipped, fn)
+            if not os.path.exists(user_prof):
+                shutil.copy(shipped_prof, user_prof)
+            else:
+                try:
+                    from app.cli_utils import check_conf_version, migrate_conf
+                    u_v, s_v = check_conf_version(user_prof, shipped_prof)
+                    if u_v < s_v:
+                        migrate_conf(user_prof, shipped_prof)
+                except Exception:
+                    pass
+
+@web_bp.post("/api/config/migrate")
+def config_migrate():
+    global _config_outdated
+    if not _config_outdated:
+        return jsonify({"status": "ok", "up_to_date": True, "message": "Config is already up to date."})
+    try:
+        from app.cli_utils import migrate_conf, migrate_profiles
+        _cp = os.path.expanduser('~/.local/share/legion/legion.conf')
+        _mp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'masterLegion.conf')
+        result = migrate_conf(_cp, _mp)
+        profiles = migrate_profiles(_mp)
+        _config_outdated = False
+        return jsonify({"status": "ok", **result, "profiles_migrated": profiles})
+    except Exception as e:
+        return _err(f"Migration failed: {e}", 500)
+
 
 @web_bp.get("/api/config/profiles")
 def config_profiles():
@@ -1518,7 +1564,7 @@ def _validate_legion_conf(config_text):
     }
     # Fixed valid keys per section (Qt6: valid_settings)
     fixed_section_keys = {
-        'GeneralSettings': {'log-directory','default-terminal','tool-output-black-background',
+        'GeneralSettings': {'config_version','log-directory','default-terminal','tool-output-black-background',
                             'screenshooter-timeout','process-timeout','web-services','enable-scheduler',
                             'enable-scheduler-on-import','max-fast-processes','max-slow-processes','tool-duplication'},
         'BruteSettings': {'store-cleartext-passwords-on-exit','username-wordlist-path','password-wordlist-path',

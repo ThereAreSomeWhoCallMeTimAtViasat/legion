@@ -107,6 +107,8 @@ if __name__ == "__main__":
                         help="Skip auto-opening Firefox (headless / CI use)")
     parser.add_argument("--reset-conf", action="store_true",
                         help="Restore legion.conf from bundled master (recovery for air-gapped systems)")
+    parser.add_argument("--migrate-conf", action="store_true",
+                        help="Merge new settings from master into your config without overwriting customizations")
     parser.add_argument("--open", type=str, metavar="FILE",
                         help="Open an existing .legion project file on startup")
     args = parser.parse_args()
@@ -136,6 +138,21 @@ if __name__ == "__main__":
         print(f"Restored legion.conf from master ({os.path.getsize(master)} bytes)")
         print(f"  → {conf_path}")
         print(f"  → {os.path.join(profiles_dir, 'default.conf')}")
+        sys.exit(0)
+
+    if args.migrate_conf:
+        from app.cli_utils import migrate_conf, migrate_profiles, print_migration_summary
+        conf_path = os.path.expanduser('~/.local/share/legion/legion.conf')
+        master = os.path.join(os.path.dirname(__file__), 'app', 'masterLegion.conf')
+        if not os.path.exists(master):
+            print(f"ERROR: Master config not found at {master}")
+            sys.exit(1)
+        if not os.path.exists(conf_path):
+            print(f"No config found at {conf_path} — will be created on first run.")
+            sys.exit(0)
+        result = migrate_conf(conf_path, master)
+        profiles = migrate_profiles(master)
+        print_migration_summary(result, profiles)
         sys.exit(0)
 
     if args.mcp_server:
@@ -477,6 +494,64 @@ if __name__ == "__main__":
         from flask import Flask, jsonify, request, render_template, send_from_directory
 
         doPathSetup()
+
+        # ── Config version check — offer migration if outdated ──
+        _conf_path = os.path.expanduser('~/.local/share/legion/legion.conf')
+        _master_path = os.path.join(os.path.dirname(__file__), 'app', 'masterLegion.conf')
+        if os.path.exists(_conf_path) and os.path.exists(_master_path):
+            from app.cli_utils import check_conf_version, migrate_conf, migrate_profiles, print_migration_summary
+            _u_ver, _m_ver = check_conf_version(_conf_path, _master_path)
+            if _u_ver < _m_ver:
+                _dry = migrate_conf(_conf_path, _master_path, dry_run=True)
+                _n_sect = len(_dry['sections_added'])
+                _n_keys = sum(len(v) for v in _dry['keys_added'].values())
+                if args.no_prompt:
+                    _result = migrate_conf(_conf_path, _master_path)
+                    _profs = migrate_profiles(_master_path)
+                    print(f"  Auto-migrated config (version {_u_ver} → {_m_ver}): "
+                          f"+{_n_sect} sections, +{_n_keys} keys")
+                    if _result.get('backed_up'):
+                        print(f"  Backup: {_result['backed_up']}")
+                else:
+                    print()
+                    print("  ╔══════════════════════════════════════════════════════════╗")
+                    print(f"  ║  Config update available (version {_u_ver} → {_m_ver})"
+                          + " " * max(0, 39 - len(f"version {_u_ver} → {_m_ver}")) + "║")
+                    print("  ║                                                          ║")
+                    if _n_sect:
+                        _s_line = f"  New sections: {', '.join(_dry['sections_added'])}"
+                        print(f"  ║{_s_line}" + " " * max(0, 59 - len(_s_line)) + "║")
+                    if _n_keys:
+                        print(f"  ║  New keys: {_n_keys} across {len(_dry['keys_added'])} sections"
+                              + " " * max(0, 39 - len(f"{_n_keys} across {len(_dry['keys_added'])} sections")) + "║")
+                    print("  ║                                                          ║")
+                    print("  ║  Your customizations will be preserved.                  ║")
+                    print("  ║  A backup will be saved to ~/.local/share/legion/backup/ ║")
+                    print("  ╠══════════════════════════════════════════════════════════╣")
+                    print("  ║  [M]  Migrate config (recommended)                       ║")
+                    print("  ║  [S]  Skip for now (start with current config)           ║")
+                    print("  ║  [V]  View changes (dry run)                             ║")
+                    print("  ╚══════════════════════════════════════════════════════════╝")
+                    while True:
+                        try:
+                            _choice = input("  Choice [M/s/v]: ").strip().lower() or 'm'
+                        except (EOFError, KeyboardInterrupt):
+                            _choice = 's'
+                        if _choice == 'm':
+                            _result = migrate_conf(_conf_path, _master_path)
+                            _profs = migrate_profiles(_master_path)
+                            print_migration_summary(_result, _profs)
+                            break
+                        elif _choice == 'v':
+                            print_migration_summary(_dry)
+                            print()
+                            continue
+                        elif _choice == 's':
+                            print("  Skipped — starting with current config.")
+                            break
+                        else:
+                            print("  Please enter M, S, or V.")
+                    print()
 
         # Create logic (same as Qt6 controller.__init__)
         shell = DefaultShell()

@@ -140,3 +140,149 @@ def run_nmap_scan(targets, output_prefix, discovery=True, staged=False, nmap_pat
             print(f"Error running nmap: {e}", file=sys.stderr)
             return None
         return output_prefix + ".xml"
+
+# ── Config migration ─────────────────────────────────────────────────────────
+
+def _read_conf_version(parser):
+    try:
+        return int(parser.get('GeneralSettings', 'config_version'))
+    except Exception:
+        return 0
+
+
+def check_conf_version(user_path, master_path):
+    """Compare config_version between user conf and master.
+    Returns (user_ver, master_ver) tuple.  Missing key = 0."""
+    import configparser
+    up = configparser.RawConfigParser()
+    up.optionxform = str
+    up.read(user_path, encoding='utf-8')
+    mp = configparser.RawConfigParser()
+    mp.optionxform = str
+    mp.read(master_path, encoding='utf-8')
+    return _read_conf_version(up), _read_conf_version(mp)
+
+
+def migrate_conf(user_path, master_path, dry_run=False):
+    """Merge missing sections/keys from master into user conf without overwriting.
+
+    Returns dict with migration results:
+      up_to_date   : bool  — True if no migration needed
+      backed_up    : str|None — path to backup file (None if dry_run or up_to_date)
+      sections_added : list of section names added
+      keys_added   : dict {section: [key, ...]} for keys added to existing sections
+      user_version : int
+      master_version : int
+    """
+    import configparser
+    import shutil
+
+    up = configparser.RawConfigParser()
+    up.optionxform = str
+    up.read(user_path, encoding='utf-8')
+
+    mp = configparser.RawConfigParser()
+    mp.optionxform = str
+    mp.read(master_path, encoding='utf-8')
+
+    u_ver = _read_conf_version(up)
+    m_ver = _read_conf_version(mp)
+
+    result = {
+        'up_to_date': u_ver >= m_ver,
+        'backed_up': None,
+        'sections_added': [],
+        'keys_added': {},
+        'user_version': u_ver,
+        'master_version': m_ver,
+    }
+
+    if u_ver >= m_ver:
+        return result
+
+    sections_added = []
+    keys_added = {}
+
+    for section in mp.sections():
+        if not up.has_section(section):
+            sections_added.append(section)
+            if not dry_run:
+                up.add_section(section)
+                for key, val in mp.items(section):
+                    up.set(section, key, val)
+        else:
+            added_in_section = []
+            for key, val in mp.items(section):
+                if not up.has_option(section, key):
+                    added_in_section.append(key)
+                    if not dry_run:
+                        up.set(section, key, val)
+            if added_in_section:
+                keys_added[section] = added_in_section
+
+    if not dry_run:
+        up.set('GeneralSettings', 'config_version', str(m_ver))
+
+    result['sections_added'] = sections_added
+    result['keys_added'] = keys_added
+
+    if dry_run:
+        return result
+
+    backup_dir = os.path.expanduser('~/.local/share/legion/backup')
+    os.makedirs(backup_dir, exist_ok=True)
+    from app.timing import getTimestamp
+    backup_path = os.path.join(backup_dir, f'pre-migrate-{getTimestamp()}.conf')
+    shutil.copy(user_path, backup_path)
+    result['backed_up'] = backup_path
+
+    with open(user_path, 'w', encoding='utf-8') as f:
+        up.write(f)
+
+    return result
+
+
+def migrate_profiles(master_path):
+    """Merge missing keys into shipped profiles that have a stale config_version.
+    Returns list of profile filenames that were migrated."""
+    import configparser
+    profiles_dir = os.path.expanduser('~/.local/share/legion/profiles')
+    shipped_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'profiles')
+    migrated = []
+
+    if not os.path.isdir(profiles_dir) or not os.path.isdir(shipped_dir):
+        return migrated
+
+    shipped_names = {fn for fn in os.listdir(shipped_dir) if fn.endswith('.conf')}
+
+    for fn in os.listdir(profiles_dir):
+        if fn not in shipped_names:
+            continue
+        user_prof = os.path.join(profiles_dir, fn)
+        shipped_prof = os.path.join(shipped_dir, fn)
+        u_ver, s_ver = check_conf_version(user_prof, shipped_prof)
+        if u_ver < s_ver:
+            r = migrate_conf(user_prof, shipped_prof)
+            if not r['up_to_date']:
+                migrated.append(fn)
+
+    return migrated
+
+
+def print_migration_summary(result, profiles=None):
+    """Print a human-readable summary of migration results."""
+    if result['up_to_date']:
+        print("  Config is up to date (version %d)." % result['user_version'])
+        return
+
+    print(f"  Migrated config: version {result['user_version']} → {result['master_version']}")
+    if result.get('backed_up'):
+        print(f"  Backup saved to: {result['backed_up']}")
+    if result['sections_added']:
+        print(f"  Sections added: {', '.join(result['sections_added'])}")
+    total_keys = sum(len(v) for v in result['keys_added'].values())
+    if total_keys:
+        for section, keys in result['keys_added'].items():
+            print(f"  {section}: +{len(keys)} new entries")
+    if profiles:
+        print(f"  Profiles updated: {', '.join(profiles)}")
