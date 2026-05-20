@@ -45,7 +45,7 @@ The core workflow is the same but enhanced:
 3. **Auto-Enumerate** — 179 scheduler rules across 80+ preconfigured tools fire automatically on service discovery. HTTP gets feroxbuster, nuclei, gobuster. SSH gets ssh-audit. SMB gets netexec and enum4linux-ng. And so on — zero manual configuration needed.
 4. **Investigate** — browse results by host: open ports, service versions, CVEs, NSE script output, screenshots, and tool output all in one place. **Search all output** with Ctrl+Shift+F across every tool in the project.
 5. **Analyze with AI** — connect to any LLM (Claude, Gemini, GPT-4, or local models). The AI synthesizes all findings, recommends additional tools to fill coverage gaps (you approve each command), and generates an actionable attack plan. Export as a standalone HTML report.
-6. **Document** — notes per host with Ctrl+B terminal capture (ANSI colour preserved), scan commands auto-logged, AI-generated attack plan reports.
+6. **Document** — notes per host with Ctrl+B terminal capture (ANSI color preserved), scan commands auto-logged, AI-generated attack plan reports.
 7. **Exploit** — right-click any host or port for a context menu of targeted tools. Open an interactive terminal embedded in the browser — output is captured to the database alongside all other results. Run Hydra against authentication services from the Brute tab.
 
 Everything — every tool's output, every screenshot, every CVE, every note, every AI analysis — lives in a **single SQLite database** per project. Save, reopen, and pick up exactly where you left off.
@@ -56,7 +56,7 @@ These are the foundational capabilities inherited from Sparta/Legion and fully p
 
 - **Staged nmap scanning** — customizable port ranges scanned in sequence; each stage's results feed the next. Timing, fragmentation, host discovery, and custom options all configurable per scan.
 - **Semi-automated tool scheduling** — `legion.conf` maps service names to tools. When nmap identifies a service, the matching tools run automatically without user intervention.
-- **Rich context menus** — right-click any host or port for a list of relevant tools. Dozens of host actions (dnsrecon, masscan, theharvester) and port actions (nikto, wpscan, sslscan, sqlmap, and more) built in and fully customisable.
+- **Rich context menus** — right-click any host or port for a list of relevant tools. Dozens of host actions (dnsrecon, masscan, theharvester) and port actions (nikto, wpscan, sslscan, sqlmap, and more) built in and fully customizable.
 - **Multi-host scope management** — add individual IPs, CIDR subnets, ranges, or hostnames. Mark hosts as checked. Delete hosts from scope. Filter by OS, state, or service.
 - **CPE and CVE detection** — Vulners NSE runs against every discovered service; CVEs are stored per host with severity and ExploitDB cross-references.
 - **Integrated screenshotting** — EyeWitness captures web service screenshots automatically on HTTP/HTTPS discovery.
@@ -74,7 +74,7 @@ I've always liked Legion. The classic layout with hosts on the left, tabbed deta
 
 Since the main branch was moving to Flask, I rewrote the classic interface as a Flask web app. The layout is very close to the original. The keyboard shortcuts, tab structure, and process model are the same. The underlying Python scanning engine (`controller.py`, `logic.py`, the SQLAlchemy ORM, the staged nmap pipeline) is unchanged — I just replaced every Qt widget with its HTML equivalent, polled with a 1.5-second snapshot API instead of Qt signals, and ran the whole thing in a browser.
 
-While I was in there I added the things I'd always wanted: embedded interactive terminals whose output is captured to the project database, AI host analysis with human-in-the-loop tool enumeration (Anthropic Claude, Google Gemini, OpenAI, or local models via ollama), real-time keyword match highlighting across all tool output with navigation arrows, global search across every process output in the database, enhanced note-taking with ANSI colour preservation, parallel nmap stages, 80+ preconfigured tools that auto-install, config migration so updates don't overwrite your customizations, a config GUI so you don't have to hand-edit `legion.conf`, and a 675-test Selenium suite for developers. The name **LegionnAIre** reflects the AI addition and its Legion roots.
+While I was in there I added the things I'd always wanted: embedded interactive terminals whose output is captured to the project database, AI host analysis with human-in-the-loop tool enumeration (Anthropic Claude, Google Gemini, OpenAI, or local models via ollama), real-time keyword match highlighting across all tool output with navigation arrows, global search across every process output in the database, enhanced note-taking with ANSI color preservation, parallel nmap stages, 80+ preconfigured tools that auto-install, config migration so updates don't overwrite your customizations, a config GUI so you don't have to hand-edit `legion.conf`, and a 675-test Selenium suite for developers. The name **LegionnAIre** reflects the AI addition and its Legion roots.
 
 ---
 
@@ -103,7 +103,7 @@ While I was in there I added the things I'd always wanted: embedded interactive 
 - **Multithreaded process control** — configurable concurrency limits for fast tools and slow tools (nmap) independently; queue management, process timeout, kill/restart from the UI
 - Opens Firefox automatically on start with a dedicated isolated profile; `--input-file targets.txt` auto-scans targets from a file on startup
 
-![Process output with ANSI colour](gifs/shots/output_annotated.png)
+![Process output with ANSI color](gifs/shots/output_annotated.png)
 
 ![Process filter bar detail — search input, status filter, match/hide controls](gifs/shots/output_filter_zoomed.png)
 
@@ -129,11 +129,11 @@ While I was in there I added the things I'd always wanted: embedded interactive 
 
 Right-click any host → **Open Terminal** to get a full PTY session embedded directly in the browser — no SSH client, no separate window. The terminal runs inside an xterm.js panel in the bottom output area alongside your tool processes.
 
-![xterm.js interactive terminal — full ANSI colour, live PTY session](gifs/shots/xterm_terminal.png)
+![xterm.js interactive terminal — full ANSI color, live PTY session](gifs/shots/xterm_terminal.png)
 
-- **Full PTY** — readline, tab completion, colour, cursor movement, scrollback all work exactly as in a real terminal
-- **ANSI colour preserved** — the Kali bash prompt, `ls` colour coding, tool output highlights all render correctly
-- **Ctrl+B to capture** — select any output in the terminal, press Ctrl+B, and it lands in the host's Notes tab with colour intact
+- **Full PTY** — readline, tab completion, color, cursor movement, scrollback all work exactly as in a real terminal
+- **ANSI color preserved** — the Kali bash prompt, `ls` color coding, tool output highlights all render correctly
+- **Ctrl+B to capture** — select any output in the terminal, press Ctrl+B, and it lands in the host's Notes tab with color intact
 - **Output captured to database** — terminal history is written to the project SQLite DB on save/close, so it persists across sessions and is searchable via global search (Ctrl+Shift+F). Interactive scripts run inside the GUI produce output that is treated the same as any other tool — stored, searchable, included in AI analysis
 - **Multiple sessions** — each Interactive process gets its own tab in the upper output panel; click between them without losing state
 - **Font size controls** — A−/A+ buttons resize the terminal font independently of other output panels
@@ -174,14 +174,14 @@ Press **F2** (or click the **⚙ gear button**) to open the Config Manager.
 - **Config migration** — `--migrate-conf` CLI flag or yellow GUI banner merges new settings from updates without overwriting your customizations. Help comments are preserved.
 
 ### Enhanced notes
-- **Ctrl+B** — copies the current terminal or DOM output selection into the host's Notes tab with ANSI colour preserved
-- Notes render with full ANSI-to-HTML conversion; the Log tab also renders colour codes
+- **Ctrl+B** — copies the current terminal or DOM output selection into the host's Notes tab with ANSI color preserved
+- Notes render with full ANSI-to-HTML conversion; the Log tab also renders color codes
 - All nmap stage commands are written to Notes automatically so scans are reproducible
 - Notes are per-host and persist in the unified project database — searchable via global search
 
 ![Notes panel with Ctrl+B capture](gifs/shots/notes_annotated.png)
 
-![Notes detail — ANSI colour preserved, nmap commands auto-logged](gifs/shots/notes_content_zoomed.png)
+![Notes detail — ANSI color preserved, nmap commands auto-logged](gifs/shots/notes_content_zoomed.png)
 
 ### CVEs and vulnerability data
 - Vulners NSE runs as the final nmap stage against all discovered ports
