@@ -1,14 +1,42 @@
 ![LegionnAIre](images/LegionnaireBannerGood.png)
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Platform: Kali Linux](https://img.shields.io/badge/Platform-Kali%20Linux-557C94.svg)](https://www.kali.org/)
+[![Flask](https://img.shields.io/badge/Flask-Web%20UI-000000.svg)](https://flask.palletsprojects.com/)
+
+**Semi-automated network penetration testing framework with AI-powered analysis, 80+ auto-installed tools, and a browser-based interface — runs on Kali Linux (VM or WSL2).**
+
 ![LegionnAIre main interface](gifs/shots/hero_full.png)
 
 ![Title bar detail — version, profile, gear button, H/P/R/W/F counters](gifs/shots/hero_titlebar_zoomed.png)
 
 ---
 
+## Table of Contents
+
+- [What is LegionnAIre?](#what-is-legionnaire)
+- [Why I built this](#why-i-built-this)
+- [Features](#features)
+- [Integrated tools](#integrated-tools)
+- [Requirements](#requirements)
+- [Installation — Automated](#installation--automated-recommended)
+- [Installation — Manual](#installation--manual-step-by-step)
+- [Installation — WSL2](#installation--kali-wsl2-windows-users)
+- [Installation — Docker](#installation--docker-alternative)
+- [Upgrading](#upgrading)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Test suite](#test-suite)
+- [Architecture](#architecture)
+- [Attribution](#attribution)
+- [License](#license)
+
+---
+
 ## What is LegionnAIre?
 
-LegionnAIre is an open source, semi-automated network penetration testing framework for discovery, reconnaissance, and exploitation. It is a fork of [Legion](https://github.com/GoVanguard/legion), which was itself a fork of [Sparta](https://github.com/SECFORCE/sparta) — a tool that has been in active pentest use since 2015.
+LegionnAIre is an open source, semi-automated network penetration testing framework for discovery, reconnaissance, and exploitation. It is a fork of [Legion](https://github.com/Hackman238/legion), which was itself a fork of [Sparta](https://github.com/SECFORCE/sparta) — a tool that has been in active pentest use since 2015.
 
 The core workflow is the same but enhanced:
 
@@ -814,7 +842,7 @@ The Flask layer wraps the original Qt6 controller with zero changes to the scann
 
 ## Attribution
 
-- Fork of [GoVanguard/legion](https://github.com/GoVanguard/legion) by Shane Scott (ifly53e)
+- Fork of [Hackman238/legion](https://github.com/Hackman238/legion) by Shane Scott
 - Original Sparta Python 2.7 codebase by [SECFORCE](https://github.com/SECFORCE/sparta)
 - Flask web UI, parallel staged nmap, AI integration, and all features described above by Tim McLean (ifly53e, ThereAreSomeWhoCallMeTimAtViasat)
 - nmap XML parsing engine originally by yunshu, modified by ketchup and SECFORCE
