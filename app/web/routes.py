@@ -1497,8 +1497,17 @@ def _backup_conf(src_path, label='legion'):
 def _ensure_profiles():
     os.makedirs(_PROFILES_DIR, exist_ok=True)
     default = os.path.join(_PROFILES_DIR, 'default.conf')
+    master = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'masterLegion.conf')
     if not os.path.exists(default) and os.path.exists(_WORKING_CONF):
         shutil.copy(_WORKING_CONF, default)
+    elif os.path.exists(default) and os.path.exists(master):
+        try:
+            from app.cli_utils import check_conf_version, migrate_conf
+            u_v, s_v = check_conf_version(default, master)
+            if u_v < s_v:
+                migrate_conf(default, master)
+        except Exception:
+            pass
     shipped = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'profiles')
     if os.path.isdir(shipped):
         for fn in os.listdir(shipped):
