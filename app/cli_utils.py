@@ -286,14 +286,6 @@ def migrate_profiles(master_path):
     shipped_names = {fn for fn in os.listdir(shipped_dir) if fn.endswith('.conf')}
 
     for fn in os.listdir(profiles_dir):
-        if fn == 'default.conf':
-            user_prof = os.path.join(profiles_dir, fn)
-            u_ver, s_ver = check_conf_version(user_prof, master_path)
-            if u_ver < s_ver:
-                r = migrate_conf(user_prof, master_path)
-                if not r['up_to_date']:
-                    migrated.append(fn)
-            continue
         if fn not in shipped_names:
             continue
         user_prof = os.path.join(profiles_dir, fn)

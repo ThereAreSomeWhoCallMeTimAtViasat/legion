@@ -256,11 +256,11 @@ def snapshot():
     _uptime_start = getattr(wc, '_scan_uptime_start', None)
     _uptime_end   = getattr(wc, '_scan_uptime_end',   None)
 
-    _active_prof = 'default'
+    _active_prof = 'scan-medium'
     try:
         _af_path = os.path.expanduser('~/.local/share/legion/active_profile.txt')
         with open(_af_path) as _af:
-            _active_prof = _af.read().strip() or 'default'
+            _active_prof = _af.read().strip() or 'scan-medium'
     except Exception:
         pass
 
@@ -1496,21 +1496,10 @@ def _backup_conf(src_path, label='legion'):
 
 def _ensure_profiles():
     os.makedirs(_PROFILES_DIR, exist_ok=True)
-    default = os.path.join(_PROFILES_DIR, 'default.conf')
     master = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'masterLegion.conf')
-    repo_conf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'legion.conf')
-    if not os.path.exists(default):
-        src = repo_conf if os.path.exists(repo_conf) else _WORKING_CONF
-        if os.path.exists(src):
-            shutil.copy(src, default)
-    elif os.path.exists(default) and os.path.exists(master):
-        try:
-            from app.cli_utils import check_conf_version, migrate_conf
-            u_v, s_v = check_conf_version(default, master)
-            if u_v < s_v:
-                migrate_conf(default, master)
-        except Exception:
-            pass
+    if not os.path.exists(_ACTIVE_FILE):
+        with open(_ACTIVE_FILE, 'w') as f:
+            f.write('scan-medium')
     shipped = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'profiles')
     if os.path.isdir(shipped):
         for fn in os.listdir(shipped):
@@ -1549,10 +1538,10 @@ def config_migrate():
 @web_bp.get("/api/config/profiles")
 def config_profiles():
     _ensure_profiles()
-    active = 'default'
+    active = 'scan-medium'
     if os.path.exists(_ACTIVE_FILE):
         try:
-            active = open(_ACTIVE_FILE).read().strip() or 'default'
+            active = open(_ACTIVE_FILE).read().strip() or 'scan-medium'
         except Exception:
             pass
     profiles = []
@@ -1696,9 +1685,9 @@ def config_save(name):
     open(path, 'w', encoding='utf-8').write(text)
 
     # If saving the active profile, hot-reload settings immediately
-    active = 'default'
+    active = 'scan-medium'
     if os.path.exists(_ACTIVE_FILE):
-        try: active = open(_ACTIVE_FILE).read().strip() or 'default'
+        try: active = open(_ACTIVE_FILE).read().strip() or 'scan-medium'
         except Exception: pass
     applied = False
     if name == active:
@@ -1750,7 +1739,6 @@ def config_create():
 
 @web_bp.post("/api/config/profiles/<name>/rename")
 def config_rename(name):
-    if name == 'default': return _err("Cannot rename default")
     new = str((request.get_json(silent=True) or {}).get("new_name", "")).strip()
     if not new: return _err("new_name required")
     old_p = os.path.join(_PROFILES_DIR, f'{name}.conf')
@@ -1772,8 +1760,7 @@ def config_duplicate(name):
 
 @web_bp.post("/api/config/profiles/<name>/delete")
 def config_delete(name):
-    if name == 'default': return _err("Cannot delete default")
-    active = open(_ACTIVE_FILE).read().strip() if os.path.exists(_ACTIVE_FILE) else 'default'
+    active = open(_ACTIVE_FILE).read().strip() if os.path.exists(_ACTIVE_FILE) else 'scan-medium'
     if name == active: return _err("Cannot delete active profile")
     path = os.path.join(_PROFILES_DIR, f'{name}.conf')
     if not os.path.exists(path): return _err("Not found", 404)

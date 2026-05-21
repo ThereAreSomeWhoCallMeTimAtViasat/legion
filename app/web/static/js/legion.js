@@ -133,7 +133,7 @@ var L = {
     _serviceViewActive: false,  /* true when cross-host service results shown in right panel */
     _hostProcSig: null,
     _nmapSig: null,
-    _activeProfile: 'default',
+    _activeProfile: 'scan-medium',
     _projectName: '*untitled',
     _hostUnreadTabs: {},   /* hostId → {tabId: true} — persists orange indicators across host switches */
     _lastProcCount: 0,
@@ -155,7 +155,7 @@ var L = {
 };
 
 function _updateTitle() {
-    var prof = L._activeProfile && L._activeProfile !== 'default' ? ' [' + L._activeProfile + ']' : '';
+    var prof = L._activeProfile ? ' [' + L._activeProfile + ']' : '';
     setText('window-title', _VERSION + prof + ' – ' + L._projectName);
 }
 
@@ -2361,7 +2361,7 @@ function pollSnapshot() {
         renderTools(snap.tools || []);
         renderProcesses(snap.processes || []);
         L._projectName = (snap.project||{}).name || '*untitled';
-        L._activeProfile = (snap.summary||{}).active_profile || 'default';
+        L._activeProfile = (snap.summary||{}).active_profile || 'scan-medium';
         setText('project-name', L._projectName);
         setText('stat-profile', L._activeProfile);
         setText('project-output-folder', (snap.project||{}).output_folder || '');
@@ -2611,7 +2611,7 @@ document.addEventListener('DOMContentLoaded', function() {
         renderTools(snap.tools || []);
         renderProcesses(snap.processes || []);
         L._projectName = (snap.project||{}).name || '*untitled';
-        L._activeProfile = (snap.summary||{}).active_profile || 'default';
+        L._activeProfile = (snap.summary||{}).active_profile || 'scan-medium';
         setText('project-name', L._projectName);
         setText('stat-profile', L._activeProfile);
         setText('project-output-folder', (snap.project||{}).output_folder || '');
@@ -2780,12 +2780,12 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     /* ── Config Manager — Multiple Profiles (from configDialog.py) ── */
-    var cfgState = { profiles: [], active: 'default', selectedTab: null };
+    var cfgState = { profiles: [], active: 'scan-medium', selectedTab: null };
 
     function cfgLoadProfiles() {
         fetchJson('/api/config/profiles').then(function(data) {
             cfgState.profiles = data.profiles || [];
-            cfgState.active = data.active || 'default';
+            cfgState.active = data.active || 'scan-medium';
             cfgRender();
         });
     }
@@ -3103,7 +3103,6 @@ document.addEventListener('DOMContentLoaded', function() {
     var configRename = $('config-rename');
     if (configRename) configRename.addEventListener('click', function() {
         var oldName = cfgGetCurrentName();
-        if (oldName === 'default') { setText('config-status', 'Cannot rename default'); return; }
         var newName = prompt('New name for "' + oldName + '":', oldName);
         if (!newName || !newName.trim() || newName.trim() === oldName) return;
         postJson('/api/config/profiles/' + encodeURIComponent(oldName) + '/rename', { new_name: newName.trim() })
@@ -3134,7 +3133,6 @@ document.addEventListener('DOMContentLoaded', function() {
     var configDelete = $('config-delete');
     if (configDelete) configDelete.addEventListener('click', function() {
         var name = cfgGetCurrentName();
-        if (name === 'default') { setText('config-status', 'Cannot delete default'); return; }
         if (!confirm('Delete profile "' + name + '"? This cannot be undone.')) return;
         postJson('/api/config/profiles/' + encodeURIComponent(name) + '/delete', {})
         .then(function() {
