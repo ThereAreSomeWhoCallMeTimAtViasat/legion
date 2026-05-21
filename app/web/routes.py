@@ -1498,8 +1498,11 @@ def _ensure_profiles():
     os.makedirs(_PROFILES_DIR, exist_ok=True)
     default = os.path.join(_PROFILES_DIR, 'default.conf')
     master = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'masterLegion.conf')
-    if not os.path.exists(default) and os.path.exists(_WORKING_CONF):
-        shutil.copy(_WORKING_CONF, default)
+    repo_conf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '..', 'legion.conf')
+    if not os.path.exists(default):
+        src = repo_conf if os.path.exists(repo_conf) else _WORKING_CONF
+        if os.path.exists(src):
+            shutil.copy(src, default)
     elif os.path.exists(default) and os.path.exists(master):
         try:
             from app.cli_utils import check_conf_version, migrate_conf

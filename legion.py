@@ -131,13 +131,16 @@ if __name__ == "__main__":
             shutil.copy(conf_path, backup)
             print(f"Backed up current conf to: {backup}")
         shutil.copy(master, conf_path)
-        # Also reset default profile
+        # Also reset default profile — use repo legion.conf (scan-medium + Vertex AI),
+        # not masterLegion.conf (scan-extensive), so the default matches what new installs get
         profiles_dir = os.path.join(conf_dir, 'profiles')
         os.makedirs(profiles_dir, exist_ok=True)
-        shutil.copy(master, os.path.join(profiles_dir, 'default.conf'))
+        repo_conf = os.path.join(os.path.dirname(__file__), 'legion.conf')
+        default_src = repo_conf if os.path.exists(repo_conf) else master
+        shutil.copy(default_src, os.path.join(profiles_dir, 'default.conf'))
         print(f"Restored legion.conf from master ({os.path.getsize(master)} bytes)")
         print(f"  → {conf_path}")
-        print(f"  → {os.path.join(profiles_dir, 'default.conf')}")
+        print(f"  → {os.path.join(profiles_dir, 'default.conf')} (from {'legion.conf' if default_src == repo_conf else 'master'})")
         sys.exit(0)
 
     if args.migrate_conf:
